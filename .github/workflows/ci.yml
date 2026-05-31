@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - master
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rust-src
+          targets: riscv32imac-unknown-none-elf
+
+      - name: Prepare example secrets
+        run: cp secrets.example.yaml secrets.yaml
+
+      - name: Check formatting
+        run: cargo fmt --check
+
+      - name: Run host tests
+        run: cargo test --lib --target x86_64-unknown-linux-gnu
+
+      - name: Check firmware
+        run: cargo check --target riscv32imac-unknown-none-elf
+
+      - name: Run Clippy
+        run: cargo clippy --target riscv32imac-unknown-none-elf -- -D warnings
