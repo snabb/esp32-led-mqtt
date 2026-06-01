@@ -7,7 +7,7 @@ use smart_leds::{
 
 pub const DEFAULT_BRIGHTNESS: u8 = 8;
 pub const EFFECT_DISABLED_NAME: &str = "None";
-pub const EFFECT_IDS: [EffectId; 15] = [
+pub const EFFECT_IDS: [EffectId; 16] = [
     EffectId::Rainbow,
     EffectId::ColorWipe,
     EffectId::Scan,
@@ -23,6 +23,7 @@ pub const EFFECT_IDS: [EffectId; 15] = [
     EffectId::Bpm,
     EffectId::Fire2012,
     EffectId::Pacifica,
+    EffectId::Aurora,
 ];
 
 #[derive(Clone, Copy)]
@@ -83,6 +84,7 @@ pub enum EffectId {
     Bpm,
     Fire2012,
     Pacifica,
+    Aurora,
 }
 
 impl EffectId {
@@ -103,6 +105,7 @@ impl EffectId {
             Self::Bpm => "BPM",
             Self::Fire2012 => "Fire 2012",
             Self::Pacifica => "Pacifica",
+            Self::Aurora => "Aurora",
         }
     }
 
@@ -137,6 +140,8 @@ impl EffectId {
             Some(Self::Fire2012)
         } else if name.eq_ignore_ascii_case(Self::Pacifica.name()) {
             Some(Self::Pacifica)
+        } else if name.eq_ignore_ascii_case(Self::Aurora.name()) {
+            Some(Self::Aurora)
         } else {
             None
         }
@@ -219,6 +224,7 @@ impl<const N: usize> EffectRuntime<N> {
             EffectId::Bpm => self.render_bpm(now_ms),
             EffectId::Fire2012 => self.render_fire2012(now_ms),
             EffectId::Pacifica => self.render_pacifica(now_ms),
+            EffectId::Aurora => self.render_aurora(now_ms),
         }
 
         &self.frame
@@ -468,6 +474,32 @@ impl<const N: usize> EffectRuntime<N> {
                 r: white,
                 g: green.saturating_add(white),
                 b: blue.saturating_add(white),
+            };
+        }
+    }
+
+    fn render_aurora(&mut self, now_ms: u32) {
+        let speed = u32::from(self.params.speed.max(1));
+        let phase_a = ((now_ms.saturating_mul(speed) / 181) & 0xff) as u8;
+        let phase_b = ((now_ms.saturating_mul(speed) / 313) & 0xff) as u8;
+        let phase_c = ((now_ms.saturating_mul(speed) / 89) & 0xff) as u8;
+        let shimmer_gain = self.params.intensity.max(32);
+
+        for (index, pixel) in self.frame.as_mut_slice().iter_mut().enumerate() {
+            let pos = ((index * 256) / N.max(1)) as u8;
+            let curtain = half_sin8(pos.wrapping_add(phase_a));
+            let fold = half_sin8(pos.wrapping_mul(3).wrapping_sub(phase_b));
+            let shimmer_wave = half_sin8(pos.wrapping_mul(7).wrapping_add(phase_c));
+            let shimmer = scale8(shimmer_wave.saturating_sub(212), shimmer_gain);
+
+            let green = scale8(curtain, 170).saturating_add(scale8(fold, 80));
+            let blue = scale8(curtain, 95).saturating_add(scale8(fold, 185));
+            let violet = scale8(fold.saturating_sub(curtain / 2), 130);
+
+            *pixel = RGB8 {
+                r: violet.saturating_add(shimmer),
+                g: green.saturating_add(shimmer),
+                b: blue.saturating_add(shimmer),
             };
         }
     }
@@ -724,6 +756,7 @@ mod tests {
             EffectId::Bpm,
             EffectId::Fire2012,
             EffectId::Pacifica,
+            EffectId::Aurora,
         ] {
             let mut runtime = EffectRuntime::<8>::new(EffectParams {
                 id: effect,
@@ -740,7 +773,7 @@ mod tests {
 
     #[test]
     fn new_effects_render_small_strips() {
-        for effect in [EffectId::Fire2012, EffectId::Pacifica] {
+        for effect in [EffectId::Fire2012, EffectId::Pacifica, EffectId::Aurora] {
             let mut runtime = EffectRuntime::<1>::new(EffectParams {
                 id: effect,
                 speed: 10,
