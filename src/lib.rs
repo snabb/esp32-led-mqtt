@@ -624,6 +624,21 @@ mod tests {
     }
 
     #[test]
+    fn effect_registry_is_consistent() {
+        assert_eq!(EFFECT_IDS.len(), EFFECT_DEFINITIONS.len());
+        assert_eq!(EFFECT_MAX_CODE as usize, EFFECT_DEFINITIONS.len());
+
+        for (index, definition) in EFFECT_DEFINITIONS.iter().enumerate() {
+            assert_eq!(EFFECT_IDS[index], definition.id);
+            assert_eq!(definition.code as usize, index + 1);
+            assert_eq!(effect_definition(definition.id), *definition);
+            assert_eq!(effect_code_from_id(definition.id), definition.code);
+            assert_eq!(effect_id_from_code(definition.code), Some(definition.id));
+        }
+        assert_eq!(effect_id_from_code(EFFECT_NONE_CODE), None);
+    }
+
+    #[test]
     fn effect_names_ignore_case() {
         assert_eq!(
             EffectId::from_name("random twinkle"),
