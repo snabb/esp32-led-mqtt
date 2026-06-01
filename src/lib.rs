@@ -7,7 +7,7 @@ use smart_leds::{
 
 pub const DEFAULT_BRIGHTNESS: u8 = 8;
 pub const EFFECT_DISABLED_NAME: &str = "None";
-pub const EFFECT_IDS: [EffectId; 17] = [
+pub const EFFECT_IDS: [EffectId; 18] = [
     EffectId::Rainbow,
     EffectId::ColorWipe,
     EffectId::Scan,
@@ -25,6 +25,7 @@ pub const EFFECT_IDS: [EffectId; 17] = [
     EffectId::Pacifica,
     EffectId::Aurora,
     EffectId::PlasmaFlow,
+    EffectId::Circus,
 ];
 
 #[derive(Clone, Copy)]
@@ -87,6 +88,7 @@ pub enum EffectId {
     Pacifica,
     Aurora,
     PlasmaFlow,
+    Circus,
 }
 
 impl EffectId {
@@ -109,6 +111,7 @@ impl EffectId {
             Self::Pacifica => "Pacifica",
             Self::Aurora => "Aurora",
             Self::PlasmaFlow => "Plasma Flow",
+            Self::Circus => "Circus",
         }
     }
 
@@ -147,6 +150,8 @@ impl EffectId {
             Some(Self::Aurora)
         } else if name.eq_ignore_ascii_case(Self::PlasmaFlow.name()) {
             Some(Self::PlasmaFlow)
+        } else if name.eq_ignore_ascii_case(Self::Circus.name()) {
+            Some(Self::Circus)
         } else {
             None
         }
@@ -231,6 +236,7 @@ impl<const N: usize> EffectRuntime<N> {
             EffectId::Pacifica => self.render_pacifica(now_ms),
             EffectId::Aurora => self.render_aurora(now_ms),
             EffectId::PlasmaFlow => self.render_plasma_flow(now_ms),
+            EffectId::Circus => self.render_circus(now_ms),
         }
 
         &self.frame
@@ -532,6 +538,37 @@ impl<const N: usize> EffectRuntime<N> {
         }
     }
 
+    fn render_circus(&mut self, now_ms: u32) {
+        let panel_width = (N / 12).clamp(3, 6);
+        let border_width = 1 + usize::from(N >= 48);
+        let group_width = panel_width + border_width;
+        let step = (now_ms / speed_interval(120, self.params.speed)) as usize;
+        let marquee_on = (step & 1) == 0;
+
+        for (index, pixel) in self.frame.as_mut_slice().iter_mut().enumerate() {
+            let moving = index + step;
+            let position = moving % group_width;
+
+            *pixel = if position < border_width {
+                if (moving / group_width + usize::from(marquee_on)) & 1 == 0 {
+                    RGB8 {
+                        r: 255,
+                        g: 255,
+                        b: 255,
+                    }
+                } else {
+                    RGB8 {
+                        r: 255,
+                        g: 192,
+                        b: 0,
+                    }
+                }
+            } else {
+                circus_panel_color((moving / group_width) as u8)
+            };
+        }
+    }
+
     fn elapsed(&mut self, now_ms: u32, interval_ms: u32) -> bool {
         if self.last_step_ms == 0 || now_ms.wrapping_sub(self.last_step_ms) >= interval_ms {
             self.last_step_ms = now_ms;
@@ -684,6 +721,27 @@ fn heat_color(heat: u8) -> RGB8 {
     }
 }
 
+fn circus_panel_color(index: u8) -> RGB8 {
+    match index % 4 {
+        0 => RGB8 { r: 255, g: 0, b: 0 },
+        1 => RGB8 {
+            r: 0,
+            g: 64,
+            b: 255,
+        },
+        2 => RGB8 {
+            r: 255,
+            g: 224,
+            b: 0,
+        },
+        _ => RGB8 {
+            r: 255,
+            g: 0,
+            b: 160,
+        },
+    }
+}
+
 fn fire_spark_height(count: usize) -> usize {
     (count / 6).clamp(1, 10)
 }
@@ -786,6 +844,7 @@ mod tests {
             EffectId::Pacifica,
             EffectId::Aurora,
             EffectId::PlasmaFlow,
+            EffectId::Circus,
         ] {
             let mut runtime = EffectRuntime::<8>::new(EffectParams {
                 id: effect,
@@ -807,6 +866,7 @@ mod tests {
             EffectId::Pacifica,
             EffectId::Aurora,
             EffectId::PlasmaFlow,
+            EffectId::Circus,
         ] {
             let mut runtime = EffectRuntime::<1>::new(EffectParams {
                 id: effect,
