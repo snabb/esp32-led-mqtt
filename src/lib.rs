@@ -40,7 +40,7 @@ const DISTINCT_COLOR_FALLBACKS: [RGB8; 8] = [
         b: 255,
     },
 ];
-pub const EFFECT_IDS: [EffectId; 18] = [
+pub const EFFECT_IDS: [EffectId; 19] = [
     EffectId::Rainbow,
     EffectId::ColorWipe,
     EffectId::Scan,
@@ -59,6 +59,7 @@ pub const EFFECT_IDS: [EffectId; 18] = [
     EffectId::Aurora,
     EffectId::PlasmaFlow,
     EffectId::Circus,
+    EffectId::StaticNoise,
 ];
 
 #[derive(Clone, Copy)]
@@ -122,6 +123,7 @@ pub enum EffectId {
     Aurora,
     PlasmaFlow,
     Circus,
+    StaticNoise,
 }
 
 impl EffectId {
@@ -145,6 +147,7 @@ impl EffectId {
             Self::Aurora => "Aurora",
             Self::PlasmaFlow => "Plasma Flow",
             Self::Circus => "Circus",
+            Self::StaticNoise => "Static Noise",
         }
     }
 
@@ -185,6 +188,8 @@ impl EffectId {
             Some(Self::PlasmaFlow)
         } else if name.eq_ignore_ascii_case(Self::Circus.name()) {
             Some(Self::Circus)
+        } else if name.eq_ignore_ascii_case(Self::StaticNoise.name()) {
+            Some(Self::StaticNoise)
         } else {
             None
         }
@@ -270,6 +275,7 @@ impl<const N: usize> EffectRuntime<N> {
             EffectId::Aurora => self.render_aurora(now_ms),
             EffectId::PlasmaFlow => self.render_plasma_flow(now_ms),
             EffectId::Circus => self.render_circus(now_ms),
+            EffectId::StaticNoise => self.render_static_noise(now_ms),
         }
 
         &self.frame
@@ -598,6 +604,53 @@ impl<const N: usize> EffectRuntime<N> {
                 }
             } else {
                 circus_panel_color((moving / group_width) as u8)
+            };
+        }
+    }
+
+    fn render_static_noise(&mut self, now_ms: u32) {
+        if !self.elapsed(now_ms, speed_interval(24, self.params.speed)) {
+            return;
+        }
+
+        let color_chance = 8 + self.params.intensity / 12;
+
+        for pixel in self.frame.as_mut_slice() {
+            let level = if self.rng.next_u8() & 1 == 0 {
+                self.rng.next_u8() >> 2
+            } else {
+                192_u8.saturating_add(self.rng.next_u8() >> 2)
+            };
+
+            *pixel = if self.rng.next_u8() < color_chance {
+                match self.rng.next_u8() & 0x03 {
+                    0 => RGB8 {
+                        r: 255,
+                        g: level,
+                        b: level,
+                    },
+                    1 => RGB8 {
+                        r: level,
+                        g: 255,
+                        b: level,
+                    },
+                    2 => RGB8 {
+                        r: level,
+                        g: level,
+                        b: 255,
+                    },
+                    _ => RGB8 {
+                        r: 255,
+                        g: 255,
+                        b: level,
+                    },
+                }
+            } else {
+                RGB8 {
+                    r: level,
+                    g: level,
+                    b: level,
+                }
             };
         }
     }
@@ -956,6 +1009,7 @@ mod tests {
             EffectId::Aurora,
             EffectId::PlasmaFlow,
             EffectId::Circus,
+            EffectId::StaticNoise,
         ] {
             let mut runtime = EffectRuntime::<8>::new(EffectParams {
                 id: effect,
@@ -978,6 +1032,7 @@ mod tests {
             EffectId::Aurora,
             EffectId::PlasmaFlow,
             EffectId::Circus,
+            EffectId::StaticNoise,
         ] {
             let mut runtime = EffectRuntime::<1>::new(EffectParams {
                 id: effect,

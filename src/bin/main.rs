@@ -58,7 +58,7 @@ const MQTT_STATE_TOPIC: &str = "esp32-led-mqtt/light/state";
 const MQTT_SPEED_COMMAND_TOPIC: &str = "esp32-led-mqtt/effect_speed/set";
 const MQTT_SPEED_STATE_TOPIC: &str = "esp32-led-mqtt/effect_speed/state";
 const MQTT_AVAILABILITY_TOPIC: &str = "esp32-led-mqtt/status";
-const MQTT_DISCOVERY_PAYLOAD: &str = r#"{"name":"LED Strip","unique_id":"esp32_led_mqtt_60","schema":"json","command_topic":"esp32-led-mqtt/light/set","state_topic":"esp32-led-mqtt/light/state","availability_topic":"esp32-led-mqtt/status","payload_available":"online","payload_not_available":"offline","brightness":true,"brightness_scale":255,"supported_color_modes":["rgb"],"effect":true,"effect_list":["None","Rainbow","Color Wipe","Scan","Twinkle","Random Twinkle","Fireworks","Flicker","Breathe","Theater Chase","Confetti","Sinelon","Juggle","BPM","Fire 2012","Pacifica","Aurora","Plasma Flow","Circus"],"device":{"identifiers":["esp32_led_mqtt_60"],"name":"ESP32 LED MQTT","manufacturer":"esp32-led-mqtt","model":"ESP32-C6 SK6812"}}"#;
+const MQTT_DISCOVERY_PAYLOAD: &str = r#"{"name":"LED Strip","unique_id":"esp32_led_mqtt_60","schema":"json","command_topic":"esp32-led-mqtt/light/set","state_topic":"esp32-led-mqtt/light/state","availability_topic":"esp32-led-mqtt/status","payload_available":"online","payload_not_available":"offline","brightness":true,"brightness_scale":255,"supported_color_modes":["rgb"],"effect":true,"effect_list":["None","Rainbow","Color Wipe","Scan","Twinkle","Random Twinkle","Fireworks","Flicker","Breathe","Theater Chase","Confetti","Sinelon","Juggle","BPM","Fire 2012","Pacifica","Aurora","Plasma Flow","Circus","Static Noise"],"device":{"identifiers":["esp32_led_mqtt_60"],"name":"ESP32 LED MQTT","manufacturer":"esp32-led-mqtt","model":"ESP32-C6 SK6812"}}"#;
 const MQTT_SPEED_DISCOVERY_PAYLOAD: &str = r#"{"name":"Effect Speed","unique_id":"esp32_led_mqtt_60_effect_speed","command_topic":"esp32-led-mqtt/effect_speed/set","state_topic":"esp32-led-mqtt/effect_speed/state","availability_topic":"esp32-led-mqtt/status","payload_available":"online","payload_not_available":"offline","min":1,"max":128,"step":1,"mode":"slider","device":{"identifiers":["esp32_led_mqtt_60"],"name":"ESP32 LED MQTT","manufacturer":"esp32-led-mqtt","model":"ESP32-C6 SK6812"}}"#;
 
 static LIGHT_ON: AtomicBool = AtomicBool::new(true);
@@ -129,7 +129,8 @@ const EFFECT_PACIFICA: u8 = 15;
 const EFFECT_AURORA: u8 = 16;
 const EFFECT_PLASMA_FLOW: u8 = 17;
 const EFFECT_CIRCUS: u8 = 18;
-const EFFECT_MAX: u8 = EFFECT_CIRCUS;
+const EFFECT_STATIC_NOISE: u8 = 19;
+const EFFECT_MAX: u8 = EFFECT_STATIC_NOISE;
 
 // This creates a default app-descriptor required by the esp-idf bootloader.
 // For more information see: <https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/system/app_image_format.html#application-description>
@@ -466,6 +467,7 @@ fn effect_id_from_code(code: u8) -> Option<EffectId> {
         EFFECT_AURORA => Some(EffectId::Aurora),
         EFFECT_PLASMA_FLOW => Some(EffectId::PlasmaFlow),
         EFFECT_CIRCUS => Some(EffectId::Circus),
+        EFFECT_STATIC_NOISE => Some(EffectId::StaticNoise),
         _ => Some(EffectId::Rainbow),
     }
 }
@@ -490,6 +492,7 @@ fn effect_code_from_id(id: EffectId) -> u8 {
         EffectId::Aurora => EFFECT_AURORA,
         EffectId::PlasmaFlow => EFFECT_PLASMA_FLOW,
         EffectId::Circus => EFFECT_CIRCUS,
+        EffectId::StaticNoise => EFFECT_STATIC_NOISE,
     }
 }
 
