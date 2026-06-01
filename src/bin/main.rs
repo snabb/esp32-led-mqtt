@@ -35,8 +35,9 @@ use esp_radio::wifi::{
     self, Config, ControllerConfig, Interface, WifiController, sta::StationConfig,
 };
 use esp32_led_mqtt::{
-    DEFAULT_BRIGHTNESS, EFFECT_DISABLED_NAME, EffectId, EffectParams, EffectRuntime, RgbFrame,
-    random_distinct_color,
+    DEFAULT_BRIGHTNESS, EFFECT_DEFINITIONS, EFFECT_DISABLED_NAME, EFFECT_MAX_CODE,
+    EFFECT_NONE_CODE, EffectId, EffectParams, EffectRuntime, RgbFrame, effect_code_from_id,
+    effect_id_from_code, random_distinct_color,
 };
 use heapless::Vec;
 use log::{error, info, warn};
@@ -58,12 +59,11 @@ const MQTT_STATE_TOPIC: &str = "esp32-led-mqtt/light/state";
 const MQTT_SPEED_COMMAND_TOPIC: &str = "esp32-led-mqtt/effect_speed/set";
 const MQTT_SPEED_STATE_TOPIC: &str = "esp32-led-mqtt/effect_speed/state";
 const MQTT_AVAILABILITY_TOPIC: &str = "esp32-led-mqtt/status";
-const MQTT_DISCOVERY_PAYLOAD: &str = r#"{"name":"LED Strip","unique_id":"esp32_led_mqtt_60","schema":"json","command_topic":"esp32-led-mqtt/light/set","state_topic":"esp32-led-mqtt/light/state","availability_topic":"esp32-led-mqtt/status","payload_available":"online","payload_not_available":"offline","brightness":true,"brightness_scale":255,"supported_color_modes":["rgb"],"effect":true,"effect_list":["None","Rainbow","Color Wipe","Scan","Twinkle","Random Twinkle","Fireworks","Flicker","Breathe","Theater Chase","Confetti","Sinelon","Juggle","BPM","Fire 2012","Pacifica","Aurora","Plasma Flow","Circus","Static Noise"],"device":{"identifiers":["esp32_led_mqtt_60"],"name":"ESP32 LED MQTT","manufacturer":"esp32-led-mqtt","model":"ESP32-C6"}}"#;
 const MQTT_SPEED_DISCOVERY_PAYLOAD: &str = r#"{"name":"Effect Speed","unique_id":"esp32_led_mqtt_60_effect_speed","command_topic":"esp32-led-mqtt/effect_speed/set","state_topic":"esp32-led-mqtt/effect_speed/state","availability_topic":"esp32-led-mqtt/status","payload_available":"online","payload_not_available":"offline","min":1,"max":128,"step":1,"mode":"slider","device":{"identifiers":["esp32_led_mqtt_60"],"name":"ESP32 LED MQTT","manufacturer":"esp32-led-mqtt","model":"ESP32-C6"}}"#;
 
 static LIGHT_ON: AtomicBool = AtomicBool::new(true);
 static LIGHT_BRIGHTNESS: AtomicU8 = AtomicU8::new(DEFAULT_BRIGHTNESS);
-static LIGHT_EFFECT: AtomicU8 = AtomicU8::new(EFFECT_RAINBOW);
+static LIGHT_EFFECT: AtomicU8 = AtomicU8::new(EFFECT_DEFINITIONS[0].code);
 static LIGHT_SPEED: AtomicU8 = AtomicU8::new(DEFAULT_EFFECT_SPEED);
 static LIGHT_RED: AtomicU8 = AtomicU8::new(255);
 static LIGHT_GREEN: AtomicU8 = AtomicU8::new(96);
@@ -110,27 +110,6 @@ type LedStrip<'d> = esp_hal_smartled::RmtSmartLeds<
 const RMT_MEMORY_BLOCKS: u8 = 4;
 const MAX_EFFECT_SPEED: u8 = 128;
 const DEFAULT_EFFECT_SPEED: u8 = 64;
-const EFFECT_NONE: u8 = 0;
-const EFFECT_RAINBOW: u8 = 1;
-const EFFECT_COLOR_WIPE: u8 = 2;
-const EFFECT_SCAN: u8 = 3;
-const EFFECT_TWINKLE: u8 = 4;
-const EFFECT_RANDOM_TWINKLE: u8 = 5;
-const EFFECT_FIREWORKS: u8 = 6;
-const EFFECT_FLICKER: u8 = 7;
-const EFFECT_BREATHE: u8 = 8;
-const EFFECT_THEATER_CHASE: u8 = 9;
-const EFFECT_CONFETTI: u8 = 10;
-const EFFECT_SINELON: u8 = 11;
-const EFFECT_JUGGLE: u8 = 12;
-const EFFECT_BPM: u8 = 13;
-const EFFECT_FIRE_2012: u8 = 14;
-const EFFECT_PACIFICA: u8 = 15;
-const EFFECT_AURORA: u8 = 16;
-const EFFECT_PLASMA_FLOW: u8 = 17;
-const EFFECT_CIRCUS: u8 = 18;
-const EFFECT_STATIC_NOISE: u8 = 19;
-const EFFECT_MAX: u8 = EFFECT_STATIC_NOISE;
 
 // This creates a default app-descriptor required by the esp-idf bootloader.
 // For more information see: <https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/system/app_image_format.html#application-description>
@@ -363,8 +342,8 @@ fn handle_button_action(action: ButtonAction, now_ms: u64) {
 
 fn cycle_effect() {
     let current = LIGHT_EFFECT.load(Ordering::Relaxed);
-    let next = if current >= EFFECT_MAX {
-        EFFECT_NONE
+    let next = if current >= EFFECT_MAX_CODE {
+        EFFECT_NONE_CODE
     } else {
         current + 1
     };
@@ -444,56 +423,6 @@ fn effect_speed_value(slider: u8) -> u8 {
 
 fn current_effect_id() -> Option<EffectId> {
     effect_id_from_code(LIGHT_EFFECT.load(Ordering::Relaxed))
-}
-
-fn effect_id_from_code(code: u8) -> Option<EffectId> {
-    match code {
-        EFFECT_NONE => None,
-        EFFECT_RAINBOW => Some(EffectId::Rainbow),
-        EFFECT_COLOR_WIPE => Some(EffectId::ColorWipe),
-        EFFECT_SCAN => Some(EffectId::Scan),
-        EFFECT_TWINKLE => Some(EffectId::Twinkle),
-        EFFECT_RANDOM_TWINKLE => Some(EffectId::RandomTwinkle),
-        EFFECT_FIREWORKS => Some(EffectId::Fireworks),
-        EFFECT_FLICKER => Some(EffectId::Flicker),
-        EFFECT_BREATHE => Some(EffectId::Breathe),
-        EFFECT_THEATER_CHASE => Some(EffectId::TheaterChase),
-        EFFECT_CONFETTI => Some(EffectId::Confetti),
-        EFFECT_SINELON => Some(EffectId::Sinelon),
-        EFFECT_JUGGLE => Some(EffectId::Juggle),
-        EFFECT_BPM => Some(EffectId::Bpm),
-        EFFECT_FIRE_2012 => Some(EffectId::Fire2012),
-        EFFECT_PACIFICA => Some(EffectId::Pacifica),
-        EFFECT_AURORA => Some(EffectId::Aurora),
-        EFFECT_PLASMA_FLOW => Some(EffectId::PlasmaFlow),
-        EFFECT_CIRCUS => Some(EffectId::Circus),
-        EFFECT_STATIC_NOISE => Some(EffectId::StaticNoise),
-        _ => Some(EffectId::Rainbow),
-    }
-}
-
-fn effect_code_from_id(id: EffectId) -> u8 {
-    match id {
-        EffectId::Rainbow => EFFECT_RAINBOW,
-        EffectId::ColorWipe => EFFECT_COLOR_WIPE,
-        EffectId::Scan => EFFECT_SCAN,
-        EffectId::Twinkle => EFFECT_TWINKLE,
-        EffectId::RandomTwinkle => EFFECT_RANDOM_TWINKLE,
-        EffectId::Fireworks => EFFECT_FIREWORKS,
-        EffectId::Flicker => EFFECT_FLICKER,
-        EffectId::Breathe => EFFECT_BREATHE,
-        EffectId::TheaterChase => EFFECT_THEATER_CHASE,
-        EffectId::Confetti => EFFECT_CONFETTI,
-        EffectId::Sinelon => EFFECT_SINELON,
-        EffectId::Juggle => EFFECT_JUGGLE,
-        EffectId::Bpm => EFFECT_BPM,
-        EffectId::Fire2012 => EFFECT_FIRE_2012,
-        EffectId::Pacifica => EFFECT_PACIFICA,
-        EffectId::Aurora => EFFECT_AURORA,
-        EffectId::PlasmaFlow => EFFECT_PLASMA_FLOW,
-        EffectId::Circus => EFFECT_CIRCUS,
-        EffectId::StaticNoise => EFFECT_STATIC_NOISE,
-    }
 }
 
 fn current_effect_name() -> &'static str {
@@ -579,13 +508,7 @@ async fn run_mqtt_session(stack: Stack<'static>) -> Result<(), MqttRunError> {
     info!("MQTT connected: {:?}", event);
 
     publish_text(&mut session, MQTT_AVAILABILITY_TOPIC, "online", true).await?;
-    publish_text(
-        &mut session,
-        MQTT_DISCOVERY_TOPIC,
-        MQTT_DISCOVERY_PAYLOAD,
-        true,
-    )
-    .await?;
+    publish_light_discovery(&mut session).await?;
     publish_text(
         &mut session,
         MQTT_SPEED_DISCOVERY_TOPIC,
@@ -700,6 +623,31 @@ async fn publish_light_state(session: &mut Session<'_, TcpSocket<'_>>) -> Result
     publish_text(session, MQTT_STATE_TOPIC, payload.as_str(), true).await
 }
 
+async fn publish_light_discovery(
+    session: &mut Session<'_, TcpSocket<'_>>,
+) -> Result<(), MqttRunError> {
+    let mut payload: heapless::String<1400> = heapless::String::new();
+    write!(
+        payload,
+        r#"{{"name":"LED Strip","unique_id":"esp32_led_mqtt_60","schema":"json","command_topic":"esp32-led-mqtt/light/set","state_topic":"esp32-led-mqtt/light/state","availability_topic":"esp32-led-mqtt/status","payload_available":"online","payload_not_available":"offline","brightness":true,"brightness_scale":255,"supported_color_modes":["rgb"],"effect":true,"effect_list":["{}""#,
+        EFFECT_DISABLED_NAME
+    )
+    .map_err(|_| MqttRunError::StatePayloadTooLarge)?;
+
+    for definition in EFFECT_DEFINITIONS {
+        write!(payload, r#","{}""#, definition.name)
+            .map_err(|_| MqttRunError::StatePayloadTooLarge)?;
+    }
+
+    write!(
+        payload,
+        r#"],"device":{{"identifiers":["esp32_led_mqtt_60"],"name":"ESP32 LED MQTT","manufacturer":"esp32-led-mqtt","model":"ESP32-C6"}}}}"#
+    )
+    .map_err(|_| MqttRunError::StatePayloadTooLarge)?;
+
+    publish_text(session, MQTT_DISCOVERY_TOPIC, payload.as_str(), true).await
+}
+
 async fn publish_speed_state(session: &mut Session<'_, TcpSocket<'_>>) -> Result<(), MqttRunError> {
     let mut payload: heapless::String<3> = heapless::String::new();
     write!(payload, "{}", LIGHT_SPEED.load(Ordering::Relaxed))
@@ -762,7 +710,7 @@ fn handle_command(payload: &[u8]) -> bool {
 
     if let Some(effect) = command.effect {
         if effect.eq_ignore_ascii_case(EFFECT_DISABLED_NAME) {
-            LIGHT_EFFECT.store(EFFECT_NONE, Ordering::Relaxed);
+            LIGHT_EFFECT.store(EFFECT_NONE_CODE, Ordering::Relaxed);
             changed = true;
         } else if let Some(effect_id) = EffectId::from_name(effect) {
             LIGHT_EFFECT.store(effect_code_from_id(effect_id), Ordering::Relaxed);

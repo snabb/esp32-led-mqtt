@@ -1,5 +1,7 @@
 #![cfg_attr(not(test), no_std)]
 
+mod effects;
+
 use smart_leds::{
     RGB8,
     hsv::{Hsv, hsv2rgb},
@@ -7,6 +9,8 @@ use smart_leds::{
 
 pub const DEFAULT_BRIGHTNESS: u8 = 8;
 pub const EFFECT_DISABLED_NAME: &str = "None";
+pub const EFFECT_NONE_CODE: u8 = 0;
+pub const EFFECT_MAX_CODE: u8 = 20;
 const RANDOM_COLOR_MIN_DISTANCE: u16 = 160;
 const RANDOM_COLOR_MIN_BRIGHTNESS: u16 = 260;
 const RANDOM_COLOR_ATTEMPTS: usize = 12;
@@ -40,27 +44,63 @@ const DISTINCT_COLOR_FALLBACKS: [RGB8; 8] = [
         b: 255,
     },
 ];
-pub const EFFECT_IDS: [EffectId; 19] = [
-    EffectId::Rainbow,
-    EffectId::ColorWipe,
-    EffectId::Scan,
-    EffectId::Twinkle,
-    EffectId::RandomTwinkle,
-    EffectId::Fireworks,
-    EffectId::Flicker,
-    EffectId::Breathe,
-    EffectId::TheaterChase,
-    EffectId::Confetti,
-    EffectId::Sinelon,
-    EffectId::Juggle,
-    EffectId::Bpm,
-    EffectId::Fire2012,
-    EffectId::Pacifica,
-    EffectId::Aurora,
-    EffectId::PlasmaFlow,
-    EffectId::Circus,
-    EffectId::StaticNoise,
+pub const EFFECT_DEFINITIONS: [EffectDefinition; 20] = [
+    EffectDefinition::new(EffectId::Rainbow, 1, "Rainbow"),
+    EffectDefinition::new(EffectId::ColorWipe, 2, "Color Wipe"),
+    EffectDefinition::new(EffectId::Scan, 3, "Scan"),
+    EffectDefinition::new(EffectId::Twinkle, 4, "Twinkle"),
+    EffectDefinition::new(EffectId::RandomTwinkle, 5, "Random Twinkle"),
+    EffectDefinition::new(EffectId::Fireworks, 6, "Fireworks"),
+    EffectDefinition::new(EffectId::Flicker, 7, "Flicker"),
+    EffectDefinition::new(EffectId::Breathe, 8, "Breathe"),
+    EffectDefinition::new(EffectId::TheaterChase, 9, "Theater Chase"),
+    EffectDefinition::new(EffectId::Confetti, 10, "Confetti"),
+    EffectDefinition::new(EffectId::Sinelon, 11, "Sinelon"),
+    EffectDefinition::new(EffectId::Juggle, 12, "Juggle"),
+    EffectDefinition::new(EffectId::Bpm, 13, "BPM"),
+    EffectDefinition::new(EffectId::Fire2012, 14, "Fire 2012"),
+    EffectDefinition::new(EffectId::Pacifica, 15, "Pacifica"),
+    EffectDefinition::new(EffectId::Aurora, 16, "Aurora"),
+    EffectDefinition::new(EffectId::PlasmaFlow, 17, "Plasma Flow"),
+    EffectDefinition::new(EffectId::Circus, 18, "Circus"),
+    EffectDefinition::new(EffectId::StaticNoise, 19, "Static Noise"),
+    EffectDefinition::new(EffectId::PoliceCar, EFFECT_MAX_CODE, "Police Car"),
 ];
+pub const EFFECT_IDS: [EffectId; 20] = [
+    EFFECT_DEFINITIONS[0].id,
+    EFFECT_DEFINITIONS[1].id,
+    EFFECT_DEFINITIONS[2].id,
+    EFFECT_DEFINITIONS[3].id,
+    EFFECT_DEFINITIONS[4].id,
+    EFFECT_DEFINITIONS[5].id,
+    EFFECT_DEFINITIONS[6].id,
+    EFFECT_DEFINITIONS[7].id,
+    EFFECT_DEFINITIONS[8].id,
+    EFFECT_DEFINITIONS[9].id,
+    EFFECT_DEFINITIONS[10].id,
+    EFFECT_DEFINITIONS[11].id,
+    EFFECT_DEFINITIONS[12].id,
+    EFFECT_DEFINITIONS[13].id,
+    EFFECT_DEFINITIONS[14].id,
+    EFFECT_DEFINITIONS[15].id,
+    EFFECT_DEFINITIONS[16].id,
+    EFFECT_DEFINITIONS[17].id,
+    EFFECT_DEFINITIONS[18].id,
+    EFFECT_DEFINITIONS[19].id,
+];
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct EffectDefinition {
+    pub id: EffectId,
+    pub code: u8,
+    pub name: &'static str,
+}
+
+impl EffectDefinition {
+    const fn new(id: EffectId, code: u8, name: &'static str) -> Self {
+        Self { id, code, name }
+    }
+}
 
 #[derive(Clone, Copy)]
 pub struct RgbFrame<const N: usize> {
@@ -124,76 +164,49 @@ pub enum EffectId {
     PlasmaFlow,
     Circus,
     StaticNoise,
+    PoliceCar,
 }
 
 impl EffectId {
-    pub const fn name(self) -> &'static str {
-        match self {
-            Self::Rainbow => "Rainbow",
-            Self::ColorWipe => "Color Wipe",
-            Self::Scan => "Scan",
-            Self::Twinkle => "Twinkle",
-            Self::RandomTwinkle => "Random Twinkle",
-            Self::Fireworks => "Fireworks",
-            Self::Flicker => "Flicker",
-            Self::Breathe => "Breathe",
-            Self::TheaterChase => "Theater Chase",
-            Self::Confetti => "Confetti",
-            Self::Sinelon => "Sinelon",
-            Self::Juggle => "Juggle",
-            Self::Bpm => "BPM",
-            Self::Fire2012 => "Fire 2012",
-            Self::Pacifica => "Pacifica",
-            Self::Aurora => "Aurora",
-            Self::PlasmaFlow => "Plasma Flow",
-            Self::Circus => "Circus",
-            Self::StaticNoise => "Static Noise",
-        }
+    pub fn name(self) -> &'static str {
+        effect_definition(self).name
     }
 
     pub fn from_name(name: &str) -> Option<Self> {
-        if name.eq_ignore_ascii_case(Self::Rainbow.name()) {
-            Some(Self::Rainbow)
-        } else if name.eq_ignore_ascii_case(Self::ColorWipe.name()) {
-            Some(Self::ColorWipe)
-        } else if name.eq_ignore_ascii_case(Self::Scan.name()) {
-            Some(Self::Scan)
-        } else if name.eq_ignore_ascii_case(Self::Twinkle.name()) {
-            Some(Self::Twinkle)
-        } else if name.eq_ignore_ascii_case(Self::RandomTwinkle.name()) {
-            Some(Self::RandomTwinkle)
-        } else if name.eq_ignore_ascii_case(Self::Fireworks.name()) {
-            Some(Self::Fireworks)
-        } else if name.eq_ignore_ascii_case(Self::Flicker.name()) {
-            Some(Self::Flicker)
-        } else if name.eq_ignore_ascii_case(Self::Breathe.name()) {
-            Some(Self::Breathe)
-        } else if name.eq_ignore_ascii_case(Self::TheaterChase.name()) {
-            Some(Self::TheaterChase)
-        } else if name.eq_ignore_ascii_case(Self::Confetti.name()) {
-            Some(Self::Confetti)
-        } else if name.eq_ignore_ascii_case(Self::Sinelon.name()) {
-            Some(Self::Sinelon)
-        } else if name.eq_ignore_ascii_case(Self::Juggle.name()) {
-            Some(Self::Juggle)
-        } else if name.eq_ignore_ascii_case(Self::Bpm.name()) {
-            Some(Self::Bpm)
-        } else if name.eq_ignore_ascii_case(Self::Fire2012.name()) {
-            Some(Self::Fire2012)
-        } else if name.eq_ignore_ascii_case(Self::Pacifica.name()) {
-            Some(Self::Pacifica)
-        } else if name.eq_ignore_ascii_case(Self::Aurora.name()) {
-            Some(Self::Aurora)
-        } else if name.eq_ignore_ascii_case(Self::PlasmaFlow.name()) {
-            Some(Self::PlasmaFlow)
-        } else if name.eq_ignore_ascii_case(Self::Circus.name()) {
-            Some(Self::Circus)
-        } else if name.eq_ignore_ascii_case(Self::StaticNoise.name()) {
-            Some(Self::StaticNoise)
-        } else {
-            None
+        for definition in EFFECT_DEFINITIONS {
+            if name.eq_ignore_ascii_case(definition.name) {
+                return Some(definition.id);
+            }
+        }
+        None
+    }
+}
+
+pub fn effect_definition(id: EffectId) -> EffectDefinition {
+    for definition in EFFECT_DEFINITIONS {
+        if definition.id == id {
+            return definition;
         }
     }
+    EFFECT_DEFINITIONS[0]
+}
+
+pub fn effect_id_from_code(code: u8) -> Option<EffectId> {
+    if code == EFFECT_NONE_CODE {
+        return None;
+    }
+
+    for definition in EFFECT_DEFINITIONS {
+        if definition.code == code {
+            return Some(definition.id);
+        }
+    }
+
+    Some(EffectId::Rainbow)
+}
+
+pub fn effect_code_from_id(id: EffectId) -> u8 {
+    effect_definition(id).code
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -256,28 +269,7 @@ impl<const N: usize> EffectRuntime<N> {
     }
 
     pub fn render(&mut self, now_ms: u32) -> &RgbFrame<N> {
-        match self.params.id {
-            EffectId::Rainbow => self.render_rainbow(now_ms),
-            EffectId::ColorWipe => self.render_color_wipe(now_ms),
-            EffectId::Scan => self.render_scan(now_ms),
-            EffectId::Twinkle => self.render_twinkle(now_ms, false),
-            EffectId::RandomTwinkle => self.render_twinkle(now_ms, true),
-            EffectId::Fireworks => self.render_fireworks(now_ms),
-            EffectId::Flicker => self.render_flicker(now_ms),
-            EffectId::Breathe => self.render_breathe(now_ms),
-            EffectId::TheaterChase => self.render_theater_chase(now_ms),
-            EffectId::Confetti => self.render_confetti(now_ms),
-            EffectId::Sinelon => self.render_sinelon(now_ms),
-            EffectId::Juggle => self.render_juggle(now_ms),
-            EffectId::Bpm => self.render_bpm(now_ms),
-            EffectId::Fire2012 => self.render_fire2012(now_ms),
-            EffectId::Pacifica => self.render_pacifica(now_ms),
-            EffectId::Aurora => self.render_aurora(now_ms),
-            EffectId::PlasmaFlow => self.render_plasma_flow(now_ms),
-            EffectId::Circus => self.render_circus(now_ms),
-            EffectId::StaticNoise => self.render_static_noise(now_ms),
-        }
-
+        effects::render(self, now_ms);
         &self.frame
     }
 
@@ -290,369 +282,6 @@ impl<const N: usize> EffectRuntime<N> {
         self.effect_data.fill(0);
         self.twinkle_color.fill(RGB8 { r: 0, g: 0, b: 0 });
         self.frame.set_all(RGB8 { r: 0, g: 0, b: 0 });
-    }
-
-    fn render_rainbow(&mut self, now_ms: u32) {
-        let step = u16::from(self.params.speed.max(1)) * 3;
-        self.phase = (now_ms as u16).wrapping_mul(step);
-        let width = 50_u16.max(N as u16);
-        let hue_delta = u16::MAX / width;
-
-        for (index, pixel) in self.frame.as_mut_slice().iter_mut().enumerate() {
-            let hue = self
-                .phase
-                .wrapping_add((index as u16).wrapping_mul(hue_delta));
-            *pixel = hsv_rainbow((hue >> 8) as u8, 240, 255);
-        }
-    }
-
-    fn render_color_wipe(&mut self, now_ms: u32) {
-        if self.elapsed(now_ms, speed_interval(40, self.params.speed)) {
-            self.wipe_index = (self.wipe_index + 1) % (N + 1);
-        }
-
-        for (index, pixel) in self.frame.as_mut_slice().iter_mut().enumerate() {
-            *pixel = if index < self.wipe_index {
-                self.params.primary
-            } else {
-                RGB8 { r: 0, g: 0, b: 0 }
-            };
-        }
-    }
-
-    fn render_scan(&mut self, now_ms: u32) {
-        if self.elapsed(now_ms, speed_interval(50, self.params.speed)) {
-            if self.scan_forward {
-                if self.scan_position + 1 >= N {
-                    self.scan_forward = false;
-                    self.scan_position = self.scan_position.saturating_sub(1);
-                } else {
-                    self.scan_position += 1;
-                }
-            } else if self.scan_position == 0 {
-                self.scan_forward = true;
-                self.scan_position = (self.scan_position + 1).min(N.saturating_sub(1));
-            } else {
-                self.scan_position -= 1;
-            }
-        }
-
-        self.frame.set_all(RGB8 { r: 0, g: 0, b: 0 });
-        for offset in 0..scan_width(N) {
-            let index = self.scan_position.saturating_add(offset);
-            if index < N {
-                self.frame.as_mut_slice()[index] = self.params.primary;
-            }
-        }
-    }
-
-    fn render_twinkle(&mut self, now_ms: u32, random_color: bool) {
-        let interval = if random_color { 32 } else { 4 };
-        if self.elapsed(now_ms, speed_interval(interval, self.params.speed)) {
-            for index in 0..N {
-                self.effect_data[index] = self.effect_data[index].saturating_sub(8);
-                if self.effect_data[index] == 0 && self.chance(self.params.intensity, 20) {
-                    self.effect_data[index] = 255;
-                    self.twinkle_color[index] = if random_color {
-                        hsv_rainbow(self.rng.next_u8(), 220, 255)
-                    } else {
-                        self.params.primary
-                    };
-                }
-            }
-        }
-
-        for index in 0..N {
-            let level = half_sin8(self.effect_data[index]);
-            self.frame.as_mut_slice()[index] = scale_rgb(self.twinkle_color[index], level);
-        }
-    }
-
-    fn render_fireworks(&mut self, now_ms: u32) {
-        if self.elapsed(now_ms, speed_interval(32, self.params.speed)) {
-            for pixel in self.frame.as_mut_slice() {
-                *pixel = fade_to_black(*pixel, 120);
-            }
-
-            let sparks = (u16::from(self.params.intensity) * N as u16) / 2550 + 1;
-            for _ in 0..sparks {
-                if self.chance(self.params.intensity, 10) {
-                    let index = (self.rng.next_u16() as usize) % N.max(1);
-                    self.frame.as_mut_slice()[index] = self.params.primary;
-                }
-            }
-        }
-    }
-
-    fn render_flicker(&mut self, now_ms: u32) {
-        if self.elapsed(now_ms, speed_interval(16, self.params.speed)) {
-            for index in 0..N {
-                let flicker = 224_u8.saturating_add(self.rng.next_u8() >> 3);
-                self.frame.as_mut_slice()[index] = scale_rgb(self.params.primary, flicker);
-            }
-        }
-    }
-
-    fn render_breathe(&mut self, now_ms: u32) {
-        let speed = u32::from(self.params.speed.max(1));
-        let wave = ((now_ms.saturating_mul(speed) / 96) & 0xff) as u8;
-        let level = half_sin8(wave).saturating_add(8);
-        self.frame.set_all(scale_rgb(self.params.primary, level));
-    }
-
-    fn render_theater_chase(&mut self, now_ms: u32) {
-        if self.elapsed(now_ms, speed_interval(120, self.params.speed)) {
-            self.phase = (self.phase + 1) % 3;
-        }
-
-        for (index, pixel) in self.frame.as_mut_slice().iter_mut().enumerate() {
-            *pixel = if (index + usize::from(self.phase)) % 3 == 0 {
-                self.params.primary
-            } else {
-                RGB8 { r: 0, g: 0, b: 0 }
-            };
-        }
-    }
-
-    fn render_confetti(&mut self, now_ms: u32) {
-        if self.elapsed(now_ms, speed_interval(24, self.params.speed)) {
-            for pixel in self.frame.as_mut_slice() {
-                *pixel = fade_to_black(*pixel, 32);
-            }
-
-            if N > 0 {
-                let index = (self.rng.next_u16() as usize) % N;
-                let hue = self
-                    .params
-                    .primary
-                    .r
-                    .wrapping_add(self.rng.next_u8() & 0x3f);
-                self.frame.as_mut_slice()[index] = hsv_rainbow(hue, 200, 255);
-            }
-        }
-    }
-
-    fn render_sinelon(&mut self, now_ms: u32) {
-        if self.elapsed(now_ms, speed_interval(20, self.params.speed)) {
-            for pixel in self.frame.as_mut_slice() {
-                *pixel = fade_to_black(*pixel, 40);
-            }
-        }
-
-        if let Some(position) = beat_position(now_ms / 5, self.params.speed, N) {
-            self.frame.as_mut_slice()[position] = self.params.primary;
-        }
-    }
-
-    fn render_juggle(&mut self, now_ms: u32) {
-        for pixel in self.frame.as_mut_slice() {
-            *pixel = fade_to_black(*pixel, 48);
-        }
-
-        if N == 0 {
-            return;
-        }
-
-        let dots = N.min(6);
-        for dot in 0..dots {
-            let speed = juggle_dot_speed(self.params.speed, dot as u8);
-            let time = now_ms / 4;
-            if let Some(position) = beat_position(time.wrapping_add((dot * 73) as u32), speed, N) {
-                let hue = (dot as u8).wrapping_mul(32).wrapping_add(self.phase as u8);
-                let color = hsv_rainbow(hue, 220, 255);
-                let blended = add_rgb(self.frame.as_slice()[position], color);
-                self.frame.as_mut_slice()[position] = blended;
-            }
-        }
-        self.phase = self.phase.wrapping_add(1);
-    }
-
-    fn render_bpm(&mut self, now_ms: u32) {
-        let bpm = 30 + u32::from(self.params.speed) / 2;
-        let wave = (((now_ms / 4).saturating_mul(bpm) / 60) & 0xff) as u8;
-        let level = half_sin8(wave).saturating_add(48);
-
-        for (index, pixel) in self.frame.as_mut_slice().iter_mut().enumerate() {
-            let hue = ((index * 256) / N.max(1)) as u8;
-            let base = hsv_rainbow(hue.wrapping_add(self.params.primary.r), 220, 255);
-            *pixel = scale_rgb(base, level);
-        }
-    }
-
-    fn render_fire2012(&mut self, now_ms: u32) {
-        if !self.elapsed(now_ms, speed_interval(90, self.params.speed)) {
-            return;
-        }
-
-        for index in 0..N {
-            let cooling =
-                self.rng.next_u8() % (u8::try_from((55 * 10) / N.max(1) + 2).unwrap_or(u8::MAX));
-            self.effect_data[index] = self.effect_data[index].saturating_sub(cooling);
-        }
-
-        for index in (2..N).rev() {
-            let heat = (u16::from(self.effect_data[index - 1])
-                + u16::from(self.effect_data[index - 2])
-                + u16::from(self.effect_data[index - 2]))
-                / 3;
-            self.effect_data[index] = heat as u8;
-        }
-
-        if N > 0 && self.chance(self.params.intensity, 45) {
-            let spark_index = (self.rng.next_u8() as usize) % fire_spark_height(N);
-            let spark = 160_u8.saturating_add(self.rng.next_u8() % 96);
-            self.effect_data[spark_index] = self.effect_data[spark_index].saturating_add(spark);
-        }
-
-        for index in 0..N {
-            self.frame.as_mut_slice()[index] = heat_color(self.effect_data[index]);
-        }
-    }
-
-    fn render_pacifica(&mut self, now_ms: u32) {
-        let speed = u32::from(self.params.speed.max(1));
-        let phase_a = ((now_ms.saturating_mul(speed) / 128) & 0xff) as u8;
-        let phase_b = ((now_ms.saturating_mul(speed) / 197) & 0xff) as u8;
-
-        for (index, pixel) in self.frame.as_mut_slice().iter_mut().enumerate() {
-            let pos = ((index * 256) / N.max(1)) as u8;
-            let wave_a = half_sin8(pos.wrapping_add(phase_a));
-            let wave_b = half_sin8(pos.wrapping_mul(2).wrapping_sub(phase_b));
-            let green = scale8(wave_a, 140).saturating_add(16);
-            let blue = scale8(wave_b.saturating_add(wave_a / 2), 210).saturating_add(32);
-            let white = scale8(wave_a.saturating_sub(190), 80);
-            *pixel = RGB8 {
-                r: white,
-                g: green.saturating_add(white),
-                b: blue.saturating_add(white),
-            };
-        }
-    }
-
-    fn render_aurora(&mut self, now_ms: u32) {
-        let speed = u32::from(self.params.speed.max(1));
-        let phase_a = ((now_ms.saturating_mul(speed) / 181) & 0xff) as u8;
-        let phase_b = ((now_ms.saturating_mul(speed) / 313) & 0xff) as u8;
-        let phase_c = ((now_ms.saturating_mul(speed) / 89) & 0xff) as u8;
-        let shimmer_gain = self.params.intensity.max(32);
-
-        for (index, pixel) in self.frame.as_mut_slice().iter_mut().enumerate() {
-            let pos = ((index * 256) / N.max(1)) as u8;
-            let curtain = half_sin8(pos.wrapping_add(phase_a));
-            let fold = half_sin8(pos.wrapping_mul(3).wrapping_sub(phase_b));
-            let shimmer_wave = half_sin8(pos.wrapping_mul(7).wrapping_add(phase_c));
-            let shimmer = scale8(shimmer_wave.saturating_sub(212), shimmer_gain);
-
-            let green = scale8(curtain, 170).saturating_add(scale8(fold, 80));
-            let blue = scale8(curtain, 95).saturating_add(scale8(fold, 185));
-            let violet = scale8(fold.saturating_sub(curtain / 2), 130);
-
-            *pixel = RGB8 {
-                r: violet.saturating_add(shimmer),
-                g: green.saturating_add(shimmer),
-                b: blue.saturating_add(shimmer),
-            };
-        }
-    }
-
-    fn render_plasma_flow(&mut self, now_ms: u32) {
-        let speed = u32::from(self.params.speed.max(1));
-        let phase_a = ((now_ms.saturating_mul(speed) / 97) & 0xff) as u8;
-        let phase_b = ((now_ms.saturating_mul(speed) / 151) & 0xff) as u8;
-        let phase_c = ((now_ms.saturating_mul(speed) / 211) & 0xff) as u8;
-        let brightness_floor = 64_u8.saturating_add(self.params.intensity / 8);
-
-        for (index, pixel) in self.frame.as_mut_slice().iter_mut().enumerate() {
-            let pos = ((index * 256) / N.max(1)) as u8;
-            let wave_a = half_sin8(pos.wrapping_add(phase_a));
-            let wave_b = half_sin8(pos.wrapping_mul(2).wrapping_sub(phase_b));
-            let wave_c = half_sin8(pos.wrapping_mul(5).wrapping_add(phase_c));
-            let mixed = ((u16::from(wave_a) + u16::from(wave_b) + u16::from(wave_c)) / 3) as u8;
-            let hue = mixed
-                .wrapping_add(phase_b)
-                .wrapping_add(self.params.primary.r / 2);
-            let value = brightness_floor.saturating_add(scale8(mixed, 255 - brightness_floor));
-
-            *pixel = hsv_rainbow(hue, 240, value);
-        }
-    }
-
-    fn render_circus(&mut self, now_ms: u32) {
-        let panel_width = (N / 12).clamp(3, 6);
-        let border_width = 1 + usize::from(N >= 48);
-        let group_width = panel_width + border_width;
-        let step = (now_ms / speed_interval(120, self.params.speed)) as usize;
-        let marquee_on = (step & 1) == 0;
-
-        for (index, pixel) in self.frame.as_mut_slice().iter_mut().enumerate() {
-            let moving = index + step;
-            let position = moving % group_width;
-
-            *pixel = if position < border_width {
-                if (moving / group_width + usize::from(marquee_on)) & 1 == 0 {
-                    RGB8 {
-                        r: 255,
-                        g: 255,
-                        b: 255,
-                    }
-                } else {
-                    RGB8 {
-                        r: 255,
-                        g: 192,
-                        b: 0,
-                    }
-                }
-            } else {
-                circus_panel_color((moving / group_width) as u8)
-            };
-        }
-    }
-
-    fn render_static_noise(&mut self, now_ms: u32) {
-        if !self.elapsed(now_ms, speed_interval(24, self.params.speed)) {
-            return;
-        }
-
-        let color_chance = 8 + self.params.intensity / 12;
-
-        for pixel in self.frame.as_mut_slice() {
-            let level = if self.rng.next_u8() & 1 == 0 {
-                self.rng.next_u8() >> 2
-            } else {
-                192_u8.saturating_add(self.rng.next_u8() >> 2)
-            };
-
-            *pixel = if self.rng.next_u8() < color_chance {
-                match self.rng.next_u8() & 0x03 {
-                    0 => RGB8 {
-                        r: 255,
-                        g: level,
-                        b: level,
-                    },
-                    1 => RGB8 {
-                        r: level,
-                        g: 255,
-                        b: level,
-                    },
-                    2 => RGB8 {
-                        r: level,
-                        g: level,
-                        b: 255,
-                    },
-                    _ => RGB8 {
-                        r: 255,
-                        g: 255,
-                        b: level,
-                    },
-                }
-            } else {
-                RGB8 {
-                    r: level,
-                    g: level,
-                    b: level,
-                }
-            };
-        }
     }
 
     fn elapsed(&mut self, now_ms: u32, interval_ms: u32) -> bool {
@@ -778,6 +407,16 @@ fn gamma_correct(value: u8) -> u8 {
 
 fn scan_width(count: usize) -> usize {
     (count / 20).clamp(1, 4)
+}
+
+fn police_strobe_pixel(index: usize, count: usize) -> bool {
+    if count <= 2 {
+        return true;
+    }
+
+    let edge_width = (count / 12).clamp(1, 4);
+    let center = count / 2;
+    index < edge_width || index + edge_width >= count || index.abs_diff(center) <= edge_width / 2
 }
 
 fn speed_interval(base_ms: u32, speed: u8) -> u32 {
@@ -1010,6 +649,7 @@ mod tests {
             EffectId::PlasmaFlow,
             EffectId::Circus,
             EffectId::StaticNoise,
+            EffectId::PoliceCar,
         ] {
             let mut runtime = EffectRuntime::<8>::new(EffectParams {
                 id: effect,
@@ -1033,6 +673,7 @@ mod tests {
             EffectId::PlasmaFlow,
             EffectId::Circus,
             EffectId::StaticNoise,
+            EffectId::PoliceCar,
         ] {
             let mut runtime = EffectRuntime::<1>::new(EffectParams {
                 id: effect,
