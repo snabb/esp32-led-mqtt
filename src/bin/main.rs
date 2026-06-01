@@ -36,6 +36,7 @@ use esp_radio::wifi::{
 };
 use esp32_led_mqtt::{
     DEFAULT_BRIGHTNESS, EFFECT_DISABLED_NAME, EffectId, EffectParams, EffectRuntime, RgbFrame,
+    random_distinct_color,
 };
 use heapless::Vec;
 use log::{error, info, warn};
@@ -371,26 +372,25 @@ fn cycle_effect() {
 }
 
 fn set_random_color(now_ms: u64) {
+    let previous = current_color();
     let mut rng = (now_ms as u32)
-        ^ (u32::from(LIGHT_RED.load(Ordering::Relaxed)) << 16)
-        ^ (u32::from(LIGHT_GREEN.load(Ordering::Relaxed)) << 8)
-        ^ u32::from(LIGHT_BLUE.load(Ordering::Relaxed))
+        ^ (u32::from(previous.r) << 16)
+        ^ (u32::from(previous.g) << 8)
+        ^ u32::from(previous.b)
         ^ 0x9e37_79b9;
-    let r = next_random_byte(&mut rng);
-    let g = next_random_byte(&mut rng);
-    let b = next_random_byte(&mut rng);
+    let color = random_distinct_color(previous, next_random_u32(&mut rng));
 
-    LIGHT_RED.store(r, Ordering::Relaxed);
-    LIGHT_GREEN.store(g, Ordering::Relaxed);
-    LIGHT_BLUE.store(b, Ordering::Relaxed);
+    LIGHT_RED.store(color.r, Ordering::Relaxed);
+    LIGHT_GREEN.store(color.g, Ordering::Relaxed);
+    LIGHT_BLUE.store(color.b, Ordering::Relaxed);
     mark_light_state_dirty();
 }
 
-fn next_random_byte(state: &mut u32) -> u8 {
+fn next_random_u32(state: &mut u32) -> u32 {
     *state ^= *state << 13;
     *state ^= *state >> 17;
     *state ^= *state << 5;
-    (*state >> 24) as u8
+    *state
 }
 
 fn mark_light_state_dirty() {
