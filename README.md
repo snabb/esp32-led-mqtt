@@ -72,17 +72,6 @@ required. `mqtt_broker` may be a bare IPv4 address or a DNS hostname.
 omitted when the broker does not use authentication. Editing `src/secrets.rs`
 modifies a tracked file; use `secrets.yaml` for private local credentials.
 
-## Build and Check
-
-The repository pins the Rust target and ESP flash runner in `.cargo/config.toml`.
-
-```sh
-cargo fmt --check
-cargo test --lib --target x86_64-unknown-linux-gnu
-cargo check --target riscv32imac-unknown-none-elf
-cargo clippy --target riscv32imac-unknown-none-elf -- -D warnings
-```
-
 ## Flash
 
 Connect the ESP32-C6 over USB and run:
@@ -122,3 +111,30 @@ The `None` effect disables animations and uses the Home Assistant RGB color
 directly. `Effect Speed` is a 1-128 slider with finer adjustment at slow speeds;
 the default is `64`. The default boot effect is `Rainbow` at the firmware
 default brightness.
+
+## Development
+
+### Build and Check
+
+The repository pins the Rust target and ESP flash runner in `.cargo/config.toml`.
+These commands are useful before submitting changes; they are not required
+before flashing a configured device.
+
+```sh
+cargo fmt --check
+cargo test --lib --target x86_64-unknown-linux-gnu
+cargo check
+cargo clippy --target riscv32imac-unknown-none-elf --lib --bin esp32-led-mqtt
+```
+
+### Adding Effects
+
+Effects live in `src/effects`, with one file per effect. To add one:
+
+1. Add `src/effects/my_effect.rs` with a `render` function.
+2. Add `mod my_effect;` and one dispatch arm in `src/effects/mod.rs`.
+3. Add the `EffectId` variant and `EffectDefinition` entry in `src/lib.rs`.
+4. Add the effect to the animation tests when it should change over time.
+
+Home Assistant discovery, name parsing, button cycling, and numeric effect
+codes are derived from `EFFECT_DEFINITIONS`.
