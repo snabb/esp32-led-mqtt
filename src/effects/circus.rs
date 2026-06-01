@@ -1,4 +1,4 @@
-use crate::{EffectRuntime, circus_panel_color, speed_interval};
+use crate::{EffectRuntime, speed_interval};
 use smart_leds::RGB8;
 
 pub(super) fn render<const N: usize>(runtime: &mut EffectRuntime<N>, now_ms: u32) {
@@ -29,5 +29,26 @@ pub(super) fn render<const N: usize>(runtime: &mut EffectRuntime<N>, now_ms: u32
         } else {
             circus_panel_color((moving / group_width) as u8)
         };
+    }
+}
+
+fn circus_panel_color(index: u8) -> RGB8 {
+    match index % 4 {
+        0 => RGB8 { r: 255, g: 0, b: 0 },
+        1 => RGB8 {
+            r: 0,
+            g: 64,
+            b: 255,
+        },
+        2 => RGB8 {
+            r: 255,
+            g: 224,
+            b: 0,
+        },
+        _ => RGB8 {
+            r: 255,
+            g: 0,
+            b: 160,
+        },
     }
 }

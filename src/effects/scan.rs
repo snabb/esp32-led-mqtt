@@ -1,4 +1,4 @@
-use crate::{EffectRuntime, scan_width, speed_interval};
+use crate::{EffectRuntime, speed_interval};
 use smart_leds::RGB8;
 
 pub(super) fn render<const N: usize>(runtime: &mut EffectRuntime<N>, now_ms: u32) {
@@ -25,4 +25,8 @@ pub(super) fn render<const N: usize>(runtime: &mut EffectRuntime<N>, now_ms: u32
             runtime.frame.as_mut_slice()[index] = runtime.params.primary;
         }
     }
+}
+
+fn scan_width(count: usize) -> usize {
+    (count / 20).clamp(1, 4)
 }

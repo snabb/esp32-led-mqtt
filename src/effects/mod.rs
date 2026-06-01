@@ -22,6 +22,7 @@ mod sinelon;
 mod static_noise;
 mod theater_chase;
 mod twinkle;
+mod util;
 
 pub(crate) fn render<const N: usize>(runtime: &mut EffectRuntime<N>, now_ms: u32) {
     match runtime.params.id {

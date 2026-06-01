@@ -37,7 +37,7 @@ use esp_radio::wifi::{
 use esp32_led_mqtt::{
     DEFAULT_BRIGHTNESS, EFFECT_DEFINITIONS, EFFECT_DISABLED_NAME, EFFECT_MAX_CODE,
     EFFECT_NONE_CODE, EffectId, EffectParams, EffectRuntime, RgbFrame, effect_code_from_id,
-    effect_id_from_code, random_distinct_color,
+    effect_id_from_code, random_color,
 };
 use heapless::Vec;
 use log::{error, info, warn};
@@ -358,7 +358,7 @@ fn set_random_color(now_ms: u64) {
         ^ (u32::from(previous.g) << 8)
         ^ u32::from(previous.b)
         ^ 0x9e37_79b9;
-    let color = random_distinct_color(previous, next_random_u32(&mut rng));
+    let color = random_color::from_seed(previous, next_random_u32(&mut rng));
 
     LIGHT_RED.store(color.r, Ordering::Relaxed);
     LIGHT_GREEN.store(color.g, Ordering::Relaxed);
@@ -627,6 +627,11 @@ async fn publish_light_discovery(
     session: &mut Session<'_, TcpSocket<'_>>,
 ) -> Result<(), MqttRunError> {
     let mut payload: heapless::String<1400> = heapless::String::new();
+    write_light_discovery_payload(&mut payload)?;
+    publish_text(session, MQTT_DISCOVERY_TOPIC, payload.as_str(), true).await
+}
+
+fn write_light_discovery_payload(payload: &mut heapless::String<1400>) -> Result<(), MqttRunError> {
     write!(
         payload,
         r#"{{"name":"LED Strip","unique_id":"esp32_led_mqtt_60","schema":"json","command_topic":"esp32-led-mqtt/light/set","state_topic":"esp32-led-mqtt/light/state","availability_topic":"esp32-led-mqtt/status","payload_available":"online","payload_not_available":"offline","brightness":true,"brightness_scale":255,"supported_color_modes":["rgb"],"effect":true,"effect_list":["{}""#,
@@ -643,9 +648,7 @@ async fn publish_light_discovery(
         payload,
         r#"],"device":{{"identifiers":["esp32_led_mqtt_60"],"name":"ESP32 LED MQTT","manufacturer":"esp32-led-mqtt","model":"ESP32-C6"}}}}"#
     )
-    .map_err(|_| MqttRunError::StatePayloadTooLarge)?;
-
-    publish_text(session, MQTT_DISCOVERY_TOPIC, payload.as_str(), true).await
+    .map_err(|_| MqttRunError::StatePayloadTooLarge)
 }
 
 async fn publish_speed_state(session: &mut Session<'_, TcpSocket<'_>>) -> Result<(), MqttRunError> {

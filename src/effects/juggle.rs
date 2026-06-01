@@ -1,4 +1,6 @@
-use crate::{EffectRuntime, add_rgb, beat_position, fade_to_black, hsv_rainbow, juggle_dot_speed};
+use super::util::beat_position;
+use crate::{EffectRuntime, fade_to_black, hsv_rainbow};
+use smart_leds::RGB8;
 
 pub(super) fn render<const N: usize>(runtime: &mut EffectRuntime<N>, now_ms: u32) {
     for pixel in runtime.frame.as_mut_slice() {
@@ -23,4 +25,17 @@ pub(super) fn render<const N: usize>(runtime: &mut EffectRuntime<N>, now_ms: u32
         }
     }
     runtime.phase = runtime.phase.wrapping_add(1);
+}
+
+fn juggle_dot_speed(base_speed: u8, dot: u8) -> u8 {
+    let speed = u16::from(base_speed) + u16::from(dot) * 3;
+    speed.min(u16::from(u8::MAX)) as u8
+}
+
+fn add_rgb(left: RGB8, right: RGB8) -> RGB8 {
+    RGB8 {
+        r: left.r.saturating_add(right.r),
+        g: left.g.saturating_add(right.g),
+        b: left.b.saturating_add(right.b),
+    }
 }

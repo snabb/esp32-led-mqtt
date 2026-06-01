@@ -1,6 +1,7 @@
 #![cfg_attr(not(test), no_std)]
 
 mod effects;
+pub mod random_color;
 
 use smart_leds::{
     RGB8,
@@ -11,39 +12,6 @@ pub const DEFAULT_BRIGHTNESS: u8 = 8;
 pub const EFFECT_DISABLED_NAME: &str = "None";
 pub const EFFECT_NONE_CODE: u8 = 0;
 pub const EFFECT_MAX_CODE: u8 = 20;
-const RANDOM_COLOR_MIN_DISTANCE: u16 = 160;
-const RANDOM_COLOR_MIN_BRIGHTNESS: u16 = 260;
-const RANDOM_COLOR_ATTEMPTS: usize = 12;
-const DISTINCT_COLOR_FALLBACKS: [RGB8; 8] = [
-    RGB8 { r: 255, g: 0, b: 0 },
-    RGB8 { r: 0, g: 255, b: 0 },
-    RGB8 { r: 0, g: 0, b: 255 },
-    RGB8 {
-        r: 255,
-        g: 255,
-        b: 0,
-    },
-    RGB8 {
-        r: 0,
-        g: 255,
-        b: 255,
-    },
-    RGB8 {
-        r: 255,
-        g: 0,
-        b: 255,
-    },
-    RGB8 {
-        r: 255,
-        g: 96,
-        b: 0,
-    },
-    RGB8 {
-        r: 96,
-        g: 0,
-        b: 255,
-    },
-];
 pub const EFFECT_DEFINITIONS: [EffectDefinition; 20] = [
     EffectDefinition::new(EffectId::Rainbow, 1, "Rainbow"),
     EffectDefinition::new(EffectId::ColorWipe, 2, "Color Wipe"),
@@ -66,29 +34,6 @@ pub const EFFECT_DEFINITIONS: [EffectDefinition; 20] = [
     EffectDefinition::new(EffectId::StaticNoise, 19, "Static Noise"),
     EffectDefinition::new(EffectId::PoliceCar, EFFECT_MAX_CODE, "Police Car"),
 ];
-pub const EFFECT_IDS: [EffectId; 20] = [
-    EFFECT_DEFINITIONS[0].id,
-    EFFECT_DEFINITIONS[1].id,
-    EFFECT_DEFINITIONS[2].id,
-    EFFECT_DEFINITIONS[3].id,
-    EFFECT_DEFINITIONS[4].id,
-    EFFECT_DEFINITIONS[5].id,
-    EFFECT_DEFINITIONS[6].id,
-    EFFECT_DEFINITIONS[7].id,
-    EFFECT_DEFINITIONS[8].id,
-    EFFECT_DEFINITIONS[9].id,
-    EFFECT_DEFINITIONS[10].id,
-    EFFECT_DEFINITIONS[11].id,
-    EFFECT_DEFINITIONS[12].id,
-    EFFECT_DEFINITIONS[13].id,
-    EFFECT_DEFINITIONS[14].id,
-    EFFECT_DEFINITIONS[15].id,
-    EFFECT_DEFINITIONS[16].id,
-    EFFECT_DEFINITIONS[17].id,
-    EFFECT_DEFINITIONS[18].id,
-    EFFECT_DEFINITIONS[19].id,
-];
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct EffectDefinition {
     pub id: EffectId,
@@ -371,148 +316,13 @@ pub fn half_sin8(value: u8) -> u8 {
     }
 }
 
-pub fn random_distinct_color(previous: RGB8, seed: u32) -> RGB8 {
-    let mut rng = XorShift32::new(seed ^ 0xa5a5_5a5a);
-
-    for _ in 0..RANDOM_COLOR_ATTEMPTS {
-        let candidate = RGB8 {
-            r: rng.next_u8(),
-            g: rng.next_u8(),
-            b: rng.next_u8(),
-        };
-        if color_distance(previous, candidate) >= RANDOM_COLOR_MIN_DISTANCE
-            && color_brightness(candidate) >= RANDOM_COLOR_MIN_BRIGHTNESS
-        {
-            return candidate;
-        }
-    }
-
-    farthest_fallback_color(previous)
-}
-
-pub fn color_distance(left: RGB8, right: RGB8) -> u16 {
-    u16::from(left.r.abs_diff(right.r))
-        + u16::from(left.g.abs_diff(right.g))
-        + u16::from(left.b.abs_diff(right.b))
-}
-
-pub fn color_brightness(color: RGB8) -> u16 {
-    u16::from(color.r) + u16::from(color.g) + u16::from(color.b)
-}
-
 fn gamma_correct(value: u8) -> u8 {
     let value = u16::from(value);
     ((value * value) / u16::from(u8::MAX)) as u8
 }
 
-fn scan_width(count: usize) -> usize {
-    (count / 20).clamp(1, 4)
-}
-
-fn police_strobe_pixel(index: usize, count: usize) -> bool {
-    if count <= 2 {
-        return true;
-    }
-
-    let edge_width = (count / 12).clamp(1, 4);
-    let center = count / 2;
-    index < edge_width || index + edge_width >= count || index.abs_diff(center) <= edge_width / 2
-}
-
 fn speed_interval(base_ms: u32, speed: u8) -> u32 {
     ((base_ms * 10) / u32::from(speed.max(1))).max(1)
-}
-
-fn juggle_dot_speed(base_speed: u8, dot: u8) -> u8 {
-    let speed = u16::from(base_speed) + u16::from(dot) * 3;
-    speed.min(u16::from(u8::MAX)) as u8
-}
-
-fn beat_position(now_ms: u32, speed: u8, count: usize) -> Option<usize> {
-    if count == 0 {
-        return None;
-    }
-    if count == 1 {
-        return Some(0);
-    }
-
-    let span = (count - 1) * 2;
-    let step = ((now_ms / speed_interval(16, speed)) as usize) % span;
-    Some(if step < count { step } else { span - step })
-}
-
-fn add_rgb(left: RGB8, right: RGB8) -> RGB8 {
-    RGB8 {
-        r: left.r.saturating_add(right.r),
-        g: left.g.saturating_add(right.g),
-        b: left.b.saturating_add(right.b),
-    }
-}
-
-fn heat_color(heat: u8) -> RGB8 {
-    let ramp = (heat & 0x3f) << 2;
-    match heat >> 6 {
-        0 => RGB8 {
-            r: ramp,
-            g: 0,
-            b: 0,
-        },
-        1 => RGB8 {
-            r: 255,
-            g: ramp,
-            b: 0,
-        },
-        2 => RGB8 {
-            r: 255,
-            g: 255,
-            b: ramp,
-        },
-        _ => RGB8 {
-            r: 255,
-            g: 255,
-            b: 255,
-        },
-    }
-}
-
-fn circus_panel_color(index: u8) -> RGB8 {
-    match index % 4 {
-        0 => RGB8 { r: 255, g: 0, b: 0 },
-        1 => RGB8 {
-            r: 0,
-            g: 64,
-            b: 255,
-        },
-        2 => RGB8 {
-            r: 255,
-            g: 224,
-            b: 0,
-        },
-        _ => RGB8 {
-            r: 255,
-            g: 0,
-            b: 160,
-        },
-    }
-}
-
-fn fire_spark_height(count: usize) -> usize {
-    (count / 6).clamp(1, 10)
-}
-
-fn farthest_fallback_color(previous: RGB8) -> RGB8 {
-    let mut best = DISTINCT_COLOR_FALLBACKS[0];
-    let mut best_distance = color_distance(previous, best);
-
-    for candidate in DISTINCT_COLOR_FALLBACKS.iter().copied().skip(1) {
-        let distance = color_distance(previous, candidate);
-        if distance > best_distance {
-            best = candidate;
-            best_distance = distance;
-        }
-    }
-
-    best
 }
 
 #[derive(Clone, Copy)]
@@ -574,40 +384,6 @@ mod tests {
     }
 
     #[test]
-    fn random_distinct_color_moves_far_from_previous_color() {
-        for previous in [
-            RGB8 { r: 0, g: 0, b: 0 },
-            RGB8 {
-                r: 255,
-                g: 96,
-                b: 24,
-            },
-            RGB8 {
-                r: 128,
-                g: 128,
-                b: 128,
-            },
-            RGB8 {
-                r: 255,
-                g: 255,
-                b: 255,
-            },
-        ] {
-            for seed in 0..64 {
-                let next = random_distinct_color(previous, seed);
-                assert!(
-                    color_distance(previous, next) >= RANDOM_COLOR_MIN_DISTANCE,
-                    "{previous:?} -> {next:?} was too close"
-                );
-                assert!(
-                    color_brightness(next) >= RANDOM_COLOR_MIN_BRIGHTNESS,
-                    "{next:?} was too dark"
-                );
-            }
-        }
-    }
-
-    #[test]
     fn rainbow_effect_changes_over_time() {
         let mut runtime = EffectRuntime::<8>::new(EffectParams::default());
         let first = runtime.render(0).as_slice().to_vec();
@@ -618,18 +394,19 @@ mod tests {
 
     #[test]
     fn effect_names_round_trip() {
-        for effect in EFFECT_IDS {
-            assert_eq!(EffectId::from_name(effect.name()), Some(effect));
+        for definition in EFFECT_DEFINITIONS {
+            assert_eq!(
+                EffectId::from_name(definition.id.name()),
+                Some(definition.id)
+            );
         }
     }
 
     #[test]
     fn effect_registry_is_consistent() {
-        assert_eq!(EFFECT_IDS.len(), EFFECT_DEFINITIONS.len());
         assert_eq!(EFFECT_MAX_CODE as usize, EFFECT_DEFINITIONS.len());
 
         for (index, definition) in EFFECT_DEFINITIONS.iter().enumerate() {
-            assert_eq!(EFFECT_IDS[index], definition.id);
             assert_eq!(definition.code as usize, index + 1);
             assert_eq!(effect_definition(definition.id), *definition);
             assert_eq!(effect_code_from_id(definition.id), definition.code);

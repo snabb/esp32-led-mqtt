@@ -1,4 +1,4 @@
-use crate::{EffectRuntime, police_strobe_pixel, scale_rgb, speed_interval};
+use crate::{EffectRuntime, scale_rgb, speed_interval};
 use smart_leds::RGB8;
 
 pub(super) fn render<const N: usize>(runtime: &mut EffectRuntime<N>, now_ms: u32) {
@@ -29,4 +29,14 @@ pub(super) fn render<const N: usize>(runtime: &mut EffectRuntime<N>, now_ms: u32
             scale_rgb(base, 20)
         };
     }
+}
+
+fn police_strobe_pixel(index: usize, count: usize) -> bool {
+    if count <= 2 {
+        return true;
+    }
+
+    let edge_width = (count / 12).clamp(1, 4);
+    let center = count / 2;
+    index < edge_width || index + edge_width >= count || index.abs_diff(center) <= edge_width / 2
 }

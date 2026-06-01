@@ -1,4 +1,5 @@
-use crate::{EffectRuntime, fire_spark_height, heat_color, speed_interval};
+use crate::{EffectRuntime, speed_interval};
+use smart_leds::RGB8;
 
 pub(super) fn render<const N: usize>(runtime: &mut EffectRuntime<N>, now_ms: u32) {
     if !runtime.elapsed(now_ms, speed_interval(90, runtime.params.speed)) {
@@ -28,4 +29,34 @@ pub(super) fn render<const N: usize>(runtime: &mut EffectRuntime<N>, now_ms: u32
     for index in 0..N {
         runtime.frame.as_mut_slice()[index] = heat_color(runtime.effect_data[index]);
     }
+}
+
+fn heat_color(heat: u8) -> RGB8 {
+    let ramp = (heat & 0x3f) << 2;
+    match heat >> 6 {
+        0 => RGB8 {
+            r: ramp,
+            g: 0,
+            b: 0,
+        },
+        1 => RGB8 {
+            r: 255,
+            g: ramp,
+            b: 0,
+        },
+        2 => RGB8 {
+            r: 255,
+            g: 255,
+            b: ramp,
+        },
+        _ => RGB8 {
+            r: 255,
+            g: 255,
+            b: 255,
+        },
+    }
+}
+
+fn fire_spark_height(count: usize) -> usize {
+    (count / 6).clamp(1, 10)
 }
