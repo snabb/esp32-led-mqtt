@@ -33,13 +33,9 @@ mod secrets {
     include!(concat!(env!("OUT_DIR"), "/secrets.rs"));
 }
 
-#[path = "main/button.rs"]
 mod button;
-#[path = "main/identity.rs"]
 pub(crate) mod identity;
-#[path = "main/light_state.rs"]
 pub(crate) mod light_state;
-#[path = "main/mqtt.rs"]
 mod mqtt;
 
 use identity::DeviceIdentity;

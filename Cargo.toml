@@ -11,7 +11,7 @@ version      = "0.1.0"
 
 [[bin]]
 name = "esp32-led-mqtt"
-path = "./src/bin/main.rs"
+path = "./src/main.rs"
 
 [dependencies]
 smart-leds = "0.4.0"

@@ -16,7 +16,7 @@ and 60 LED [M5Stack RGB LED Strip](https://docs.m5stack.com/en/unit/rgb_led_stri
 ## Configuration
 
 The default LED hardware configuration is grouped near the top of
-`src/bin/main.rs`:
+`src/main.rs`:
 
 - The MQTT client ID, MQTT topics, Home Assistant discovery topics, unique IDs,
   and device identifier are generated from the last three bytes of the ESP32
