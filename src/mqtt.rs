@@ -352,24 +352,9 @@ fn handle_speed_command(payload: &[u8]) -> bool {
 }
 
 fn parse_speed(payload: &[u8]) -> Option<u8> {
-    let text = core::str::from_utf8(payload).ok()?.trim();
-    if text.is_empty() {
-        return None;
-    }
-
-    let mut parsed: u16 = 0;
-    for byte in text.bytes() {
-        if !byte.is_ascii_digit() {
-            return None;
-        }
-        parsed = parsed.saturating_mul(10) + u16::from(byte - b'0');
-        if parsed > u16::from(u8::MAX) {
-            return None;
-        }
-    }
-
-    u8::try_from(parsed)
+    core::str::from_utf8(payload)
         .ok()
+        .and_then(|text| text.trim().parse::<u8>().ok())
         .filter(|speed| (1..=MAX_EFFECT_SPEED).contains(speed))
 }
 

@@ -1,5 +1,3 @@
-use core::fmt::{self, Write};
-
 use esp_hal::efuse;
 
 pub const DEVICE_NAME: &str = "ESP32 LED MQTT";
@@ -20,35 +18,33 @@ pub struct DeviceIdentity {
 impl DeviceIdentity {
     pub fn from_base_mac(mac: efuse::MacAddress) -> Self {
         let mac = mac.as_bytes();
-        let suffix =
-            identity_string::<6>(format_args!("{:02x}{:02x}{:02x}", mac[3], mac[4], mac[5]));
-        let slug = identity_string::<32>(format_args!("esp32_led_mqtt_{}", suffix));
+        let suffix: heapless::String<6> =
+            heapless::format!("{:02x}{:02x}{:02x}", mac[3], mac[4], mac[5])
+                .expect("device identity suffix capacity too small");
+        let slug: heapless::String<32> = heapless::format!("esp32_led_mqtt_{}", suffix)
+            .expect("device identity slug capacity too small");
         let client_id = slug.clone();
 
         Self {
-            discovery_topic: identity_string::<80>(format_args!(
-                "homeassistant/light/{}/config",
-                slug
-            )),
-            speed_discovery_topic: identity_string::<80>(format_args!(
+            discovery_topic: heapless::format!("homeassistant/light/{}/config", slug)
+                .expect("device discovery topic capacity too small"),
+            speed_discovery_topic: heapless::format!(
                 "homeassistant/number/{}_effect_speed/config",
                 slug
-            )),
-            command_topic: identity_string::<64>(format_args!("{}/light/set", slug)),
-            state_topic: identity_string::<64>(format_args!("{}/light/state", slug)),
-            speed_command_topic: identity_string::<80>(format_args!("{}/effect_speed/set", slug)),
-            speed_state_topic: identity_string::<80>(format_args!("{}/effect_speed/state", slug)),
-            availability_topic: identity_string::<64>(format_args!("{}/status", slug)),
+            )
+            .expect("device speed discovery topic capacity too small"),
+            command_topic: heapless::format!("{}/light/set", slug)
+                .expect("device command topic capacity too small"),
+            state_topic: heapless::format!("{}/light/state", slug)
+                .expect("device state topic capacity too small"),
+            speed_command_topic: heapless::format!("{}/effect_speed/set", slug)
+                .expect("device speed command topic capacity too small"),
+            speed_state_topic: heapless::format!("{}/effect_speed/state", slug)
+                .expect("device speed state topic capacity too small"),
+            availability_topic: heapless::format!("{}/status", slug)
+                .expect("device availability topic capacity too small"),
             client_id,
             slug,
         }
     }
-}
-
-fn identity_string<const N: usize>(args: fmt::Arguments<'_>) -> heapless::String<N> {
-    let mut value = heapless::String::new();
-    value
-        .write_fmt(args)
-        .expect("device identity string capacity too small");
-    value
 }
