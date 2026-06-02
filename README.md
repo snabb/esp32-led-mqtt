@@ -18,6 +18,9 @@ and 60 LED [M5Stack RGB LED Strip](https://docs.m5stack.com/en/unit/rgb_led_stri
 The default LED hardware configuration is grouped near the top of
 `src/bin/main.rs`:
 
+- The MQTT client ID, MQTT topics, Home Assistant discovery topics, unique IDs,
+  and device identifier are generated from the last three bytes of the ESP32
+  base MAC address, for example `esp32_led_mqtt_3ef8d0`.
 - `LED_COUNT` sets the number of LEDs.
 - The `LedStrip` type selects the controller timing and color order. The default
   uses `Sk68xxTiming` with `color_order::Grb`.

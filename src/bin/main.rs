@@ -6,7 +6,10 @@
     holding buffers for the duration of a data transfer."
 )]
 
-use core::{cell::RefCell, fmt::Write};
+use core::{
+    cell::RefCell,
+    fmt::{self, Write},
+};
 
 use embassy_executor::Spawner;
 use embassy_futures::select::{Either, select};
@@ -20,6 +23,7 @@ use embassy_time::{Duration, Instant, Ticker, Timer};
 use esp_backtrace as _;
 use esp_hal::{
     clock::CpuClock,
+    efuse,
     gpio::{Input, Output, OutputConfig},
     interrupt::software::SoftwareInterruptControl,
     ram,
@@ -47,16 +51,8 @@ mod secrets {
     include!(concat!(env!("OUT_DIR"), "/secrets.rs"));
 }
 
-const CLIENT_ID: &str = "esp32-led-mqtt-60";
-const MQTT_DISCOVERY_TOPIC: &str = "homeassistant/light/esp32_led_mqtt_60/config";
-const MQTT_SPEED_DISCOVERY_TOPIC: &str =
-    "homeassistant/number/esp32_led_mqtt_60_effect_speed/config";
-const MQTT_COMMAND_TOPIC: &str = "esp32-led-mqtt/light/set";
-const MQTT_STATE_TOPIC: &str = "esp32-led-mqtt/light/state";
-const MQTT_SPEED_COMMAND_TOPIC: &str = "esp32-led-mqtt/effect_speed/set";
-const MQTT_SPEED_STATE_TOPIC: &str = "esp32-led-mqtt/effect_speed/state";
-const MQTT_AVAILABILITY_TOPIC: &str = "esp32-led-mqtt/status";
-const MQTT_SPEED_DISCOVERY_PAYLOAD: &str = r#"{"name":"Effect Speed","unique_id":"esp32_led_mqtt_60_effect_speed","command_topic":"esp32-led-mqtt/effect_speed/set","state_topic":"esp32-led-mqtt/effect_speed/state","availability_topic":"esp32-led-mqtt/status","payload_available":"online","payload_not_available":"offline","min":1,"max":128,"step":1,"mode":"slider","device":{"identifiers":["esp32_led_mqtt_60"],"name":"ESP32 LED MQTT","manufacturer":"esp32-led-mqtt","model":"ESP32-C6"}}"#;
+const DEVICE_NAME: &str = "ESP32 LED MQTT";
+const DEVICE_MODEL: &str = "ESP32-C6";
 
 static LIGHT_STATE: critical_section::Mutex<RefCell<LightState>> =
     critical_section::Mutex::new(RefCell::new(DEFAULT_LIGHT_STATE));
@@ -123,6 +119,54 @@ struct LightState {
     color: RGB8,
 }
 
+struct DeviceIdentity {
+    slug: heapless::String<32>,
+    client_id: heapless::String<32>,
+    discovery_topic: heapless::String<80>,
+    speed_discovery_topic: heapless::String<80>,
+    command_topic: heapless::String<64>,
+    state_topic: heapless::String<64>,
+    speed_command_topic: heapless::String<80>,
+    speed_state_topic: heapless::String<80>,
+    availability_topic: heapless::String<64>,
+}
+
+impl DeviceIdentity {
+    fn from_base_mac(mac: efuse::MacAddress) -> Self {
+        let mac = mac.as_bytes();
+        let suffix =
+            identity_string::<6>(format_args!("{:02x}{:02x}{:02x}", mac[3], mac[4], mac[5]));
+        let slug = identity_string::<32>(format_args!("esp32_led_mqtt_{}", suffix));
+        let client_id = slug.clone();
+
+        Self {
+            discovery_topic: identity_string::<80>(format_args!(
+                "homeassistant/light/{}/config",
+                slug
+            )),
+            speed_discovery_topic: identity_string::<80>(format_args!(
+                "homeassistant/number/{}_effect_speed/config",
+                slug
+            )),
+            command_topic: identity_string::<64>(format_args!("{}/light/set", slug)),
+            state_topic: identity_string::<64>(format_args!("{}/light/state", slug)),
+            speed_command_topic: identity_string::<80>(format_args!("{}/effect_speed/set", slug)),
+            speed_state_topic: identity_string::<80>(format_args!("{}/effect_speed/state", slug)),
+            availability_topic: identity_string::<64>(format_args!("{}/status", slug)),
+            client_id,
+            slug,
+        }
+    }
+}
+
+fn identity_string<const N: usize>(args: fmt::Arguments<'_>) -> heapless::String<N> {
+    let mut value = heapless::String::new();
+    value
+        .write_fmt(args)
+        .expect("device identity string capacity too small");
+    value
+}
+
 // This creates a default app-descriptor required by the esp-idf bootloader.
 // For more information see: <https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/system/app_image_format.html#application-description>
 esp_bootloader_esp_idf::esp_app_desc!();
@@ -149,6 +193,11 @@ async fn main(spawner: Spawner) -> ! {
     esp_rtos::start(timg0.timer0, software_interrupt.software_interrupt0);
 
     info!("Starting LED firmware");
+    let identity = mk_static!(
+        DeviceIdentity,
+        DeviceIdentity::from_base_mac(efuse::base_mac_address())
+    );
+    info!("Device identity {}", identity.slug.as_str());
 
     let rmt = Rmt::new(peripherals.RMT, Rate::from_mhz(80)).expect("failed to initialize RMT");
 
@@ -216,7 +265,7 @@ async fn main(spawner: Spawner) -> ! {
 
         spawner.spawn(connection_task(controller).unwrap());
         spawner.spawn(net_task(runner).unwrap());
-        spawner.spawn(mqtt_task(stack).unwrap());
+        spawner.spawn(mqtt_task(stack, identity).unwrap());
     }
     run_led_loop(strip, led_power).await
 }
@@ -467,14 +516,14 @@ async fn net_task(mut runner: Runner<'static, Interface<'static>>) {
 }
 
 #[embassy_executor::task]
-async fn mqtt_task(stack: Stack<'static>) {
+async fn mqtt_task(stack: Stack<'static>, identity: &'static DeviceIdentity) {
     loop {
         stack.wait_config_up().await;
         if let Some(config) = stack.config_v4() {
             info!("Network ready with IP {}", config.address);
         }
 
-        match run_mqtt_session(stack).await {
+        match run_mqtt_session(stack, identity).await {
             Ok(()) => warn!("MQTT session ended"),
             Err(err) => warn!("MQTT session failed: {:?}", err),
         }
@@ -483,7 +532,10 @@ async fn mqtt_task(stack: Stack<'static>) {
     }
 }
 
-async fn run_mqtt_session(stack: Stack<'static>) -> Result<(), MqttRunError> {
+async fn run_mqtt_session(
+    stack: Stack<'static>,
+    identity: &'static DeviceIdentity,
+) -> Result<(), MqttRunError> {
     let endpoint = mqtt_endpoint(stack).await?;
     let mut tcp_rx = [0_u8; 2048];
     let mut tcp_tx = [0_u8; 2048];
@@ -495,11 +547,11 @@ async fn run_mqtt_session(stack: Stack<'static>) -> Result<(), MqttRunError> {
 
     let mut mqtt_rx = [0_u8; 1024];
     let mut mqtt_tx = [0_u8; 4096];
-    let will = Will::new(MQTT_AVAILABILITY_TOPIC, b"offline", &[])
+    let will = Will::new(identity.availability_topic.as_str(), b"offline", &[])
         .map_err(MqttRunError::Config)?
         .retained();
     let mut builder = ConfigBuilder::new(Buffers::new(&mut mqtt_rx, &mut mqtt_tx))
-        .client_id(CLIENT_ID)
+        .client_id(identity.client_id.as_str())
         .map_err(MqttRunError::Config)?
         .keepalive_interval(30)
         .will(will)
@@ -514,24 +566,24 @@ async fn run_mqtt_session(stack: Stack<'static>) -> Result<(), MqttRunError> {
     let event = session.connect(socket).await.map_err(MqttRunError::Mqtt)?;
     info!("MQTT connected: {:?}", event);
 
-    publish_text(&mut session, MQTT_AVAILABILITY_TOPIC, "online", true).await?;
-    publish_light_discovery(&mut session).await?;
     publish_text(
         &mut session,
-        MQTT_SPEED_DISCOVERY_TOPIC,
-        MQTT_SPEED_DISCOVERY_PAYLOAD,
+        identity.availability_topic.as_str(),
+        "online",
         true,
     )
     .await?;
-    publish_light_state(&mut session).await?;
-    publish_speed_state(&mut session).await?;
+    publish_light_discovery(&mut session, identity).await?;
+    publish_speed_discovery(&mut session, identity).await?;
+    publish_light_state(&mut session, identity).await?;
+    publish_speed_state(&mut session, identity).await?;
 
     if matches!(event, ConnectEvent::Connected) {
         session
             .subscribe(
                 &[
-                    TopicFilter::new(MQTT_COMMAND_TOPIC),
-                    TopicFilter::new(MQTT_SPEED_COMMAND_TOPIC),
+                    TopicFilter::new(identity.command_topic.as_str()),
+                    TopicFilter::new(identity.speed_command_topic.as_str()),
                 ],
                 &[],
             )
@@ -542,16 +594,18 @@ async fn run_mqtt_session(stack: Stack<'static>) -> Result<(), MqttRunError> {
     loop {
         match select(session.recv(), LIGHT_STATE_CHANGED.wait()).await {
             Either::First(Ok(message)) => {
-                if message.topic() == MQTT_COMMAND_TOPIC && handle_command(message.payload()) {
-                    publish_light_state(&mut session).await?;
-                } else if message.topic() == MQTT_SPEED_COMMAND_TOPIC
+                if message.topic() == identity.command_topic.as_str()
+                    && handle_command(message.payload())
+                {
+                    publish_light_state(&mut session, identity).await?;
+                } else if message.topic() == identity.speed_command_topic.as_str()
                     && handle_speed_command(message.payload())
                 {
-                    publish_speed_state(&mut session).await?;
+                    publish_speed_state(&mut session, identity).await?;
                 }
             }
             Either::First(Err(err)) => return Err(MqttRunError::Mqtt(err)),
-            Either::Second(()) => publish_light_state(&mut session).await?,
+            Either::Second(()) => publish_light_state(&mut session, identity).await?,
         }
     }
 }
@@ -608,7 +662,10 @@ fn parse_octet(value: &str) -> Option<u8> {
     u8::try_from(parsed).ok()
 }
 
-async fn publish_light_state(session: &mut Session<'_, TcpSocket<'_>>) -> Result<(), MqttRunError> {
+async fn publish_light_state(
+    session: &mut Session<'_, TcpSocket<'_>>,
+    identity: &DeviceIdentity,
+) -> Result<(), MqttRunError> {
     let light = light_state();
     let state = if light.on { "ON" } else { "OFF" };
     let mut payload: heapless::String<192> = heapless::String::new();
@@ -623,22 +680,42 @@ async fn publish_light_state(session: &mut Session<'_, TcpSocket<'_>>) -> Result
         effect_id_from_code(light.effect_code).map_or(EFFECT_DISABLED_NAME, EffectId::name)
     )
     .map_err(|_| MqttRunError::StatePayloadTooLarge)?;
-    publish_text(session, MQTT_STATE_TOPIC, payload.as_str(), true).await
+    publish_text(
+        session,
+        identity.state_topic.as_str(),
+        payload.as_str(),
+        true,
+    )
+    .await
 }
 
 async fn publish_light_discovery(
     session: &mut Session<'_, TcpSocket<'_>>,
+    identity: &DeviceIdentity,
 ) -> Result<(), MqttRunError> {
     let mut payload: heapless::String<1400> = heapless::String::new();
-    write_light_discovery_payload(&mut payload)?;
-    publish_text(session, MQTT_DISCOVERY_TOPIC, payload.as_str(), true).await
+    write_light_discovery_payload(&mut payload, identity)?;
+    publish_text(
+        session,
+        identity.discovery_topic.as_str(),
+        payload.as_str(),
+        true,
+    )
+    .await
 }
 
-fn write_light_discovery_payload(payload: &mut heapless::String<1400>) -> Result<(), MqttRunError> {
+fn write_light_discovery_payload(
+    payload: &mut heapless::String<1400>,
+    identity: &DeviceIdentity,
+) -> Result<(), MqttRunError> {
     write!(
         payload,
-        r#"{{"name":"LED Strip","unique_id":"esp32_led_mqtt_60","schema":"json","command_topic":"esp32-led-mqtt/light/set","state_topic":"esp32-led-mqtt/light/state","availability_topic":"esp32-led-mqtt/status","payload_available":"online","payload_not_available":"offline","brightness":true,"brightness_scale":255,"supported_color_modes":["rgb"],"effect":true,"effect_list":["{}""#,
-        EFFECT_DISABLED_NAME
+        r#"{{"name":"LED Strip","unique_id":"{}","schema":"json","command_topic":"{}","state_topic":"{}","availability_topic":"{}","payload_available":"online","payload_not_available":"offline","brightness":true,"brightness_scale":255,"supported_color_modes":["rgb"],"effect":true,"effect_list":["{}""#,
+        identity.slug.as_str(),
+        identity.command_topic.as_str(),
+        identity.state_topic.as_str(),
+        identity.availability_topic.as_str(),
+        EFFECT_DISABLED_NAME,
     )
     .map_err(|_| MqttRunError::StatePayloadTooLarge)?;
 
@@ -649,20 +726,65 @@ fn write_light_discovery_payload(payload: &mut heapless::String<1400>) -> Result
 
     write!(
         payload,
-        r#"],"device":{{"identifiers":["esp32_led_mqtt_60"],"name":"ESP32 LED MQTT","manufacturer":"esp32-led-mqtt","model":"ESP32-C6"}}}}"#
+        r#"],"device":{{"identifiers":["{}"],"name":"{}","manufacturer":"esp32-led-mqtt","model":"{}"}}}}"#,
+        identity.slug.as_str(),
+        DEVICE_NAME,
+        DEVICE_MODEL,
     )
     .map_err(|_| MqttRunError::StatePayloadTooLarge)
 }
 
-async fn publish_speed_state(session: &mut Session<'_, TcpSocket<'_>>) -> Result<(), MqttRunError> {
+async fn publish_speed_discovery(
+    session: &mut Session<'_, TcpSocket<'_>>,
+    identity: &DeviceIdentity,
+) -> Result<(), MqttRunError> {
+    let mut payload: heapless::String<700> = heapless::String::new();
+    write_speed_discovery_payload(&mut payload, identity)?;
+    publish_text(
+        session,
+        identity.speed_discovery_topic.as_str(),
+        payload.as_str(),
+        true,
+    )
+    .await
+}
+
+fn write_speed_discovery_payload(
+    payload: &mut heapless::String<700>,
+    identity: &DeviceIdentity,
+) -> Result<(), MqttRunError> {
+    write!(
+        payload,
+        r#"{{"name":"Effect Speed","unique_id":"{}_effect_speed","command_topic":"{}","state_topic":"{}","availability_topic":"{}","payload_available":"online","payload_not_available":"offline","min":1,"max":128,"step":1,"mode":"slider","device":{{"identifiers":["{}"],"name":"{}","manufacturer":"esp32-led-mqtt","model":"{}"}}}}"#,
+        identity.slug.as_str(),
+        identity.speed_command_topic.as_str(),
+        identity.speed_state_topic.as_str(),
+        identity.availability_topic.as_str(),
+        identity.slug.as_str(),
+        DEVICE_NAME,
+        DEVICE_MODEL,
+    )
+    .map_err(|_| MqttRunError::StatePayloadTooLarge)
+}
+
+async fn publish_speed_state(
+    session: &mut Session<'_, TcpSocket<'_>>,
+    identity: &DeviceIdentity,
+) -> Result<(), MqttRunError> {
     let mut payload: heapless::String<3> = heapless::String::new();
     write!(payload, "{}", light_state().speed).map_err(|_| MqttRunError::StatePayloadTooLarge)?;
-    publish_text(session, MQTT_SPEED_STATE_TOPIC, payload.as_str(), true).await
+    publish_text(
+        session,
+        identity.speed_state_topic.as_str(),
+        payload.as_str(),
+        true,
+    )
+    .await
 }
 
 async fn publish_text(
     session: &mut Session<'_, TcpSocket<'_>>,
-    topic: &'static str,
+    topic: &str,
     payload: &str,
     retain: bool,
 ) -> Result<(), MqttRunError> {
