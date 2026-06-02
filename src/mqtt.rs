@@ -1,4 +1,5 @@
 use core::fmt::Write;
+use core::str::FromStr;
 
 use embassy_futures::select::{Either, select};
 use embassy_net::{
@@ -119,7 +120,7 @@ async fn run_session(
 }
 
 async fn endpoint(stack: Stack<'static>) -> Result<IpEndpoint, MqttRunError> {
-    if let Some(address) = parse_ipv4(secrets::MQTT_BROKER) {
+    if let Ok(IpAddress::Ipv4(address)) = IpAddress::from_str(secrets::MQTT_BROKER) {
         return Ok(IpEndpoint::new(
             IpAddress::Ipv4(address),
             secrets::MQTT_PORT,
@@ -139,35 +140,6 @@ async fn endpoint(stack: Stack<'static>) -> Result<IpEndpoint, MqttRunError> {
         IpAddress::Ipv4(address),
         secrets::MQTT_PORT,
     ))
-}
-
-fn parse_ipv4(value: &str) -> Option<embassy_net::Ipv4Address> {
-    let mut parts = value.split('.');
-    let a = parse_octet(parts.next()?)?;
-    let b = parse_octet(parts.next()?)?;
-    let c = parse_octet(parts.next()?)?;
-    let d = parse_octet(parts.next()?)?;
-    if parts.next().is_some() {
-        return None;
-    }
-
-    Some(embassy_net::Ipv4Address::new(a, b, c, d))
-}
-
-fn parse_octet(value: &str) -> Option<u8> {
-    if value.is_empty() || value.len() > 3 {
-        return None;
-    }
-
-    let mut parsed: u16 = 0;
-    for byte in value.bytes() {
-        if !byte.is_ascii_digit() {
-            return None;
-        }
-        parsed = parsed * 10 + u16::from(byte - b'0');
-    }
-
-    u8::try_from(parsed).ok()
 }
 
 async fn publish_light_state(
