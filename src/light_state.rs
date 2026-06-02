@@ -43,10 +43,6 @@ pub(crate) fn update(update: impl FnOnce(&mut LightState)) {
     critical_section::with(|cs| update(&mut LIGHT_STATE.borrow(cs).borrow_mut()));
 }
 
-pub(crate) fn current_effect_params(id: EffectId) -> EffectParams {
-    effect_params(id, get())
-}
-
 pub(crate) fn effect_params(id: EffectId, state: LightState) -> EffectParams {
     EffectParams {
         id,

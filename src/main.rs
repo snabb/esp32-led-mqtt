@@ -39,7 +39,7 @@ pub(crate) mod light_state;
 mod mqtt;
 
 use identity::DeviceIdentity;
-use light_state::{current_effect_params, effect_params, get as light_state};
+use light_state::{effect_params, get as light_state};
 const START_NETWORK: bool = true;
 
 // LED strip hardware configuration.
@@ -125,11 +125,12 @@ async fn main(spawner: Spawner) -> ! {
     // your board's power-enable pin.
     let led_power_pin: Option<esp_hal::gpio::AnyPin<'static>> = None;
     let led_power = led_power_pin.map(|pin| {
-        Output::new(
-            pin,
-            led_power_level(light_state().on),
-            OutputConfig::default(),
-        )
+        let level = if light_state().on {
+            LED_POWER_ACTIVE_LEVEL
+        } else {
+            !LED_POWER_ACTIVE_LEVEL
+        };
+        Output::new(pin, level, OutputConfig::default())
     });
 
     // Optional button input GPIO.
@@ -181,7 +182,7 @@ async fn main(spawner: Spawner) -> ! {
 
 async fn run_led_loop(mut strip: LedStrip<'static>, mut led_power: Option<Output<'static>>) -> ! {
     let mut effect_runtime =
-        EffectRuntime::<LED_COUNT>::new(current_effect_params(EffectId::Rainbow));
+        EffectRuntime::<LED_COUNT>::new(effect_params(EffectId::Rainbow, light_state()));
     let mut solid_frame = RgbFrame::<LED_COUNT>::new();
     let mut output = [RGB8 { r: 0, g: 0, b: 0 }; LED_COUNT];
     let mut led_power_on = light_state().on;
@@ -220,14 +221,6 @@ async fn run_led_loop(mut strip: LedStrip<'static>, mut led_power: Option<Output
             }
             led_power_on = false;
         }
-    }
-}
-
-fn led_power_level(light_on: bool) -> esp_hal::gpio::Level {
-    if light_on {
-        LED_POWER_ACTIVE_LEVEL
-    } else {
-        !LED_POWER_ACTIVE_LEVEL
     }
 }
 
