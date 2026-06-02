@@ -6,10 +6,7 @@
     holding buffers for the duration of a data transfer."
 )]
 
-use core::{
-    fmt::Write,
-    sync::atomic::{AtomicBool, AtomicU8, Ordering},
-};
+use core::{cell::RefCell, fmt::Write};
 
 use embassy_executor::Spawner;
 use embassy_futures::select::{Either, select};
@@ -61,13 +58,8 @@ const MQTT_SPEED_STATE_TOPIC: &str = "esp32-led-mqtt/effect_speed/state";
 const MQTT_AVAILABILITY_TOPIC: &str = "esp32-led-mqtt/status";
 const MQTT_SPEED_DISCOVERY_PAYLOAD: &str = r#"{"name":"Effect Speed","unique_id":"esp32_led_mqtt_60_effect_speed","command_topic":"esp32-led-mqtt/effect_speed/set","state_topic":"esp32-led-mqtt/effect_speed/state","availability_topic":"esp32-led-mqtt/status","payload_available":"online","payload_not_available":"offline","min":1,"max":128,"step":1,"mode":"slider","device":{"identifiers":["esp32_led_mqtt_60"],"name":"ESP32 LED MQTT","manufacturer":"esp32-led-mqtt","model":"ESP32-C6"}}"#;
 
-static LIGHT_ON: AtomicBool = AtomicBool::new(true);
-static LIGHT_BRIGHTNESS: AtomicU8 = AtomicU8::new(DEFAULT_BRIGHTNESS);
-static LIGHT_EFFECT: AtomicU8 = AtomicU8::new(EFFECT_DEFINITIONS[0].code);
-static LIGHT_SPEED: AtomicU8 = AtomicU8::new(DEFAULT_EFFECT_SPEED);
-static LIGHT_RED: AtomicU8 = AtomicU8::new(255);
-static LIGHT_GREEN: AtomicU8 = AtomicU8::new(96);
-static LIGHT_BLUE: AtomicU8 = AtomicU8::new(24);
+static LIGHT_STATE: critical_section::Mutex<RefCell<LightState>> =
+    critical_section::Mutex::new(RefCell::new(DEFAULT_LIGHT_STATE));
 static LIGHT_STATE_CHANGED: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 const START_NETWORK: bool = true;
 
@@ -110,6 +102,26 @@ type LedStrip<'d> = esp_hal_smartled::RmtSmartLeds<
 const RMT_MEMORY_BLOCKS: u8 = 4;
 const MAX_EFFECT_SPEED: u8 = 128;
 const DEFAULT_EFFECT_SPEED: u8 = 64;
+const DEFAULT_LIGHT_STATE: LightState = LightState {
+    on: true,
+    brightness: DEFAULT_BRIGHTNESS,
+    effect_code: EFFECT_DEFINITIONS[0].code,
+    speed: DEFAULT_EFFECT_SPEED,
+    color: RGB8 {
+        r: 255,
+        g: 96,
+        b: 24,
+    },
+};
+
+#[derive(Clone, Copy)]
+struct LightState {
+    on: bool,
+    brightness: u8,
+    effect_code: u8,
+    speed: u8,
+    color: RGB8,
+}
 
 // This creates a default app-descriptor required by the esp-idf bootloader.
 // For more information see: <https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/system/app_image_format.html#application-description>
@@ -157,7 +169,7 @@ async fn main(spawner: Spawner) -> ! {
     let led_power = led_power_pin.map(|pin| {
         Output::new(
             pin,
-            led_power_level(LIGHT_ON.load(Ordering::Relaxed)),
+            led_power_level(light_state().on),
             OutputConfig::default(),
         )
     });
@@ -214,13 +226,14 @@ async fn run_led_loop(mut strip: LedStrip<'static>, mut led_power: Option<Output
         EffectRuntime::<LED_COUNT>::new(current_effect_params(EffectId::Rainbow));
     let mut solid_frame = RgbFrame::<LED_COUNT>::new();
     let mut output = [RGB8 { r: 0, g: 0, b: 0 }; LED_COUNT];
-    let mut led_power_on = LIGHT_ON.load(Ordering::Relaxed);
+    let mut led_power_on = light_state().on;
     let mut ticker = Ticker::every(LED_FRAME_INTERVAL);
 
     loop {
         ticker.next().await;
         let now_ms = Instant::now().as_millis();
-        let light_on = LIGHT_ON.load(Ordering::Relaxed);
+        let state = light_state();
+        let light_on = state.on;
         if light_on && !led_power_on {
             if let Some(power) = led_power.as_mut() {
                 power.set_level(LED_POWER_ACTIVE_LEVEL);
@@ -229,13 +242,14 @@ async fn run_led_loop(mut strip: LedStrip<'static>, mut led_power: Option<Output
         }
 
         if light_on {
-            let brightness = LIGHT_BRIGHTNESS.load(Ordering::Relaxed);
-            if let Some(effect_id) = current_effect_id() {
-                effect_runtime.set_effect(current_effect_params(effect_id));
-                output = effect_runtime.render(now_ms as u32).corrected(brightness);
+            if let Some(effect_id) = effect_id_from_code(state.effect_code) {
+                effect_runtime.set_effect(effect_params(effect_id, state));
+                output = effect_runtime
+                    .render(now_ms as u32)
+                    .corrected(state.brightness);
             } else {
-                solid_frame.set_all(current_color());
-                output = solid_frame.corrected(brightness);
+                solid_frame.set_all(state.color);
+                output = solid_frame.corrected(state.brightness);
             }
         } else {
             output.fill(RGB8 { r: 0, g: 0, b: 0 });
@@ -333,26 +347,25 @@ fn handle_button_action(action: ButtonAction, now_ms: u64) {
         ButtonAction::CycleEffect => cycle_effect(),
         ButtonAction::RandomColor => set_random_color(now_ms),
         ButtonAction::TogglePower => {
-            let light_on = LIGHT_ON.load(Ordering::Relaxed);
-            LIGHT_ON.store(!light_on, Ordering::Relaxed);
+            update_light_state(|state| state.on = !state.on);
             mark_light_state_dirty();
         }
     }
 }
 
 fn cycle_effect() {
-    let current = LIGHT_EFFECT.load(Ordering::Relaxed);
+    let current = light_state().effect_code;
     let next = if current >= EFFECT_MAX_CODE {
         EFFECT_NONE_CODE
     } else {
         current + 1
     };
-    LIGHT_EFFECT.store(next, Ordering::Relaxed);
+    update_light_state(|state| state.effect_code = next);
     mark_light_state_dirty();
 }
 
 fn set_random_color(now_ms: u64) {
-    let previous = current_color();
+    let previous = light_state().color;
     let mut rng = (now_ms as u32)
         ^ (u32::from(previous.r) << 16)
         ^ (u32::from(previous.g) << 8)
@@ -360,9 +373,7 @@ fn set_random_color(now_ms: u64) {
         ^ 0x9e37_79b9;
     let color = random_color::from_seed(previous, next_random_u32(&mut rng));
 
-    LIGHT_RED.store(color.r, Ordering::Relaxed);
-    LIGHT_GREEN.store(color.g, Ordering::Relaxed);
-    LIGHT_BLUE.store(color.b, Ordering::Relaxed);
+    update_light_state(|state| state.color = color);
     mark_light_state_dirty();
 }
 
@@ -396,19 +407,23 @@ fn led_power_inactive_level() -> esp_hal::gpio::Level {
     }
 }
 
-fn current_color() -> RGB8 {
-    RGB8 {
-        r: LIGHT_RED.load(Ordering::Relaxed),
-        g: LIGHT_GREEN.load(Ordering::Relaxed),
-        b: LIGHT_BLUE.load(Ordering::Relaxed),
-    }
+fn light_state() -> LightState {
+    critical_section::with(|cs| *LIGHT_STATE.borrow(cs).borrow())
+}
+
+fn update_light_state(update: impl FnOnce(&mut LightState)) {
+    critical_section::with(|cs| update(&mut LIGHT_STATE.borrow(cs).borrow_mut()));
 }
 
 fn current_effect_params(id: EffectId) -> EffectParams {
+    effect_params(id, light_state())
+}
+
+fn effect_params(id: EffectId, state: LightState) -> EffectParams {
     EffectParams {
         id,
-        primary: current_color(),
-        speed: effect_speed_value(LIGHT_SPEED.load(Ordering::Relaxed)),
+        primary: state.color,
+        speed: effect_speed_value(state.speed),
         intensity: 128,
     }
 }
@@ -419,14 +434,6 @@ fn effect_speed_value(slider: u8) -> u8 {
     let max_offset = u64::from(MAX_EFFECT_SPEED - 1);
     1 + ((offset * offset * offset * offset * offset)
         / (max_offset * max_offset * max_offset * max_offset)) as u8
-}
-
-fn current_effect_id() -> Option<EffectId> {
-    effect_id_from_code(LIGHT_EFFECT.load(Ordering::Relaxed))
-}
-
-fn current_effect_name() -> &'static str {
-    current_effect_id().map_or(EFFECT_DISABLED_NAME, EffectId::name)
 }
 
 fn write_frame(strip: &mut LedStrip<'_>, output: &[RGB8; LED_COUNT]) {
@@ -602,22 +609,18 @@ fn parse_octet(value: &str) -> Option<u8> {
 }
 
 async fn publish_light_state(session: &mut Session<'_, TcpSocket<'_>>) -> Result<(), MqttRunError> {
-    let state = if LIGHT_ON.load(Ordering::Relaxed) {
-        "ON"
-    } else {
-        "OFF"
-    };
-    let color = current_color();
+    let light = light_state();
+    let state = if light.on { "ON" } else { "OFF" };
     let mut payload: heapless::String<192> = heapless::String::new();
     write!(
         payload,
         r#"{{"state":"{}","brightness":{},"color_mode":"rgb","color":{{"r":{},"g":{},"b":{}}},"effect":"{}"}}"#,
         state,
-        LIGHT_BRIGHTNESS.load(Ordering::Relaxed),
-        color.r,
-        color.g,
-        color.b,
-        current_effect_name()
+        light.brightness,
+        light.color.r,
+        light.color.g,
+        light.color.b,
+        effect_id_from_code(light.effect_code).map_or(EFFECT_DISABLED_NAME, EffectId::name)
     )
     .map_err(|_| MqttRunError::StatePayloadTooLarge)?;
     publish_text(session, MQTT_STATE_TOPIC, payload.as_str(), true).await
@@ -653,8 +656,7 @@ fn write_light_discovery_payload(payload: &mut heapless::String<1400>) -> Result
 
 async fn publish_speed_state(session: &mut Session<'_, TcpSocket<'_>>) -> Result<(), MqttRunError> {
     let mut payload: heapless::String<3> = heapless::String::new();
-    write!(payload, "{}", LIGHT_SPEED.load(Ordering::Relaxed))
-        .map_err(|_| MqttRunError::StatePayloadTooLarge)?;
+    write!(payload, "{}", light_state().speed).map_err(|_| MqttRunError::StatePayloadTooLarge)?;
     publish_text(session, MQTT_SPEED_STATE_TOPIC, payload.as_str(), true).await
 }
 
@@ -688,39 +690,49 @@ fn handle_command(payload: &[u8]) -> bool {
         return false;
     };
 
-    let mut changed = false;
+    let mut on_update = None;
+    let mut effect_update = None;
+
     if let Some(state) = command.state {
         if state.eq_ignore_ascii_case("ON") {
-            LIGHT_ON.store(true, Ordering::Relaxed);
-            changed = true;
+            on_update = Some(true);
         } else if state.eq_ignore_ascii_case("OFF") {
-            LIGHT_ON.store(false, Ordering::Relaxed);
-            changed = true;
+            on_update = Some(false);
         }
     }
-
-    if let Some(brightness) = command.brightness {
-        LIGHT_BRIGHTNESS.store(brightness, Ordering::Relaxed);
-        changed = true;
-    }
-
-    if let Some(color) = command.color {
-        LIGHT_RED.store(color.r, Ordering::Relaxed);
-        LIGHT_GREEN.store(color.g, Ordering::Relaxed);
-        LIGHT_BLUE.store(color.b, Ordering::Relaxed);
-        changed = true;
-    }
-
     if let Some(effect) = command.effect {
         if effect.eq_ignore_ascii_case(EFFECT_DISABLED_NAME) {
-            LIGHT_EFFECT.store(EFFECT_NONE_CODE, Ordering::Relaxed);
-            changed = true;
+            effect_update = Some(EFFECT_NONE_CODE);
         } else if let Some(effect_id) = EffectId::from_name(effect) {
-            LIGHT_EFFECT.store(effect_code_from_id(effect_id), Ordering::Relaxed);
-            changed = true;
+            effect_update = Some(effect_code_from_id(effect_id));
         } else {
             warn!("Ignoring unknown light effect '{}'", effect);
         }
+    }
+
+    let changed = on_update.is_some()
+        || command.brightness.is_some()
+        || command.color.is_some()
+        || effect_update.is_some();
+    if changed {
+        update_light_state(|state| {
+            if let Some(on) = on_update {
+                state.on = on;
+            }
+            if let Some(brightness) = command.brightness {
+                state.brightness = brightness;
+            }
+            if let Some(color) = command.color {
+                state.color = RGB8 {
+                    r: color.r,
+                    g: color.g,
+                    b: color.b,
+                };
+            }
+            if let Some(effect_code) = effect_update {
+                state.effect_code = effect_code;
+            }
+        });
     }
 
     changed
@@ -732,7 +744,7 @@ fn handle_speed_command(payload: &[u8]) -> bool {
         return false;
     };
 
-    LIGHT_SPEED.store(speed, Ordering::Relaxed);
+    update_light_state(|state| state.speed = speed);
     true
 }
 
