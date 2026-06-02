@@ -216,7 +216,7 @@ async fn run_led_loop(mut strip: LedStrip<'static>, mut led_power: Option<Output
         write_frame(&mut strip, &output);
         if !light_on && led_power_on {
             if let Some(power) = led_power.as_mut() {
-                power.set_level(led_power_inactive_level());
+                power.set_level(!LED_POWER_ACTIVE_LEVEL);
             }
             led_power_on = false;
         }
@@ -227,14 +227,7 @@ fn led_power_level(light_on: bool) -> esp_hal::gpio::Level {
     if light_on {
         LED_POWER_ACTIVE_LEVEL
     } else {
-        led_power_inactive_level()
-    }
-}
-
-fn led_power_inactive_level() -> esp_hal::gpio::Level {
-    match LED_POWER_ACTIVE_LEVEL {
-        esp_hal::gpio::Level::High => esp_hal::gpio::Level::Low,
-        esp_hal::gpio::Level::Low => esp_hal::gpio::Level::High,
+        !LED_POWER_ACTIVE_LEVEL
     }
 }
 
