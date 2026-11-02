@@ -14,7 +14,6 @@ use esp_hal::{
     clock::CpuClock,
     efuse,
     gpio::{Input, Output, OutputConfig},
-    interrupt::software::SoftwareInterruptControl,
     ram,
     rmt::Rmt,
     rng::Rng,
@@ -46,19 +45,19 @@ const START_NETWORK: bool = true;
 //
 // User configuration points:
 // - LED_COUNT: set this to the number of addressable LEDs in your strip.
-// - LedStrip: select the LED timing and RGB color order for your strip.
+// - LedStrip: select the RGB color order for your strip.
 // - LED_POWER_ACTIVE_LEVEL: set to esp_hal::gpio::Level::Low if your
 //   power-enable circuit is active-low.
 // - In main, configure button_pin, led_power_pin, and the GPIO passed to
 //   LedStrip::new_with_memsize.
 //
-// Other controller timings provided by esp-hal-smartled2 include
-// Ws2812bTiming, Ws2812Timing, Ws2811Timing, and Ws2811LowSpeedTiming. Common
+// Select the timing in LedStrip::new_with_memsize. Other provided timings include
+// WS2812B_TIMING, WS2812_TIMING, WS2811_TIMING, and WS2811_LOW_SPEED_TIMING. Common
 // RGB color orders are color_order::{Rgb, Rbg, Grb, Gbr, Brg, Bgr}.
 //
 // M5Stack NanoC6 internal LED preset:
 // - Set LED_COUNT to 1.
-// - In LedStrip, use esp_hal_smartled::Ws2812Timing.
+// - In LedStrip::new_with_memsize, use esp_hal_smartled::WS2812_TIMING.
 // - In main, set led_power_pin to Some(peripherals.GPIO19.into()).
 // - In main, pass peripherals.GPIO20 to LedStrip::new_with_memsize.
 const LED_COUNT: usize = 60;
@@ -70,7 +69,6 @@ type LedStrip<'d> = esp_hal_smartled::RmtSmartLeds<
     esp_hal::Blocking,
     RGB8,
     esp_hal_smartled::color_order::Grb,
-    esp_hal_smartled::Sk68xxTiming,
 >;
 
 // Wi-Fi activity can delay RMT refills; extra RMT memory gives the LED transfer
@@ -98,8 +96,7 @@ async fn main(spawner: Spawner) -> ! {
     esp_alloc::heap_allocator!(size: 36 * 1024);
 
     let timg0 = TimerGroup::new(peripherals.TIMG0);
-    let software_interrupt = SoftwareInterruptControl::new(peripherals.SW_INTERRUPT);
-    esp_rtos::start(timg0.timer0, software_interrupt.software_interrupt0);
+    esp_rtos::start(timg0.timer0, peripherals.FROM_CPU_INTR0);
 
     info!("Starting LED firmware");
     let identity = mk_static!(
@@ -108,14 +105,21 @@ async fn main(spawner: Spawner) -> ! {
     );
     info!("Device identity {}", identity.slug.as_str());
 
-    let rmt = Rmt::new(peripherals.RMT, Rate::from_mhz(80)).expect("failed to initialize RMT");
+    let rmt_frequency = Rate::from_mhz(80);
+    let rmt = Rmt::new(peripherals.RMT, rmt_frequency).expect("failed to initialize RMT");
 
     // LED data GPIO.
     //
     // Replace peripherals.GPIO2 with the GPIO connected to the DIN/data input
     // of your LED strip.
-    let strip = LedStrip::new_with_memsize(rmt.channel0, peripherals.GPIO2, RMT_MEMORY_BLOCKS)
-        .expect("failed to configure RMT LED channel");
+    let strip = LedStrip::new_with_memsize(
+        esp_hal_smartled::SK68XX_TIMING,
+        rmt.channel0,
+        peripherals.GPIO2,
+        RMT_MEMORY_BLOCKS,
+        rmt_frequency,
+    )
+    .expect("failed to configure RMT LED channel");
 
     // Optional LED strip power control GPIO.
     //
@@ -150,10 +154,14 @@ async fn main(spawner: Spawner) -> ! {
     if START_NETWORK {
         let station_config = Config::Station(
             StationConfig::default()
-                .with_ssid(secrets::WIFI_SSID)
-                .with_password(secrets::WIFI_PASSWORD.into()),
+                .with_ssid(secrets::WIFI_SSID.try_into().expect("invalid Wi-Fi SSID"))
+                .with_authentication(wifi::AuthenticationMethodConfig::Wpa2Personal(
+                    secrets::WIFI_PASSWORD
+                        .try_into()
+                        .expect("invalid Wi-Fi password"),
+                )),
         );
-        let (mut controller, interfaces) = wifi::new(
+        let mut controller = WifiController::new(
             peripherals.WIFI,
             ControllerConfig::default().with_initial_config(station_config),
         )
@@ -161,7 +169,7 @@ async fn main(spawner: Spawner) -> ! {
         controller
             .set_max_tx_power(40)
             .expect("failed to limit Wi-Fi TX power");
-        let wifi_interface = interfaces.station;
+        let wifi_interface = Interface::station();
 
         let net_config = embassy_net::Config::dhcpv4(Default::default());
         let rng = Rng::new();
@@ -250,6 +258,6 @@ async fn connection_task(mut controller: WifiController<'static>) {
 }
 
 #[embassy_executor::task]
-async fn net_task(mut runner: Runner<'static, Interface<'static>>) {
+async fn net_task(mut runner: Runner<'static, Interface>) {
     runner.run().await;
 }

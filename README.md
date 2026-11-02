@@ -22,8 +22,8 @@ The default LED hardware configuration is grouped near the top of
   and device identifier are generated from the last three bytes of the ESP32
   base MAC address, for example `esp32_led_mqtt_3ef8d0`.
 - `LED_COUNT` sets the number of LEDs.
-- The `LedStrip` type selects the controller timing and color order. The default
-  uses `Sk68xxTiming` with `color_order::Grb`.
+- The `LedStrip` type selects the color order; the constructor selects
+  timing. The default uses `SK68XX_TIMING` with `color_order::Grb`.
 - The LED data pin is the direct `peripherals.GPIO2` argument passed to
   `LedStrip::new_with_memsize`; replace that field with another ESP HAL GPIO
   field for your board.
@@ -40,17 +40,17 @@ If you do not have the separate LED strip available, the M5Stack NanoC6
 internal LED can be used instead:
 
 - Set `LED_COUNT` to `1`.
-- In the `LedStrip` type, use `esp_hal_smartled::Ws2812Timing`.
+- In the `LedStrip::new_with_memsize` call, use `esp_hal_smartled::WS2812_TIMING`.
 - Set `led_power_pin` to `Some(peripherals.GPIO19.into())`.
 - Pass `peripherals.GPIO20` to `LedStrip::new_with_memsize`.
 
-`esp-hal-smartled2` also provides these controller timing types:
+`esp-hal-smartled` also provides these controller timing constants:
 
-- `Sk68xxTiming`
-- `Ws2812bTiming`
-- `Ws2812Timing`
-- `Ws2811Timing`
-- `Ws2811LowSpeedTiming`
+- `SK68XX_TIMING`
+- `WS2812B_TIMING`
+- `WS2812_TIMING`
+- `WS2811_TIMING`
+- `WS2811_LOW_SPEED_TIMING`
 
 Other RGB color-order options are:
 

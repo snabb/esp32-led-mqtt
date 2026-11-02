@@ -14,7 +14,9 @@ use esp32_led_mqtt::{
 };
 use heapless::Vec;
 use log::{info, warn};
-use minimq::{Buffers, ConfigBuilder, ConnectEvent, Publication, Session, TopicFilter, Will};
+use minimq::{
+    Buffers, ConfigBuilder, ConnectEvent, Connection, Publication, Session, TopicFilter, Will,
+};
 use serde::Deserialize;
 use smart_leds::RGB8;
 
@@ -71,8 +73,12 @@ async fn run_session(
             .map_err(MqttRunError::Config)?;
     }
 
-    let mut session = Session::new(builder);
-    let event = session.connect(socket).await.map_err(MqttRunError::Mqtt)?;
+    let mut mqtt_session = Session::new(builder);
+    let mut session = mqtt_session
+        .connect(socket)
+        .await
+        .map_err(MqttRunError::Mqtt)?;
+    let event = session.connect_event();
     info!("MQTT connected: {:?}", event);
 
     publish_text(
@@ -143,7 +149,7 @@ async fn endpoint(stack: Stack<'static>) -> Result<IpEndpoint, MqttRunError> {
 }
 
 async fn publish_light_state(
-    session: &mut Session<'_, TcpSocket<'_>>,
+    session: &mut Connection<'_, '_, TcpSocket<'_>>,
     identity: &DeviceIdentity,
 ) -> Result<(), MqttRunError> {
     let light = light_state::get();
@@ -170,7 +176,7 @@ async fn publish_light_state(
 }
 
 async fn publish_light_discovery(
-    session: &mut Session<'_, TcpSocket<'_>>,
+    session: &mut Connection<'_, '_, TcpSocket<'_>>,
     identity: &DeviceIdentity,
 ) -> Result<(), MqttRunError> {
     let mut payload: heapless::String<1400> = heapless::String::new();
@@ -215,7 +221,7 @@ fn write_light_discovery_payload(
 }
 
 async fn publish_speed_discovery(
-    session: &mut Session<'_, TcpSocket<'_>>,
+    session: &mut Connection<'_, '_, TcpSocket<'_>>,
     identity: &DeviceIdentity,
 ) -> Result<(), MqttRunError> {
     let mut payload: heapless::String<700> = heapless::String::new();
@@ -248,7 +254,7 @@ fn write_speed_discovery_payload(
 }
 
 async fn publish_speed_state(
-    session: &mut Session<'_, TcpSocket<'_>>,
+    session: &mut Connection<'_, '_, TcpSocket<'_>>,
     identity: &DeviceIdentity,
 ) -> Result<(), MqttRunError> {
     let mut payload: heapless::String<3> = heapless::String::new();
@@ -264,7 +270,7 @@ async fn publish_speed_state(
 }
 
 async fn publish_text(
-    session: &mut Session<'_, TcpSocket<'_>>,
+    session: &mut Connection<'_, '_, TcpSocket<'_>>,
     topic: &str,
     payload: &str,
     retain: bool,
