@@ -28,55 +28,36 @@ use log::{error, info, warn};
 use smart_leds::{RGB8, SmartLedsWrite};
 use static_cell::StaticCell;
 
-mod secrets {
-    include!(concat!(env!("OUT_DIR"), "/secrets.rs"));
-}
-
 mod button;
+mod c_shims;
+mod config;
 pub(crate) mod identity;
 pub(crate) mod light_state;
 mod mqtt;
+mod ota;
 
 use identity::DeviceIdentity;
 use light_state::{effect_params, get as light_state};
 const START_NETWORK: bool = true;
 
-// LED strip hardware configuration.
-//
-// User configuration points:
-// - LED_COUNT: set this to the number of addressable LEDs in your strip.
-// - LedStrip: select the RGB color order for your strip.
-// - LED_POWER_ACTIVE_LEVEL: set to esp_hal::gpio::Level::Low if your
-//   power-enable circuit is active-low.
-// - In main, configure button_pin, led_power_pin, and the GPIO passed to
-//   LedStrip::new_with_memsize.
-//
-// Select the timing in LedStrip::new_with_memsize. Other provided timings include
-// WS2812B_TIMING, WS2812_TIMING, WS2811_TIMING, and WS2811_LOW_SPEED_TIMING. Common
-// RGB color orders are color_order::{Rgb, Rbg, Grb, Gbr, Brg, Bgr}.
-//
-// M5Stack NanoC6 internal LED preset:
-// - Set LED_COUNT to 1.
-// - In LedStrip::new_with_memsize, use esp_hal_smartled::WS2812_TIMING.
-// - In main, set led_power_pin to Some(peripherals.GPIO19.into()).
-// - In main, pass peripherals.GPIO20 to LedStrip::new_with_memsize.
-const LED_COUNT: usize = 60;
-const LED_POWER_ACTIVE_LEVEL: esp_hal::gpio::Level = esp_hal::gpio::Level::High;
-const LED_FRAME_INTERVAL: Duration = Duration::from_micros(16_667);
-type LedStrip<'d> = esp_hal_smartled::RmtSmartLeds<
-    'd,
-    { esp_hal_smartled::buffer_size::<RGB8>(LED_COUNT) },
-    esp_hal::Blocking,
-    RGB8,
-    esp_hal_smartled::color_order::Grb,
->;
+// The hardware profile is a build input, independent of private device settings.
+include!(concat!(env!("OUT_DIR"), "/hardware.rs"));
 
 // Wi-Fi activity can delay RMT refills; extra RMT memory gives the LED transfer
 // more slack while the radio stack is running.
 const RMT_MEMORY_BLOCKS: u8 = 4;
-// This creates a default app-descriptor required by the esp-idf bootloader.
-// For more information see: <https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/system/app_image_format.html#application-description>
-esp_bootloader_esp_idf::esp_app_desc!();
+// The OTA manifest must match the version embedded in the app descriptor.
+esp_bootloader_esp_idf::esp_app_desc!(
+    env!("FIRMWARE_BUILD_ID"),
+    env!("FIRMWARE_APP_PROJECT"),
+    env!("FIRMWARE_BUILD_TIME"),
+    env!("FIRMWARE_BUILD_DATE"),
+    esp_bootloader_esp_idf::ESP_IDF_COMPATIBLE_VERSION,
+    esp_bootloader_esp_idf::MMU_PAGE_SIZE,
+    0,
+    u16::MAX,
+    esp_bootloader_esp_idf::SECURE_VERSION
+);
 
 macro_rules! mk_static {
     ($t:ty, $val:expr) => {{
@@ -95,10 +76,35 @@ async fn main(spawner: Spawner) -> ! {
     esp_alloc::heap_allocator!(#[ram(reclaimed)] size: 64 * 1024);
     esp_alloc::heap_allocator!(size: 36 * 1024);
 
-    let timg0 = TimerGroup::new(peripherals.TIMG0);
+    let mut timg0 = TimerGroup::new(peripherals.TIMG0);
+    ota::arm_watchdog(&mut timg0.wdt);
     esp_rtos::start(timg0.timer0, peripherals.FROM_CPU_INTR0);
 
-    info!("Starting LED firmware");
+    info!(
+        "Starting LED firmware {} hardware {}",
+        env!("FIRMWARE_BUILD_ID"),
+        env!("FIRMWARE_HARDWARE_ID")
+    );
+    let (usb_rx, _usb_tx) =
+        esp_hal::usb::usb_serial_jtag::UsbSerialJtag::new(peripherals.USB_DEVICE)
+            .into_async()
+            .split();
+    spawner.spawn(config::usb_task(usb_rx).unwrap());
+    let mut flash = esp_storage::FlashStorage::new(peripherals.FLASH);
+    let device_config = match config::load(&mut flash).await {
+        Ok(Some(config)) => Some(&*mk_static!(
+            esp32_led_mqtt::device_config::DeviceConfig,
+            config
+        )),
+        Ok(None) => {
+            warn!("Device configuration required; provision over USB");
+            None
+        }
+        Err(reason) => {
+            warn!("Device configuration unavailable: {}", reason);
+            None
+        }
+    };
     let identity = mk_static!(
         DeviceIdentity,
         DeviceIdentity::from_base_mac(efuse::base_mac_address())
@@ -113,9 +119,9 @@ async fn main(spawner: Spawner) -> ! {
     // Replace peripherals.GPIO2 with the GPIO connected to the DIN/data input
     // of your LED strip.
     let strip = LedStrip::new_with_memsize(
-        esp_hal_smartled::SK68XX_TIMING,
+        LED_TIMING,
         rmt.channel0,
-        peripherals.GPIO2,
+        led_data_pin!(peripherals),
         RMT_MEMORY_BLOCKS,
         rmt_frequency,
     )
@@ -127,7 +133,7 @@ async fn main(spawner: Spawner) -> ! {
     // M5Stack NanoC6 + RGB LED Strip setup. To control an active-high enable
     // pin, change this to Some(peripherals.GPIOx.into()) and replace GPIOx with
     // your board's power-enable pin.
-    let led_power_pin: Option<esp_hal::gpio::AnyPin<'static>> = None;
+    let led_power_pin: Option<esp_hal::gpio::AnyPin<'static>> = led_power_pin!(peripherals);
     let led_power = led_power_pin.map(|pin| {
         let level = if light_state().on {
             LED_POWER_ACTIVE_LEVEL
@@ -142,7 +148,7 @@ async fn main(spawner: Spawner) -> ! {
     // The M5Stack NanoC6 button is on GPIO9 and pulls the pin low when pressed.
     // Leave this as None if your board has no button, or replace GPIO9 with
     // your board's active-low button pin.
-    let button_pin: Option<esp_hal::gpio::AnyPin<'static>> = Some(peripherals.GPIO9.into());
+    let button_pin: Option<esp_hal::gpio::AnyPin<'static>> = button_pin!(peripherals);
     if let Some(pin) = button_pin {
         let button = Input::new(
             pin,
@@ -151,15 +157,30 @@ async fn main(spawner: Spawner) -> ! {
         spawner.spawn(button::task(button).unwrap());
     }
 
-    if START_NETWORK {
+    let mut network = None;
+    if let Some(settings) = device_config.filter(|_| START_NETWORK) {
+        let authentication = match settings.wifi_auth {
+            esp32_led_mqtt::device_config::WifiAuth::Open => wifi::AuthenticationMethodConfig::Open,
+            esp32_led_mqtt::device_config::WifiAuth::Wpa2Personal => {
+                wifi::AuthenticationMethodConfig::Wpa2Personal(
+                    settings
+                        .wifi_password
+                        .as_str()
+                        .try_into()
+                        .expect("validated password"),
+                )
+            }
+        };
         let station_config = Config::Station(
             StationConfig::default()
-                .with_ssid(secrets::WIFI_SSID.try_into().expect("invalid Wi-Fi SSID"))
-                .with_authentication(wifi::AuthenticationMethodConfig::Wpa2Personal(
-                    secrets::WIFI_PASSWORD
+                .with_ssid(
+                    settings
+                        .wifi_ssid
+                        .as_str()
                         .try_into()
-                        .expect("invalid Wi-Fi password"),
-                )),
+                        .expect("validated SSID"),
+                )
+                .with_authentication(authentication),
         );
         let mut controller = WifiController::new(
             peripherals.WIFI,
@@ -177,14 +198,16 @@ async fn main(spawner: Spawner) -> ! {
         let (stack, runner) = embassy_net::new(
             wifi_interface,
             net_config,
-            mk_static!(StackResources<4>, StackResources::<4>::new()),
+            mk_static!(StackResources<6>, StackResources::<6>::new()),
             seed,
         );
 
         spawner.spawn(connection_task(controller).unwrap());
         spawner.spawn(net_task(runner).unwrap());
-        spawner.spawn(mqtt::task(stack, identity).unwrap());
+        spawner.spawn(mqtt::task(stack, identity, settings).unwrap());
+        network = Some(stack);
     }
+    spawner.spawn(ota::task(network, flash, timg0.wdt).unwrap());
     run_led_loop(strip, led_power).await
 }
 
@@ -235,6 +258,9 @@ async fn run_led_loop(mut strip: LedStrip<'static>, mut led_power: Option<Output
 fn write_frame(strip: &mut LedStrip<'_>, output: &[RGB8; LED_COUNT]) {
     // Keep the short RMT refill window from being preempted by radio work.
     let result = critical_section::with(|_| strip.write(*output));
+    if result.is_ok() {
+        ota::LED_READY.store(true, core::sync::atomic::Ordering::Relaxed);
+    }
     if let Err(err) = result {
         error!("LED write failed: {:?}", err);
     }

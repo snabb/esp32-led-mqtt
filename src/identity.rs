@@ -12,6 +12,8 @@ pub struct DeviceIdentity {
     pub state_topic: heapless::String<64>,
     pub speed_command_topic: heapless::String<80>,
     pub speed_state_topic: heapless::String<80>,
+    pub ota_command_topic: heapless::String<64>,
+    pub ota_status_topic: heapless::String<64>,
     pub availability_topic: heapless::String<64>,
 }
 
@@ -43,6 +45,8 @@ impl DeviceIdentity {
                 .expect("device speed state topic capacity too small"),
             availability_topic: heapless::format!("{}/status", slug)
                 .expect("device availability topic capacity too small"),
+            ota_command_topic: heapless::format!("{}/ota/set", slug).expect("OTA topic capacity"),
+            ota_status_topic: heapless::format!("{}/ota/status", slug).expect("OTA topic capacity"),
             client_id,
             slug,
         }

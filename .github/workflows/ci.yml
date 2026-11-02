@@ -20,9 +20,6 @@ jobs:
           components: clippy, rust-src
           targets: riscv32imac-unknown-none-elf
 
-      - name: Prepare example secrets
-        run: cp secrets.example.yaml secrets.yaml
-
       - name: Check formatting
         run: cargo fmt --check
 
@@ -32,5 +29,8 @@ jobs:
       - name: Check firmware
         run: cargo check --target riscv32imac-unknown-none-elf
 
-      - name: Run Clippy
+      - name: Run Clippy with OTA enabled
+        env:
+          OTA_ALLOWED_HOSTS: updates.example.invalid
+          OTA_ROLLBACK_BOOTLOADER: "1"
         run: cargo clippy --target riscv32imac-unknown-none-elf -- -D warnings

@@ -15,65 +15,21 @@ and 60 LED [M5Stack RGB LED Strip](https://docs.m5stack.com/en/unit/rgb_led_stri
 
 ## Configuration
 
-The default LED hardware configuration is grouped near the top of
-`src/main.rs`:
+Hardware settings are compiled from [`hardware.json`](hardware.json): LED count,
+controller timing, RGB color order, data GPIO, optional power GPIO/polarity,
+button GPIO and frame interval. The default is 60 SK6812 LEDs, GRB, data GPIO2,
+button GPIO9 and no power-enable pin. For the NanoC6 internal LED, select one
+WS2812 LED, data GPIO20 and power GPIO19.
 
-- The MQTT client ID, MQTT topics, Home Assistant discovery topics, unique IDs,
-  and device identifier are generated from the last three bytes of the ESP32
-  base MAC address, for example `esp32_led_mqtt_3ef8d0`.
-- `LED_COUNT` sets the number of LEDs.
-- The `LedStrip` type selects the color order; the constructor selects
-  timing. The default uses `SK68XX_TIMING` with `color_order::Grb`.
-- The LED data pin is the direct `peripherals.GPIO2` argument passed to
-  `LedStrip::new_with_memsize`; replace that field with another ESP HAL GPIO
-  field for your board.
-- Optional strip power control is configured by `led_power_pin` in `main`.
-  The default is `None`. To drive an active-high power-enable GPIO, change it
-  to `Some(peripherals.GPIOx.into())`; change `LED_POWER_ACTIVE_LEVEL` to
-  `esp_hal::gpio::Level::Low` if the enable pin is active-low.
-- Optional active-low button input is configured by `button_pin` in `main`.
-  The default uses the M5Stack NanoC6 button on GPIO9. Set it to `None` if your
-  board has no button. A short press cycles effects, including `None`; a double
-  press changes the current RGB color; a long press toggles the light on or off.
+Wi-Fi and MQTT settings are stored separately in the `device_config` flash
+partition. Firmware builds never read credentials. Copy `secrets.example.yaml`
+to an ignored `local/secrets.yaml`, edit it privately, and provision the device
+over USB as described in [persistent configuration](docs/DEVICE_CONFIG_PLAN.md).
+An unconfigured device runs its LEDs/button and accepts USB configuration.
 
-If you do not have the separate LED strip available, the M5Stack NanoC6
-internal LED can be used instead:
-
-- Set `LED_COUNT` to `1`.
-- In the `LedStrip::new_with_memsize` call, use `esp_hal_smartled::WS2812_TIMING`.
-- Set `led_power_pin` to `Some(peripherals.GPIO19.into())`.
-- Pass `peripherals.GPIO20` to `LedStrip::new_with_memsize`.
-
-`esp-hal-smartled` also provides these controller timing constants:
-
-- `SK68XX_TIMING`
-- `WS2812B_TIMING`
-- `WS2812_TIMING`
-- `WS2811_TIMING`
-- `WS2811_LOW_SPEED_TIMING`
-
-Other RGB color-order options are:
-
-- `color_order::Rgb`
-- `color_order::Rbg`
-- `color_order::Grb`
-- `color_order::Gbr`
-- `color_order::Brg`
-- `color_order::Bgr`
-
-Set your Wi-Fi and MQTT details in `src/secrets.rs`, or copy the example
-secrets file and adjust it for local ignored credentials:
-
-```sh
-cp secrets.example.yaml secrets.yaml
-```
-
-When `secrets.yaml` exists, it overrides `src/secrets.rs`. It is ignored by git
-and must not be committed. `wifi_ssid`, `wifi_password`, and `mqtt_broker` are
-required. `mqtt_broker` may be a bare IPv4 address or a DNS hostname.
-`mqtt_port` defaults to `1883` when omitted, and MQTT username/password may be
-omitted when the broker does not use authentication. Editing `src/secrets.rs`
-modifies a tracked file; use `secrets.yaml` for private local credentials.
+MQTT topics and Home Assistant identifiers are generated from the MAC address,
+for example `esp32_led_mqtt_123456`. A short button press cycles effects, a double
+press changes color, and a long press toggles power.
 
 ## Flash
 
@@ -83,7 +39,8 @@ Connect the ESP32-C6 over USB and run:
 cargo run --release
 ```
 
-Cargo uses the configured runner:
+After preparing the rollback bootloader as described in the OTA guide, Cargo uses
+the configured runner:
 
 ```sh
 espflash flash --monitor --chip esp32c6
@@ -91,6 +48,14 @@ espflash flash --monitor --chip esp32c6
 
 In non-interactive shells the flash can succeed even if the monitor cannot
 attach afterward.
+
+## OTA prototype
+
+See [OTA setup and testing](docs/OTA.md) before flashing. The repository now uses
+a two-slot partition table and a custom rollback bootloader, generated with
+`tools/build-ota-bootloader.sh`. OTA commands use MQTT and download application
+images over HTTPS, with build-time certificate expiry checks and a two-minute
+trial confirmation window.
 
 ## Other ESP32 Chips
 
@@ -141,3 +106,17 @@ Effects live in `src/effects`, with one file per effect. To add one:
 
 Home Assistant discovery, name parsing, button cycling, and numeric effect
 codes are derived from `EFFECT_DEFINITIONS`.
+
+Provision Wi-Fi and MQTT settings over USB using the public CLI:
+
+```sh
+mkdir -p local
+cp tools/device.example.json local/device.json
+# Edit local/device.json with your settings.
+uv run tools/provision.py provision --port /dev/ttyACM0 --config local/device.json
+uv run tools/provision.py status --port /dev/ttyACM0
+```
+
+Create `local/` first if needed; it is ignored by Git. Provisioning saves settings
+in a separate flash partition and reboots. Firmware updates preserve them.
+See [OTA documentation](docs/OTA.md) for initial flashing and update behavior.

@@ -1,0 +1,16 @@
+# OTA trust roots
+
+`roots.pem` contains the following roots from the development host's Mozilla CA
+store (`/usr/share/ca-certificates/mozilla`), copied on 2026-11-02.
+These are public certificates, not credentials. Verify certificate fingerprints
+when replacing the bundle. This is a deliberately limited set, not all public CAs.
+
+Source: [Mozilla CA certificate program](https://www.mozilla.org/en-US/about/governance/policies/security-group/certs/).
+
+- ISRG_Root_X1: `96:BC:EC:06:26:49:76:F3:74:60:77:9A:CF:28:C5:A7:CF:E8:A3:C0:AA:E1:1A:8F:FC:EE:05:C0:BD:DF:08:C6`
+- ISRG_Root_X2: `69:72:9B:8E:15:A8:6E:FC:17:7A:57:AF:B7:17:1D:FC:64:AD:D2:8C:2F:CA:8C:F1:50:7E:34:45:3C:CB:14:70`
+- GTS_Root_R1: `D9:47:43:2A:BD:E7:B7:FA:90:FC:2E:6B:59:10:1B:12:80:E0:E1:C7:E4:E4:0F:A3:C6:88:7F:FF:57:A7:F4:CF`
+- GTS_Root_R3: `34:D8:A7:3E:E2:08:D9:BC:DB:0D:95:65:20:93:4B:4E:40:E6:94:82:59:6E:8B:6F:73:C8:42:6B:01:0A:6F:48`
+- GTS_Root_R4: `34:9D:FA:40:58:C5:E2:63:12:3B:39:8A:E7:95:57:3C:4E:13:13:C8:3F:E6:8F:93:55:6C:D5:E8:03:1B:3C:7D`
+- Amazon_Root_CA_1: `8E:CD:E6:88:4F:3D:87:B1:12:5B:A3:1A:C3:FC:B1:3D:70:16:DE:7F:57:CC:90:4F:E1:CB:97:C6:AE:98:19:6E`
+- DigiCert_Global_Root_G2: `CB:3C:CB:B7:60:31:E5:E0:13:8F:8D:D3:9A:23:F9:DE:47:FF:C3:5E:43:C1:14:4C:EA:27:D4:6A:5A:B1:CB:5F`

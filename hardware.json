@@ -1,0 +1,11 @@
+{
+  "board": "m5stack-nanoc6",
+  "led_count": 60,
+  "timing": "sk6812",
+  "color_order": "grb",
+  "data_gpio": 2,
+  "button_gpio": 9,
+  "power_gpio": null,
+  "power_active_high": true,
+  "frame_interval_us": 16667
+}

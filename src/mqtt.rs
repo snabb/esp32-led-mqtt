@@ -1,7 +1,7 @@
 use core::fmt::Write;
 use core::str::FromStr;
 
-use embassy_futures::select::{Either, select};
+use embassy_futures::select::{Either3, select3};
 use embassy_net::{
     IpAddress, IpEndpoint, Stack,
     dns::{DnsQueryType, IpAddress as DnsIpAddress},
@@ -23,18 +23,23 @@ use smart_leds::RGB8;
 use crate::{
     identity::{DEVICE_MODEL, DEVICE_NAME, DeviceIdentity},
     light_state::{self, LIGHT_STATE_CHANGED, MAX_EFFECT_SPEED},
-    secrets,
 };
 
 #[embassy_executor::task]
-pub async fn task(stack: Stack<'static>, identity: &'static DeviceIdentity) {
+pub async fn task(
+    stack: Stack<'static>,
+    identity: &'static DeviceIdentity,
+    settings: &'static esp32_led_mqtt::device_config::DeviceConfig,
+) {
     loop {
         stack.wait_config_up().await;
         if let Some(config) = stack.config_v4() {
             info!("Network ready with IP {}", config.address);
         }
 
-        match run_session(stack, identity).await {
+        let result = run_session(stack, identity, settings).await;
+        crate::ota::MQTT_READY.store(false, core::sync::atomic::Ordering::Release);
+        match result {
             Ok(()) => warn!("MQTT session ended"),
             Err(err) => warn!("MQTT session failed: {:?}", err),
         }
@@ -46,8 +51,9 @@ pub async fn task(stack: Stack<'static>, identity: &'static DeviceIdentity) {
 async fn run_session(
     stack: Stack<'static>,
     identity: &'static DeviceIdentity,
+    settings: &'static esp32_led_mqtt::device_config::DeviceConfig,
 ) -> Result<(), MqttRunError> {
-    let endpoint = endpoint(stack).await?;
+    let endpoint = endpoint(stack, settings).await?;
     let mut tcp_rx = [0_u8; 2048];
     let mut tcp_tx = [0_u8; 2048];
     let mut socket = TcpSocket::new(stack, &mut tcp_rx, &mut tcp_tx);
@@ -67,9 +73,12 @@ async fn run_session(
         .keepalive_interval(30)
         .will(will)
         .map_err(MqttRunError::Config)?;
-    if !secrets::MQTT_USERNAME.is_empty() || !secrets::MQTT_PASSWORD.is_empty() {
+    if !settings.mqtt_username.as_str().is_empty() || !settings.mqtt_password.as_str().is_empty() {
         builder = builder
-            .auth(secrets::MQTT_USERNAME, secrets::MQTT_PASSWORD.as_bytes())
+            .auth(
+                settings.mqtt_username.as_str(),
+                settings.mqtt_password.as_str().as_bytes(),
+            )
             .map_err(MqttRunError::Config)?;
     }
 
@@ -99,6 +108,7 @@ async fn run_session(
                 &[
                     TopicFilter::new(identity.command_topic.as_str()),
                     TopicFilter::new(identity.speed_command_topic.as_str()),
+                    TopicFilter::new(identity.ota_command_topic.as_str()),
                 ],
                 &[],
             )
@@ -106,10 +116,19 @@ async fn run_session(
             .map_err(MqttRunError::Mqtt)?;
     }
 
+    crate::ota::MQTT_READY.store(true, core::sync::atomic::Ordering::Release);
     loop {
-        match select(session.recv(), LIGHT_STATE_CHANGED.wait()).await {
-            Either::First(Ok(message)) => {
-                if message.topic() == identity.command_topic.as_str()
+        match select3(
+            session.recv(),
+            LIGHT_STATE_CHANGED.wait(),
+            crate::ota::STATUS.wait(),
+        )
+        .await
+        {
+            Either3::First(Ok(message)) => {
+                if message.topic() == identity.ota_command_topic.as_str() {
+                    crate::ota::submit(message.payload(), message.retained());
+                } else if message.topic() == identity.command_topic.as_str()
                     && handle_command(message.payload())
                 {
                     publish_light_state(&mut session, identity).await?;
@@ -119,23 +138,29 @@ async fn run_session(
                     publish_speed_state(&mut session, identity).await?;
                 }
             }
-            Either::First(Err(err)) => return Err(MqttRunError::Mqtt(err)),
-            Either::Second(()) => publish_light_state(&mut session, identity).await?,
+            Either3::First(Err(err)) => return Err(MqttRunError::Mqtt(err)),
+            Either3::Second(()) => publish_light_state(&mut session, identity).await?,
+            Either3::Third(status) => {
+                publish_text(&mut session, &identity.ota_status_topic, &status, true).await?
+            }
         }
     }
 }
 
-async fn endpoint(stack: Stack<'static>) -> Result<IpEndpoint, MqttRunError> {
-    if let Ok(IpAddress::Ipv4(address)) = IpAddress::from_str(secrets::MQTT_BROKER) {
+async fn endpoint(
+    stack: Stack<'static>,
+    settings: &esp32_led_mqtt::device_config::DeviceConfig,
+) -> Result<IpEndpoint, MqttRunError> {
+    if let Ok(IpAddress::Ipv4(address)) = IpAddress::from_str(settings.mqtt_broker.as_str()) {
         return Ok(IpEndpoint::new(
             IpAddress::Ipv4(address),
-            secrets::MQTT_PORT,
+            settings.mqtt_port,
         ));
     }
 
     info!("Resolving MQTT broker hostname");
     let addrs: Vec<DnsIpAddress, 1> = stack
-        .dns_query(secrets::MQTT_BROKER, DnsQueryType::A)
+        .dns_query(settings.mqtt_broker.as_str(), DnsQueryType::A)
         .await
         .map_err(MqttRunError::Dns)?;
     let Some(DnsIpAddress::Ipv4(address)) = addrs.first().copied() else {
@@ -144,7 +169,7 @@ async fn endpoint(stack: Stack<'static>) -> Result<IpEndpoint, MqttRunError> {
 
     Ok(IpEndpoint::new(
         IpAddress::Ipv4(address),
-        secrets::MQTT_PORT,
+        settings.mqtt_port,
     ))
 }
 

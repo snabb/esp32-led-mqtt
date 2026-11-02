@@ -1,6 +1,12 @@
 #![cfg_attr(not(test), no_std)]
 
+#[cfg(test)]
+mod c_shims;
+pub mod config_store;
+pub mod device_config;
 mod effects;
+pub mod ota_protocol;
+pub mod provisioning;
 pub mod random_color;
 
 use smart_leds::{

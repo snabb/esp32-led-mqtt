@@ -1,9 +1,10 @@
-use std::{collections::BTreeMap, env, fs, path::Path};
+use std::env;
 
 fn main() {
     let target = env::var("TARGET").unwrap_or_default();
     let firmware_target = target.starts_with("riscv32imac-unknown-none-elf");
-    emit_secrets_config(firmware_target);
+    emit_build_identity();
+    emit_hardware();
 
     if !firmware_target {
         return;
@@ -14,115 +15,180 @@ fn main() {
     println!("cargo:rustc-link-arg=-Tlinkall.x");
 }
 
-fn emit_secrets_config(require_secrets: bool) {
-    println!("cargo:rerun-if-changed=secrets.yaml");
-    println!("cargo:rerun-if-changed=src/secrets.rs");
-
-    let generated = if Path::new("secrets.yaml").exists() {
-        generate_from_yaml(Path::new("secrets.yaml"))
-    } else {
-        read_rust_secrets(Path::new("src/secrets.rs"), require_secrets)
-    };
-
-    let out_dir = env::var_os("OUT_DIR").expect("OUT_DIR is set by Cargo");
-    fs::write(Path::new(&out_dir).join("secrets.rs"), generated)
-        .expect("failed to write generated secrets config");
-}
-
-fn generate_from_yaml(path: &Path) -> String {
-    let secrets = read_secrets(path);
-    let mqtt_port = secrets
-        .get("mqtt_port")
+fn emit_build_identity() {
+    println!("cargo:rerun-if-env-changed=SOURCE_DATE_EPOCH");
+    let seconds = env::var("SOURCE_DATE_EPOCH")
         .map(|value| {
             value
-                .parse::<u16>()
-                .unwrap_or_else(|_| panic!("secrets.yaml mqtt_port must be a u16"))
+                .parse::<u64>()
+                .expect("SOURCE_DATE_EPOCH must be Unix seconds")
         })
-        .unwrap_or(1883);
-
-    format!(
-        "pub const WIFI_SSID: &str = {:?};\n\
-         pub const WIFI_PASSWORD: &str = {:?};\n\
-         pub const MQTT_BROKER: &str = {:?};\n\
-         pub const MQTT_PORT: u16 = {};\n\
-         pub const MQTT_USERNAME: &str = {:?};\n\
-         pub const MQTT_PASSWORD: &str = {:?};\n",
-        required(&secrets, "wifi_ssid"),
-        required(&secrets, "wifi_password"),
-        required(&secrets, "mqtt_broker"),
-        mqtt_port,
-        secrets
-            .get("mqtt_username")
-            .map(String::as_str)
-            .unwrap_or(""),
-        secrets
-            .get("mqtt_password")
-            .map(String::as_str)
-            .unwrap_or(""),
-    )
-}
-
-fn read_rust_secrets(path: &Path, require_secrets: bool) -> String {
-    let contents =
-        fs::read_to_string(path).unwrap_or_else(|_| panic!("missing {}", path.display()));
-    if require_secrets
-        && (contents.contains("your-wifi-ssid") || contents.contains("your-wifi-password"))
+        .unwrap_or_else(|_| {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("build clock before Unix epoch")
+                .as_secs()
+        });
+    assert!(
+        (1_767_225_600..=4_102_444_800).contains(&seconds),
+        "build time must be between 2026 and 2100"
+    );
+    println!("cargo:rustc-env=FIRMWARE_BUILD_UNIX={seconds}");
+    let date = time::OffsetDateTime::from_unix_timestamp(seconds as i64).expect("valid build time");
+    println!(
+        "cargo:rustc-env=FIRMWARE_BUILD_TIME={:02}:{:02}:{:02}",
+        date.hour(),
+        date.minute(),
+        date.second()
+    );
+    println!(
+        "cargo:rustc-env=FIRMWARE_BUILD_DATE={:04}-{:02}-{:02}",
+        date.year(),
+        date.month() as u8,
+        date.day()
+    );
+    println!("cargo:rerun-if-env-changed=OTA_BUILD_ID");
+    println!("cargo:rerun-if-changed=src");
+    println!("cargo:rerun-if-changed=Cargo.lock");
+    for name in [
+        "OTA_ALLOWED_HOSTS",
+        "OTA_ALLOW_HTTP",
+        "OTA_ROLLBACK_BOOTLOADER",
+    ] {
+        println!("cargo:rerun-if-env-changed={name}");
+    }
+    let git = |args: &[&str]| {
+        std::process::Command::new("git")
+            .args(args)
+            .output()
+            .ok()
+            .filter(|output| output.status.success())
+            .and_then(|output| String::from_utf8(output.stdout).ok())
+            .map(|value| value.trim().to_owned())
+    };
+    for name in ["HEAD", "index"] {
+        if let Some(path) = git(&["rev-parse", "--git-path", name]) {
+            println!("cargo:rerun-if-changed={path}");
+        }
+    }
+    if let Some(reference) = git(&["symbolic-ref", "-q", "HEAD"])
+        && let Some(path) = git(&["rev-parse", "--git-path", &reference])
     {
-        panic!("edit src/secrets.rs or create secrets.yaml with Wi-Fi and MQTT settings");
+        println!("cargo:rerun-if-changed={path}");
     }
-    contents
+    let revision = git(&["rev-parse", "HEAD"]).unwrap_or_else(|| "nogit000".to_owned());
+    let short = &revision[..revision.len().min(8)];
+    let dirty = git(&["status", "--porcelain"]).is_none_or(|status| !status.is_empty());
+    let stamp = format!(
+        "{:04}{:02}{:02}T{:02}{:02}{:02}Z",
+        date.year(),
+        date.month() as u8,
+        date.day(),
+        date.hour(),
+        date.minute(),
+        date.second()
+    );
+    let id = env::var("OTA_BUILD_ID")
+        .unwrap_or_else(|_| format!("{stamp}-{short}{}", if dirty { "-dirty" } else { "" }));
+    println!("cargo:rustc-env=FIRMWARE_GIT_REVISION={revision}");
+    assert!(
+        !id.is_empty()
+            && id.len() <= 31
+            && id
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b)),
+        "OTA_BUILD_ID must be 1-31 ASCII letters, digits, dots, underscores or hyphens"
+    );
+    println!("cargo:rustc-env=FIRMWARE_BUILD_ID={id}");
 }
 
-fn read_secrets(path: &Path) -> BTreeMap<String, String> {
-    let contents =
-        fs::read_to_string(path).unwrap_or_else(|_| panic!("failed to read {}", path.display()));
-    let mut values = BTreeMap::new();
-
-    for line in contents.lines() {
-        let Some((key, value)) = line.split_once(':') else {
-            continue;
-        };
-        let key = key.trim();
-        if key.is_empty() || key.starts_with('#') || key.contains(char::is_whitespace) {
-            continue;
+fn emit_hardware() {
+    use sha2::{Digest, Sha256};
+    println!("cargo:rerun-if-changed=hardware.json");
+    let bytes = std::fs::read("hardware.json").expect("hardware.json");
+    let profile: serde_json::Value = serde_json::from_slice(&bytes).expect("hardware JSON");
+    let text = |name: &str| profile[name].as_str().expect("hardware string field");
+    let number = |name: &str| profile[name].as_u64().expect("hardware integer field");
+    let board = text("board");
+    assert!(
+        !board.is_empty()
+            && board
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b)),
+        "invalid board name"
+    );
+    let count = number("led_count");
+    assert!((1..=512).contains(&count), "led_count must be 1-512");
+    let timing = match text("timing") {
+        "sk6812" => "SK68XX_TIMING",
+        "ws2812" => "WS2812_TIMING",
+        "ws2812b" => "WS2812B_TIMING",
+        "ws2811" => "WS2811_TIMING",
+        "ws2811_low_speed" => "WS2811_LOW_SPEED_TIMING",
+        _ => panic!("unsupported LED timing"),
+    };
+    let order = match text("color_order") {
+        "rgb" => "Rgb",
+        "rbg" => "Rbg",
+        "grb" => "Grb",
+        "gbr" => "Gbr",
+        "brg" => "Brg",
+        "bgr" => "Bgr",
+        _ => panic!("unsupported color order"),
+    };
+    let data = number("data_gpio");
+    assert!(data <= 30);
+    let optional_pin = |name: &str| {
+        if profile[name].is_null() {
+            (
+                "none".to_owned(),
+                "None::<esp_hal::gpio::AnyPin<'static>>".to_owned(),
+            )
+        } else {
+            let pin = number(name);
+            assert!(pin <= 30);
+            (pin.to_string(), format!("Some($p.GPIO{pin}.into())"))
         }
-
-        let value = strip_inline_comment(value.trim());
-        let value = unquote(value.trim());
-        values.insert(key.to_owned(), value.to_owned());
-    }
-
-    values
-}
-
-fn strip_inline_comment(value: &str) -> &str {
-    match value.find(" #") {
-        Some(index) => &value[..index],
-        None => value,
-    }
-}
-
-fn unquote(value: &str) -> &str {
-    if value.len() >= 2 {
-        let bytes = value.as_bytes();
-        if (bytes[0] == b'"' && bytes[value.len() - 1] == b'"')
-            || (bytes[0] == b'\'' && bytes[value.len() - 1] == b'\'')
-        {
-            return &value[1..value.len() - 1];
+    };
+    let (button_id, button) = optional_pin("button_gpio");
+    let (power_id, power) = optional_pin("power_gpio");
+    let active_high = profile["power_active_high"]
+        .as_bool()
+        .expect("power_active_high");
+    let level = if active_high { "High" } else { "Low" };
+    let frame = number("frame_interval_us");
+    assert!((1_000..=1_000_000).contains(&frame));
+    let id = format!(
+        "{board}-{}-{}-{count}led-d{data}-b{button_id}-p{power_id}{}",
+        text("timing"),
+        text("color_order"),
+        if !active_high && power_id != "none" {
+            "low"
+        } else {
+            ""
         }
-    }
-
-    value
-}
-
-fn required<'a>(values: &'a BTreeMap<String, String>, key: &str) -> &'a str {
-    let value = values
-        .get(key)
-        .unwrap_or_else(|| panic!("secrets.yaml is missing required key {key}"));
-    if value.is_empty() {
-        panic!("secrets.yaml key {key} must not be empty");
-    }
-    value
+    );
+    let digest = Sha256::digest(&bytes);
+    let hash: String = digest[..6]
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    println!("cargo:rustc-env=FIRMWARE_APP_PROJECT=led-mqtt-{hash}");
+    println!("cargo:rustc-env=FIRMWARE_HARDWARE_ID={id}");
+    let generated = format!(
+        r#"
+const LED_COUNT: usize = {count};
+const LED_POWER_ACTIVE_LEVEL: esp_hal::gpio::Level = esp_hal::gpio::Level::{level};
+const LED_FRAME_INTERVAL: embassy_time::Duration = embassy_time::Duration::from_micros({frame});
+const LED_TIMING: esp_hal_smartled::Timing = esp_hal_smartled::{timing};
+type LedStrip<'d> = esp_hal_smartled::RmtSmartLeds<'d, {{ esp_hal_smartled::buffer_size::<smart_leds::RGB8>(LED_COUNT) }}, esp_hal::Blocking, smart_leds::RGB8, esp_hal_smartled::color_order::{order}>;
+macro_rules! led_data_pin {{ ($p:ident) => {{ $p.GPIO{data} }}; }}
+macro_rules! led_power_pin {{ ($p:ident) => {{ {power} }}; }}
+macro_rules! button_pin {{ ($p:ident) => {{ {button} }}; }}
+"#
+    );
+    let output = std::path::PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR"));
+    std::fs::write(output.join("hardware.rs"), generated).expect("write hardware config");
 }
 
 fn linker_be_nice() {

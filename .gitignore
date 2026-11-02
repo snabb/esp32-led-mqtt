@@ -28,3 +28,15 @@ secrets.yaml
 
 # Ignore .DS_Store file in mac
 **/.DS_Store
+
+# Generated rollback bootloader and build provenance; regenerate with tools/build-ota-bootloader.sh.
+bootloader/*.bin
+bootloader/sdkconfig.generated
+bootloader/container-image.txt
+bootloader/idf-revision.txt
+bootloader/idf-submodules.txt
+bootloader/SHA256SUMS
+bootloader/build.log
+
+# Private local workflow, settings, artifacts and logs.
+/local/

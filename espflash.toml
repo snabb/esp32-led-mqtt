@@ -1,0 +1,3 @@
+[idf]
+partition_table = "partitions.csv"
+bootloader = "bootloader/esp32c6-rollback.bin"
