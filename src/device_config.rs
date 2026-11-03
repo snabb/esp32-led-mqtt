@@ -1,11 +1,12 @@
 //! Portable, bounded device settings. Flash storage and USB framing use this same schema.
 
+use core::ops::Range;
 use heapless::String;
 use serde::{Deserialize, Serialize};
 
 pub const SCHEMA: u16 = 1;
-pub const PARTITION_OFFSET: u32 = 0x3f0000;
-pub const PARTITION_SIZE: u32 = 0x10000;
+/// The `device_config` entry in `partitions.csv`.
+pub const PARTITION: Range<u32> = 0x3f0000..0x400000;
 pub const MAX_BYTES: usize = 4096;
 
 /// Deliberately has no Debug implementation: this value contains credentials.

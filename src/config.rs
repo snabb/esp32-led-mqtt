@@ -1,6 +1,5 @@
-use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicU32, Ordering};
 use embassy_embedded_hal::adapter::{BlockingAsync, YieldingAsync};
-use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal};
 use embassy_time::Timer;
 use embedded_io_async::Read;
 use esp_hal::{Async, usb::usb_serial_jtag::UsbSerialJtagRx};
@@ -11,33 +10,14 @@ use esp32_led_mqtt::{
     provisioning::{self, Command},
 };
 
-pub static REQUEST: Signal<CriticalSectionRawMutex, Command> = Signal::new();
-pub static WRITES_ALLOWED: AtomicBool = AtomicBool::new(false);
-static PENDING: AtomicBool = AtomicBool::new(false);
+use crate::flash::{self, Job};
+
 static GENERATION: AtomicU32 = AtomicU32::new(0);
 
-pub fn partition(flash: &mut FlashStorage<'static>) -> Result<core::ops::Range<u32>, &'static str> {
-    use esp_bootloader_esp_idf::partitions;
-    let mut buffer = [0; 512];
-    let table =
-        partitions::read_partition_table(flash, &mut buffer).map_err(|_| "partition_table")?;
-    let found = table
-        .iter()
-        .find(|entry| entry.label_as_str() == "device_config")
-        .ok_or("missing_config_partition")?;
-    if found.offset() != device_config::PARTITION_OFFSET
-        || found.len() != device_config::PARTITION_SIZE
-        || found.raw_type() != 1
-        || found.raw_subtype() != 0x06
-    {
-        return Err("config_partition_layout");
-    }
-    Ok(found.offset()..found.offset() + found.len())
-}
-
+/// Requires a partition table already checked by `flash::check_partition_table`.
 pub async fn load(flash: &mut FlashStorage<'static>) -> Result<Option<DeviceConfig>, &'static str> {
-    let range = partition(flash)?;
-    let result = config_store::load(&mut YieldingAsync::new(BlockingAsync::new(flash)), range)
+    let mut storage = YieldingAsync::new(BlockingAsync::new(flash));
+    let result = config_store::load(&mut storage, device_config::PARTITION)
         .await
         .map_err(|_| "config_storage")?;
     GENERATION.store(
@@ -73,33 +53,24 @@ pub async fn usb_task(mut rx: UsbSerialJtagRx<'static, Async>) {
         };
         for &byte in &chunk[..read] {
             if byte == b'\n' {
-                if !overflow {
+                let generation = GENERATION.load(Ordering::Relaxed);
+                if overflow {
+                    respond("", "too_large", generation);
+                } else {
                     match Command::decode(&frame[..count]) {
                         Ok(Command::Status { id }) => respond(
                             &id,
-                            if GENERATION.load(Ordering::Relaxed) == 0 {
+                            if generation == 0 {
                                 "unconfigured"
                             } else {
                                 "configured"
                             },
-                            GENERATION.load(Ordering::Relaxed),
+                            generation,
                         ),
-                        Ok(command) => {
-                            if !WRITES_ALLOWED.load(Ordering::Acquire) || crate::ota::busy() {
-                                respond(command.id(), "busy", GENERATION.load(Ordering::Relaxed));
-                            } else if PENDING
-                                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-                                .is_ok()
-                            {
-                                REQUEST.signal(command);
-                            } else {
-                                respond(command.id(), "busy", GENERATION.load(Ordering::Relaxed));
-                            }
-                        }
-                        Err(_) => respond("", "invalid", GENERATION.load(Ordering::Relaxed)),
+                        Ok(command) if flash::try_claim() => flash::queue(Job::Config(command)),
+                        Ok(command) => respond(command.id(), "busy", generation),
+                        Err(_) => respond("", "invalid", generation),
                     }
-                } else {
-                    respond("", "too_large", GENERATION.load(Ordering::Relaxed));
                 }
                 // Do not leave a second copy of provisioning credentials in the RX frame.
                 frame.fill(0);
@@ -116,50 +87,27 @@ pub async fn usb_task(mut rx: UsbSerialJtagRx<'static, Async>) {
     }
 }
 
-/// Returns true when the caller must reboot to reconcile persistent and active settings.
-pub async fn handle(flash: &mut FlashStorage<'static>, command: Command) -> bool {
-    let id = heapless::String::<32>::try_from(command.id()).expect("validated request ID");
-    let result = match partition(flash) {
-        Ok(range) => {
-            let mut storage = YieldingAsync::new(BlockingAsync::new(&mut *flash));
-            match command {
-                Command::Configure { config, .. } => {
-                    config_store::save(&mut storage, range, config).await
-                }
-                Command::Erase { .. } => config_store::erase(&mut storage, range).await.map(|()| 0),
-                Command::Status { .. } => unreachable!(),
-            }
-            .map_err(|_| "storage_error")
+/// Persists a USB write command and reports the result. The caller must reboot
+/// afterwards, even after an error.
+pub async fn handle(flash: &mut FlashStorage<'static>, command: Command) {
+    let mut storage = YieldingAsync::new(BlockingAsync::new(flash));
+    let range = device_config::PARTITION;
+    let (id, result) = match command {
+        Command::Configure { id, config } => {
+            (id, config_store::save(&mut storage, range, config).await)
         }
-        Err(reason) => Err(reason),
+        Command::Erase { id } => (
+            id,
+            config_store::erase(&mut storage, range).await.map(|()| 0),
+        ),
+        Command::Status { .. } => unreachable!("the USB task answers status requests"),
     };
-    PENDING.store(false, Ordering::Release);
     match result {
-        Ok(generation) => {
-            GENERATION.store(generation, Ordering::Relaxed);
-            respond(
-                &id,
-                if generation == 0 { "erased" } else { "saved" },
-                generation,
-            );
-            true
-        }
-        Err(reason) => {
-            // A flash error can occur after commit, including during readback or erase.
-            // Reboot so active credentials cannot silently differ from persistent settings.
-            if reason == "storage_error"
-                && let Ok(range) = partition(flash)
-            {
-                let mut storage = YieldingAsync::new(BlockingAsync::new(&mut *flash));
-                if let Ok(config) = config_store::load(&mut storage, range).await {
-                    GENERATION.store(
-                        config.map_or(0, |config| config.generation),
-                        Ordering::Relaxed,
-                    );
-                }
-            }
-            respond(&id, reason, GENERATION.load(Ordering::Relaxed));
-            reason == "storage_error"
-        }
+        Ok(generation) => respond(
+            &id,
+            if generation == 0 { "erased" } else { "saved" },
+            generation,
+        ),
+        Err(_) => respond(&id, "storage_error", GENERATION.load(Ordering::Relaxed)),
     }
 }

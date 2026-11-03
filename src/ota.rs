@@ -2,30 +2,23 @@ mod tls;
 
 use core::sync::atomic::{AtomicBool, Ordering};
 
-use embassy_futures::{
-    select::{Either, select},
-    yield_now,
-};
+use embassy_futures::yield_now;
 use embassy_net::{IpAddress, IpEndpoint, Stack, dns::DnsQueryType, tcp::TcpSocket};
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal};
 use embassy_time::{Duration, Instant, Timer, with_timeout};
 use embedded_io_async::{Read, Write};
-use esp_hal::{
-    peripherals::TIMG0,
-    timer::timg::{MwdtStage, MwdtStageAction, Wdt},
-};
 use esp_hal_ota::{Ota, OtaImgState};
 use esp_storage::FlashStorage;
 use esp32_led_mqtt::ota_protocol::{self, Request, Verifier};
 use heapless::String;
 use log::{info, warn};
 
+use crate::flash::{self, Job};
+
 pub static LED_READY: AtomicBool = AtomicBool::new(false);
 pub static MQTT_READY: AtomicBool = AtomicBool::new(false);
 pub static STATUS: Signal<CriticalSectionRawMutex, String<192>> = Signal::new();
-static REQUEST: Signal<CriticalSectionRawMutex, Request> = Signal::new();
 static AVAILABLE: AtomicBool = AtomicBool::new(false);
-static BUSY: AtomicBool = AtomicBool::new(false);
 const READ_TIMEOUT: Duration = Duration::from_secs(15);
 const UPDATE_TIMEOUT: Duration = Duration::from_secs(180);
 pub struct FlashAccess<'a>(&'a mut FlashStorage<'static>);
@@ -45,14 +38,10 @@ impl embedded_storage::Storage for FlashAccess<'_> {
 }
 type Updater<'a> = Ota<FlashAccess<'a>>;
 
-pub fn busy() -> bool {
-    BUSY.load(Ordering::Acquire)
-}
-
-pub fn arm_watchdog(wdt: &mut Wdt<TIMG0<'static>>) {
-    wdt.set_timeout(MwdtStage::Stage0, esp_hal::time::Duration::from_secs(125));
-    wdt.set_stage_action(MwdtStage::Stage0, MwdtStageAction::ResetSystem);
-    wdt.enable();
+/// Network and TLS context for downloading updates.
+pub struct Client {
+    stack: Stack<'static>,
+    tls: &'static mbedtls_rs::Tls<'static>,
 }
 
 pub fn submit(payload: &[u8], retained: bool) {
@@ -72,9 +61,10 @@ pub fn submit(payload: &[u8], retained: bool) {
         if request.build == env!("FIRMWARE_BUILD_ID") {
             return Err("already_running");
         }
-        BUSY.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .map_err(|_| "busy")?;
-        REQUEST.signal(request);
+        if !flash::try_claim() {
+            return Err("busy");
+        }
+        flash::queue(Job::Ota(request));
         Ok(())
     })();
     if let Err(reason) = result {
@@ -94,89 +84,63 @@ fn status(state: &str, detail: &str, percent: u8) {
     STATUS.signal(value);
 }
 
-#[embassy_executor::task]
-pub async fn task(
+/// Confirms or rolls back a trial image, then enables updates when configured.
+/// Returns `Err` for an unhealthy boot, which must keep flash writes disabled.
+pub async fn start(
     stack: Option<Stack<'static>>,
-    mut flash: FlashStorage<'static>,
-    mut wdt: Wdt<TIMG0<'static>>,
-) {
-    let health = boot_health(stack, &mut flash).await;
-    wdt.disable();
+    flash: &mut FlashStorage<'static>,
+    layout: Result<(), &'static str>,
+) -> Result<Option<Client>, &'static str> {
+    let health = match layout {
+        Ok(()) => boot_health(stack, flash).await,
+        Err(reason) => Err(reason),
+    };
     if let Err(reason) = health {
         warn!("OTA unavailable: {}", reason);
         status("disabled", reason, 0);
+        return Err(reason);
     }
-    crate::config::WRITES_ALLOWED.store(health.is_ok(), Ordering::Release);
-    let tls = if health.is_ok()
-        && stack.is_some()
-        && option_env!("OTA_ROLLBACK_BOOTLOADER") == Some("1")
+    let tls = if option_env!("OTA_ROLLBACK_BOOTLOADER") == Some("1")
         && !option_env!("OTA_ALLOWED_HOSTS").unwrap_or("").is_empty()
+        && stack.is_some()
     {
         tls::initialize().ok()
     } else {
         None
     };
-    AVAILABLE.store(tls.is_some(), Ordering::Release);
-    if tls.is_some() {
+    let client = stack.zip(tls).map(|(stack, tls)| Client { stack, tls });
+    AVAILABLE.store(client.is_some(), Ordering::Release);
+    if client.is_some() {
         status("ready", "", 0);
-    } else if health.is_ok() {
+    } else {
         status("disabled", "configure_network_and_ota", 0);
     }
-    loop {
-        match select(REQUEST.wait(), crate::config::REQUEST.wait()).await {
-            Either::First(request) => {
-                let (Some(stack), Some(tls)) = (stack, tls) else {
-                    BUSY.store(false, Ordering::Release);
-                    continue;
-                };
-                crate::config::WRITES_ALLOWED.store(false, Ordering::Release);
-                status("downloading", "", 0);
-                wdt.set_timeout(MwdtStage::Stage0, esp_hal::time::Duration::from_secs(190));
-                wdt.feed();
-                wdt.enable();
-                let deadline = Instant::now() + UPDATE_TIMEOUT;
-                let result = match Ota::new(FlashAccess(&mut flash)) {
-                    Ok(mut ota) => {
-                        with_timeout(
-                            UPDATE_TIMEOUT,
-                            download(tls, stack, &mut ota, &request, deadline),
-                        )
-                        .await
-                    }
-                    Err(_) => Ok(Err("partition_table")),
-                };
-                match result {
-                    Ok(Ok(())) => {
-                        AVAILABLE.store(false, Ordering::Release);
-                        status("rebooting", "verified", 100);
-                        Timer::after_secs(1).await;
-                        esp_hal::system::software_reset();
-                    }
-                    Ok(Err(reason)) => {
-                        warn!("OTA failed: {}", reason);
-                        status("failed", reason, 0);
-                    }
-                    Err(_) => {
-                        warn!("OTA timed out");
-                        status("failed", "timeout", 0);
-                    }
-                }
-                wdt.disable();
-                BUSY.store(false, Ordering::Release);
-                crate::config::WRITES_ALLOWED.store(true, Ordering::Release);
-            }
-            Either::Second(command) => {
-                crate::config::WRITES_ALLOWED.store(false, Ordering::Release);
-                wdt.set_timeout(MwdtStage::Stage0, esp_hal::time::Duration::from_secs(30));
-                wdt.feed();
-                wdt.enable();
-                if crate::config::handle(&mut flash, command).await {
-                    Timer::after_millis(250).await;
-                    esp_hal::system::software_reset();
-                }
-                wdt.disable();
-                crate::config::WRITES_ALLOWED.store(health.is_ok(), Ordering::Release);
-            }
+    Ok(client)
+}
+
+/// Downloads, verifies and activates `request`, rebooting into it on success.
+pub async fn update(client: &Client, flash: &mut FlashStorage<'static>, request: Request) {
+    status("downloading", "", 0);
+    let deadline = Instant::now() + UPDATE_TIMEOUT;
+    let result = match Ota::new(FlashAccess(flash)) {
+        Ok(mut ota) => with_timeout(
+            UPDATE_TIMEOUT,
+            download(client.tls, client.stack, &mut ota, &request, deadline),
+        )
+        .await
+        .unwrap_or(Err("timeout")),
+        Err(_) => Err("partition_table"),
+    };
+    match result {
+        Ok(()) => {
+            AVAILABLE.store(false, Ordering::Release);
+            status("rebooting", "verified", 100);
+            Timer::after_secs(1).await;
+            esp_hal::system::software_reset();
+        }
+        Err(reason) => {
+            warn!("OTA failed: {}", reason);
+            status("failed", reason, 0);
         }
     }
 }
@@ -186,7 +150,6 @@ async fn boot_health(
     flash: &mut FlashStorage<'static>,
 ) -> Result<(), &'static str> {
     let start = Instant::now();
-    initialize(flash)?;
     let mut ota = Ota::new(FlashAccess(flash)).map_err(|_| "partition_table")?;
     let slot = ota.booted_partition().ok_or("unknown_running_slot")?;
     info!(
@@ -231,38 +194,6 @@ async fn boot_health(
     } else if !matches!(state, OtaImgState::Valid | OtaImgState::Undefined) {
         // NEW should have become PENDING_VERIFY in a rollback-enabled bootloader.
         return Err("bootloader_state");
-    }
-    Ok(())
-}
-
-fn initialize(flash: &mut FlashStorage<'static>) -> Result<(), &'static str> {
-    use esp_bootloader_esp_idf::partitions::{
-        self, AppPartitionSubType as App, DataPartitionSubType as Data, PartitionType as Type,
-    };
-    let mut buffer = [0; 512];
-    let table =
-        partitions::read_partition_table(flash, &mut buffer).map_err(|_| "partition_table")?;
-    let expected = [
-        (Type::App(App::Ota0), 0x10000, ota_protocol::SLOT_SIZE),
-        (Type::App(App::Ota1), 0x200000, ota_protocol::SLOT_SIZE),
-        (Type::Data(Data::Ota), 0xd000, 0x2000),
-    ];
-    for (kind, offset, size) in expected {
-        let part = table
-            .find_partition(kind)
-            .map_err(|_| "partition_table")?
-            .ok_or("missing_partition")?;
-        if part.offset() != offset || part.len() != size {
-            return Err("partition_layout");
-        }
-    }
-    if table
-        .iter()
-        .filter(|p| matches!(p.partition_type(), Type::App(_)))
-        .count()
-        != 2
-    {
-        return Err("partition_layout");
     }
     Ok(())
 }

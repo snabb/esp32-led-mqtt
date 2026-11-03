@@ -31,6 +31,7 @@ use static_cell::StaticCell;
 mod button;
 mod c_shims;
 mod config;
+mod flash;
 mod identity;
 mod light_state;
 mod mqtt;
@@ -76,7 +77,8 @@ async fn main(spawner: Spawner) -> ! {
     esp_alloc::heap_allocator!(size: 36 * 1024);
 
     let mut timg0 = TimerGroup::new(peripherals.TIMG0);
-    ota::arm_watchdog(&mut timg0.wdt);
+    // Outlasts the two-minute OTA trial window; flash::task disables it afterwards.
+    flash::arm_watchdog(&mut timg0.wdt, 125);
     esp_rtos::start(timg0.timer0, peripherals.FROM_CPU_INTR0);
 
     info!(
@@ -90,7 +92,12 @@ async fn main(spawner: Spawner) -> ! {
             .split();
     spawner.spawn(config::usb_task(usb_rx).unwrap());
     let mut flash = esp_storage::FlashStorage::new(peripherals.FLASH);
-    let device_config = match config::load(&mut flash).await {
+    let layout = flash::check_partition_table(&mut flash);
+    let loaded = match layout {
+        Ok(()) => config::load(&mut flash).await,
+        Err(reason) => Err(reason),
+    };
+    let device_config = match loaded {
         Ok(Some(config)) => Some(&*mk_static!(
             esp32_led_mqtt::device_config::DeviceConfig,
             config
@@ -192,7 +199,7 @@ async fn main(spawner: Spawner) -> ! {
         spawner.spawn(mqtt::task(stack, identity, settings).unwrap());
         network = Some(stack);
     }
-    spawner.spawn(ota::task(network, flash, timg0.wdt).unwrap());
+    spawner.spawn(flash::task(network, flash, timg0.wdt, layout).unwrap());
     run_led_loop(strip, led_power).await
 }
 
