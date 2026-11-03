@@ -38,6 +38,7 @@ mod memory;
 mod mqtt;
 mod ota;
 mod tls;
+mod tsens;
 
 use identity::DeviceIdentity;
 use light_state::{effect_params, get as light_state};
@@ -152,6 +153,8 @@ async fn main(spawner: Spawner) -> ! {
         spawner.spawn(button::task(button).unwrap());
     }
 
+    let chip_temp = mk_static!(tsens::ChipTemp, tsens::ChipTemp::new(peripherals.TSENS));
+
     let mut network = None;
     let mut tls_context = Err("tls_disabled");
     if let Some(settings) = device_config {
@@ -206,7 +209,7 @@ async fn main(spawner: Spawner) -> ! {
         }
         spawner.spawn(connection_task(controller).unwrap());
         spawner.spawn(net_task(runner).unwrap());
-        spawner.spawn(mqtt::task(stack, identity, settings, tls_context).unwrap());
+        spawner.spawn(mqtt::task(stack, identity, settings, tls_context, chip_temp).unwrap());
         network = Some(stack);
     }
     spawner.spawn(flash::task(network, flash, timg0.wdt, layout, tls_context).unwrap());

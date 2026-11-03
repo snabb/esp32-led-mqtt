@@ -1,8 +1,8 @@
 use core::fmt::Write;
 
-use embassy_futures::select::{Either3, select3};
+use embassy_futures::select::{Either4, select4};
 use embassy_net::{IpEndpoint, Stack, tcp::TcpSocket};
-use embassy_time::{Duration, Timer, with_timeout};
+use embassy_time::{Duration, Ticker, Timer, with_timeout};
 use esp32_led_mqtt::{EFFECT_DISABLED_NAME, EFFECTS, EffectId};
 use log::{info, warn};
 use minimq::{
@@ -16,12 +16,15 @@ use crate::{
     light_state::{self, LIGHT_STATE_CHANGED, MAX_EFFECT_SPEED},
 };
 
+const TEMPERATURE_INTERVAL: Duration = Duration::from_secs(60);
+
 #[embassy_executor::task]
 pub async fn task(
     stack: Stack<'static>,
     identity: &'static DeviceIdentity,
     settings: &'static esp32_led_mqtt::device_config::DeviceConfig,
     tls_context: crate::tls::Context,
+    chip_temp: &'static crate::tsens::ChipTemp,
 ) {
     loop {
         stack.wait_config_up().await;
@@ -29,7 +32,7 @@ pub async fn task(
             info!("Network ready with IP {}", config.address);
         }
 
-        let result = run_session(stack, identity, settings, tls_context).await;
+        let result = run_session(stack, identity, settings, tls_context, chip_temp).await;
         crate::ota::MQTT_READY.store(false, core::sync::atomic::Ordering::Release);
         match result {
             Ok(()) => warn!("MQTT session ended"),
@@ -45,6 +48,7 @@ async fn run_session(
     identity: &'static DeviceIdentity,
     settings: &'static esp32_led_mqtt::device_config::DeviceConfig,
     tls_context: crate::tls::Context,
+    chip_temp: &crate::tsens::ChipTemp,
 ) -> Result<(), MqttRunError> {
     let tls = if settings.mqtt_tls {
         Some(tls_context.map_err(MqttRunError::Tls)?)
@@ -69,15 +73,16 @@ async fn run_session(
             crate::tls::connect(context, crate::tls::Socket(socket), &settings.mqtt_broker)
                 .await
                 .map_err(MqttRunError::Tls)?;
-        return bridge::run(&mut tls, identity, settings).await;
+        return bridge::run(&mut tls, identity, settings, chip_temp).await;
     }
-    run_connected(socket, identity, settings).await
+    run_connected(socket, identity, settings, chip_temp).await
 }
 
 async fn run_connected<IO: minimq::Io>(
     socket: IO,
     identity: &DeviceIdentity,
     settings: &esp32_led_mqtt::device_config::DeviceConfig,
+    chip_temp: &crate::tsens::ChipTemp,
 ) -> Result<(), MqttRunError> {
     let mut mqtt_rx = [0_u8; 1024];
     let mut mqtt_tx = [0_u8; 4096];
@@ -110,6 +115,8 @@ async fn run_connected<IO: minimq::Io>(
     publish_speed_discovery(&mut session, identity).await?;
     publish_light_state(&mut session, identity).await?;
     publish_speed_state(&mut session, identity).await?;
+    publish_temperature_discovery(&mut session, identity).await?;
+    publish_temperature(&mut session, identity, chip_temp).await?;
 
     if matches!(event, ConnectEvent::Connected) {
         session
@@ -126,15 +133,19 @@ async fn run_connected<IO: minimq::Io>(
     }
 
     crate::ota::MQTT_READY.store(true, core::sync::atomic::Ordering::Release);
+    // First tick is immediate; the initial reading was published above.
+    let mut temperature_ticker = Ticker::every(TEMPERATURE_INTERVAL);
+    temperature_ticker.next().await;
     loop {
-        match select3(
+        match select4(
             session.recv(),
             LIGHT_STATE_CHANGED.wait(),
             crate::ota::STATUS.wait(),
+            temperature_ticker.next(),
         )
         .await
         {
-            Either3::First(Ok(message)) => {
+            Either4::First(Ok(message)) => {
                 let topic = message.topic();
                 if topic == identity.ota_command_topic.as_str() {
                     crate::ota::submit(message.payload(), message.retained());
@@ -144,16 +155,17 @@ async fn run_connected<IO: minimq::Io>(
                     handle_speed_command(message.payload());
                 }
             }
-            Either3::First(Err(err)) => {
+            Either4::First(Err(err)) => {
                 return Err(mqtt_error(err));
             }
-            Either3::Second(()) => {
+            Either4::Second(()) => {
                 publish_light_state(&mut session, identity).await?;
                 publish_speed_state(&mut session, identity).await?;
             }
-            Either3::Third(status) => {
+            Either4::Third(status) => {
                 publish(&mut session, &identity.ota_status_topic, &status).await?
             }
+            Either4::Fourth(()) => publish_temperature(&mut session, identity, chip_temp).await?,
         }
     }
 }
@@ -229,6 +241,35 @@ async fn publish_speed_state<IO: minimq::Io>(
     let mut payload: heapless::String<3> = heapless::String::new();
     write!(payload, "{}", light_state::get().speed)?;
     publish(session, &identity.speed_state_topic, &payload).await
+}
+
+async fn publish_temperature_discovery<IO: minimq::Io>(
+    session: &mut Connection<'_, '_, IO>,
+    identity: &DeviceIdentity,
+) -> Result<(), MqttRunError> {
+    let mut payload: heapless::String<700> = heapless::String::new();
+    write!(
+        payload,
+        r#"{{"name":"Chip Temperature","unique_id":"{}_temperature","state_topic":"{}","availability_topic":"{}","payload_available":"online","payload_not_available":"offline","device_class":"temperature","unit_of_measurement":"°C","state_class":"measurement","entity_category":"diagnostic","suggested_display_precision":1,"device":{{"identifiers":["{}"],"name":"{}","manufacturer":"esp32-led-mqtt","model":"{}"}}}}"#,
+        identity.slug,
+        identity.temperature_state_topic,
+        identity.availability_topic,
+        identity.slug,
+        DEVICE_NAME,
+        DEVICE_MODEL,
+    )?;
+    publish(session, &identity.temperature_discovery_topic, &payload).await
+}
+
+async fn publish_temperature<IO: minimq::Io>(
+    session: &mut Connection<'_, '_, IO>,
+    identity: &DeviceIdentity,
+    chip_temp: &crate::tsens::ChipTemp,
+) -> Result<(), MqttRunError> {
+    let celsius = chip_temp.read().await;
+    let mut payload: heapless::String<12> = heapless::String::new();
+    write!(payload, "{:.1}", celsius)?;
+    publish(session, &identity.temperature_state_topic, &payload).await
 }
 
 /// Every topic this device publishes is retained, so Home Assistant sees the

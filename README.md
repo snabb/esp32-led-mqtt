@@ -114,11 +114,12 @@ the same port.
 
 ### Home Assistant
 
-The device has two entities:
+The device has three entities:
 
 - **LED Strip** (light): on/off, RGB color, brightness and effect. The `None`
   effect shows the solid color.
 - **Effect Speed** (number, 1–128, default 64): the scale is finer at the slow end.
+- **Chip Temperature** (diagnostic sensor, °C): die temperature, updated every minute.
 
 Effects: Rainbow, Color Wipe, Scan, Twinkle, Random Twinkle, Fireworks, Flicker,
 Breathe, Theater Chase, Confetti, Sinelon, Juggle, BPM, Fire 2012, Pacifica,

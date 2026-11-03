@@ -18,10 +18,12 @@ a lost connection it retries every 5 seconds.
 | `PREFIX/light/state` | device → | Light state (JSON) |
 | `PREFIX/effect_speed/set` | → device | Integer `1`–`128` as text |
 | `PREFIX/effect_speed/state` | device → | Integer `1`–`128` as text |
+| `PREFIX/temperature/state` | device → | Chip temperature in °C as text, one decimal. Published on connect and every 60 s. |
 | `PREFIX/ota/set` | → device | OTA command. Must not be retained. See [OTA updates](OTA.md#send-an-update). |
 | `PREFIX/ota/status` | device → | OTA status (JSON). See [status messages](OTA.md#status-messages). |
 | `homeassistant/light/PREFIX/config` | device → | Discovery for the light |
 | `homeassistant/number/PREFIX_effect_speed/config` | device → | Discovery for the speed slider |
+| `homeassistant/sensor/PREFIX_temperature/config` | device → | Discovery for the chip temperature sensor |
 
 ## Light command
 
@@ -60,5 +62,6 @@ mosquitto_pub -h BROKER -t PREFIX/effect_speed/set -m 20
 ## Home Assistant discovery
 
 On each connection the device publishes a JSON-schema light (`LED Strip`) and a
-number entity (`Effect Speed`, slider mode). Both belong to a device named
-**ESP32 LED MQTT**. Both entities use `PREFIX/status` for availability.
+number entity (`Effect Speed`, slider mode) and a diagnostic temperature sensor
+(`Chip Temperature`, die temperature). All belong to a device named
+**ESP32 LED MQTT**. All entities use `PREFIX/status` for availability.
