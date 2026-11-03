@@ -150,23 +150,8 @@ wrong image/digests, TLS hostname/chain/expiry failures, trial failure/watchdog
 rollback, successful confirmation, and power interruption during metadata writes.
 Record serial logs and flash/stack/heap observations for those trials.
 
-Software verification on 2026-11-02 used example credentials and
-`OTA_ALLOWED_HOSTS=updates.example.invalid OTA_ROLLBACK_BOOTLOADER=1` on the peer
-Arm build host: all 17 host tests, target Clippy with warnings denied, and the
-linked release build passed. Rustfmt, Ruff, shell syntax, partition conversion,
-app-image generation, command generation and bootloader checksum checks passed.
-
-The resulting application image is 1,116,096 bytes of a 2,031,616-byte slot.
-Compared with the pre-OTA release from the same host, RAM sections excluding the
-reserved stack grew by 20,988 bytes (including a 324-byte increase in RAM code).
-This includes static task storage, but does not measure dynamic TLS heap peaks
-or runtime stack peaks. The bootloader is 22,224 bytes and passed the 0x8000
-boundary check in two independent build directories. No new layout or firmware
-has been flashed as part of this implementation.
-
 ## Public firmware publication
 
-The public prefix is `gs://BUCKET/firmware/esp32-led-mqtt/`. Firmware uploads are
-deferred until credentials move out of the app image. See the
-[persistent configuration plan](DEVICE_CONFIG_PLAN.md) for provisioning, OTA
-preservation, versioning and publication layout.
+The public prefix is `gs://BUCKET/firmware/esp32-led-mqtt/`. See
+[persistent configuration](DEVICE_CONFIG.md) for provisioning, OTA preservation,
+versioning and publication layout.

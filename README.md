@@ -22,9 +22,9 @@ button GPIO9 and no power-enable pin. For the NanoC6 internal LED, select one
 WS2812 LED, data GPIO20 and power GPIO19.
 
 Wi-Fi and MQTT settings are stored separately in the `device_config` flash
-partition. Firmware builds never read credentials. Copy `secrets.example.yaml`
-to an ignored `local/secrets.yaml`, edit it privately, and provision the device
-over USB as described in [persistent configuration](docs/DEVICE_CONFIG_PLAN.md).
+partition. Firmware builds never read credentials. Provision them over USB as
+shown under [Development](#development); see
+[persistent configuration](docs/DEVICE_CONFIG.md) for details.
 An unconfigured device runs its LEDs/button and accepts USB configuration.
 
 MQTT topics and Home Assistant identifiers are generated from the MAC address,
@@ -51,7 +51,7 @@ attach afterward.
 
 ## OTA prototype
 
-See [OTA setup and testing](docs/OTA.md) before flashing. The repository now uses
+See [OTA setup and testing](docs/OTA.md) before flashing. The repository uses
 a two-slot partition table and a custom rollback bootloader, generated with
 `tools/build-ota-bootloader.sh`. OTA commands use MQTT and download application
 images over HTTPS, with build-time certificate expiry checks and a two-minute

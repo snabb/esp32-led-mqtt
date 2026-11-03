@@ -17,7 +17,7 @@ CMAKE
 cat > "$work/main/main.c" <<'C'
 void app_main(void) {}
 C
-# Only the disposable build context is mounted; private firmware credentials stay outside.
+# Only the disposable build context is mounted, not the repository or local/.
 docker pull "$image"
 digest=$(docker image inspect "$image" --format '{{index .RepoDigests 0}}')
 printf '%s\n' "$digest" > "$work/container-image.txt"
