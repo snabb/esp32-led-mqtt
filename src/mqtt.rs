@@ -116,6 +116,7 @@ async fn run_connected<IO: minimq::Io>(
     publish_light_state(&mut session, identity).await?;
     publish_speed_state(&mut session, identity).await?;
     publish_temperature_discovery(&mut session, identity).await?;
+    publish_firmware_version(&mut session, identity).await?;
     publish_temperature(&mut session, identity, chip_temp).await?;
 
     if matches!(event, ConnectEvent::Connected) {
@@ -258,6 +259,31 @@ async fn publish_temperature_discovery<IO: minimq::Io>(
         DEVICE_MODEL,
     )?;
     publish(session, &identity.temperature_discovery_topic, &payload).await
+}
+
+/// Discovery and state for the running build ID, the same string as in the image name.
+async fn publish_firmware_version<IO: minimq::Io>(
+    session: &mut Connection<'_, '_, IO>,
+    identity: &DeviceIdentity,
+) -> Result<(), MqttRunError> {
+    let mut payload: heapless::String<700> = heapless::String::new();
+    write!(
+        payload,
+        r#"{{"name":"Firmware Version","unique_id":"{}_firmware","state_topic":"{}","availability_topic":"{}","payload_available":"online","payload_not_available":"offline","entity_category":"diagnostic","device":{{"identifiers":["{}"],"name":"{}","manufacturer":"esp32-led-mqtt","model":"{}"}}}}"#,
+        identity.slug,
+        identity.firmware_state_topic,
+        identity.availability_topic,
+        identity.slug,
+        DEVICE_NAME,
+        DEVICE_MODEL,
+    )?;
+    publish(session, &identity.firmware_discovery_topic, &payload).await?;
+    publish(
+        session,
+        &identity.firmware_state_topic,
+        env!("FIRMWARE_BUILD_ID"),
+    )
+    .await
 }
 
 async fn publish_temperature<IO: minimq::Io>(
