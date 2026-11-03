@@ -3,7 +3,7 @@ mod tls;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use embassy_futures::yield_now;
-use embassy_net::{IpAddress, IpEndpoint, Stack, dns::DnsQueryType, tcp::TcpSocket};
+use embassy_net::{IpEndpoint, Stack, tcp::TcpSocket};
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal};
 use embassy_time::{Duration, Instant, Timer, with_timeout};
 use embedded_io_async::{Read, Write};
@@ -121,11 +121,10 @@ pub async fn start(
 /// Downloads, verifies and activates `request`, rebooting into it on success.
 pub async fn update(client: &Client, flash: &mut FlashStorage<'static>, request: Request) {
     status("downloading", "", 0);
-    let deadline = Instant::now() + UPDATE_TIMEOUT;
     let result = match Ota::new(FlashAccess(flash)) {
         Ok(mut ota) => with_timeout(
             UPDATE_TIMEOUT,
-            download(client.tls, client.stack, &mut ota, &request, deadline),
+            download(client.tls, client.stack, &mut ota, &request),
         )
         .await
         .unwrap_or(Err("timeout")),
@@ -203,24 +202,8 @@ async fn download(
     stack: Stack<'static>,
     ota: &mut Updater<'_>,
     request: &Request,
-    deadline: Instant,
 ) -> Result<(), &'static str> {
-    let address = match request.host.parse::<core::net::Ipv4Addr>() {
-        Ok(address) => IpAddress::Ipv4(address),
-        Err(_) => {
-            let addresses = with_timeout(
-                READ_TIMEOUT,
-                stack.dns_query(&request.host, DnsQueryType::A),
-            )
-            .await
-            .map_err(|_| "dns_timeout")?
-            .map_err(|_| "dns")?;
-            let Some(embassy_net::dns::IpAddress::Ipv4(address)) = addresses.first() else {
-                return Err("dns");
-            };
-            IpAddress::Ipv4(*address)
-        }
-    };
+    let address = crate::resolve_ipv4(stack, &request.host).await?;
     let mut rx = [0; 4096];
     let mut tx = [0; 2048];
     let mut socket = TcpSocket::new(stack, &mut rx, &mut tx);
@@ -233,9 +216,9 @@ async fn download(
     .map_err(|_| "connect_timeout")?
     .map_err(|_| "connect")?;
     if request.tls {
-        tls::transfer(tls_context, socket, ota, request, deadline).await
+        tls::transfer(tls_context, socket, ota, request).await
     } else {
-        transfer(&mut socket, ota, request, deadline).await
+        transfer(&mut socket, ota, request).await
     }
 }
 
@@ -243,7 +226,6 @@ async fn transfer<IO: Read + Write>(
     io: &mut IO,
     ota: &mut Updater<'_>,
     request: &Request,
-    deadline: Instant,
 ) -> Result<(), &'static str> {
     let get: String<768> = heapless::format!(
         "GET {} HTTP/1.1\r\nHost: {}:{}\r\nAccept-Encoding: identity\r\nConnection: close\r\n\r\n",
@@ -289,9 +271,6 @@ async fn transfer<IO: Read + Write>(
             first = false;
         }
         verifier.update(&block[..count]).map_err(|_| "size")?;
-        if Instant::now() >= deadline {
-            return Err("timeout");
-        }
         ota.write(&block[..count]).map_err(|_| "flash_write")?;
         remaining -= count;
         let percent = ((request.size as usize - remaining) * 100 / request.size as usize) as u8;
@@ -303,9 +282,6 @@ async fn transfer<IO: Read + Write>(
     }
     verifier.finish().map_err(|_| "sha256")?;
     status("verifying", "flash_readback", 100);
-    if Instant::now() >= deadline {
-        return Err("timeout");
-    }
     ota.finish(true).map_err(|_| "verify_or_activate")?;
     Ok(())
 }

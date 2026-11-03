@@ -1,15 +1,9 @@
 use core::fmt::Write;
-use core::str::FromStr;
 
 use embassy_futures::select::{Either3, select3};
-use embassy_net::{
-    IpAddress, IpEndpoint, Stack,
-    dns::{DnsQueryType, IpAddress as DnsIpAddress},
-    tcp::TcpSocket,
-};
+use embassy_net::{IpEndpoint, Stack, tcp::TcpSocket};
 use embassy_time::{Duration, Timer};
 use esp32_led_mqtt::{EFFECT_DISABLED_NAME, EFFECTS, EffectId};
-use heapless::Vec;
 use log::{info, warn};
 use minimq::{
     Buffers, ConfigBuilder, ConnectEvent, Connection, Publication, Session, TopicFilter, Will,
@@ -50,12 +44,14 @@ async fn run_session(
     identity: &'static DeviceIdentity,
     settings: &'static esp32_led_mqtt::device_config::DeviceConfig,
 ) -> Result<(), MqttRunError> {
-    let endpoint = endpoint(stack, settings).await?;
+    let address = crate::resolve_ipv4(stack, &settings.mqtt_broker)
+        .await
+        .map_err(MqttRunError::Resolve)?;
     let mut tcp_rx = [0_u8; 2048];
     let mut tcp_tx = [0_u8; 2048];
     let mut socket = TcpSocket::new(stack, &mut tcp_rx, &mut tcp_tx);
     socket
-        .connect(endpoint)
+        .connect(IpEndpoint::new(address, settings.mqtt_port))
         .await
         .map_err(MqttRunError::TcpConnect)?;
 
@@ -136,32 +132,6 @@ async fn run_session(
             }
         }
     }
-}
-
-async fn endpoint(
-    stack: Stack<'static>,
-    settings: &esp32_led_mqtt::device_config::DeviceConfig,
-) -> Result<IpEndpoint, MqttRunError> {
-    if let Ok(IpAddress::Ipv4(address)) = IpAddress::from_str(settings.mqtt_broker.as_str()) {
-        return Ok(IpEndpoint::new(
-            IpAddress::Ipv4(address),
-            settings.mqtt_port,
-        ));
-    }
-
-    info!("Resolving MQTT broker hostname");
-    let addrs: Vec<DnsIpAddress, 1> = stack
-        .dns_query(settings.mqtt_broker.as_str(), DnsQueryType::A)
-        .await
-        .map_err(MqttRunError::Dns)?;
-    let Some(DnsIpAddress::Ipv4(address)) = addrs.first().copied() else {
-        return Err(MqttRunError::NoBrokerAddress);
-    };
-
-    Ok(IpEndpoint::new(
-        IpAddress::Ipv4(address),
-        settings.mqtt_port,
-    ))
 }
 
 async fn publish_light_state(
@@ -328,10 +298,9 @@ struct LightColor {
 #[derive(Debug)]
 enum MqttRunError {
     Config(minimq::ConfigError),
-    Dns(embassy_net::dns::Error),
     Mqtt(minimq::Error<embassy_net::tcp::Error>),
-    NoBrokerAddress,
     PayloadTooLarge,
+    Resolve(&'static str),
     TcpConnect(embassy_net::tcp::ConnectError),
 }
 

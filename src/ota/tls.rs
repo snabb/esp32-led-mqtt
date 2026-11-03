@@ -58,7 +58,6 @@ pub async fn transfer(
     socket: TcpSocket<'_>,
     ota: &mut Updater<'_>,
     request: &Request,
-    deadline: Instant,
 ) -> Result<(), &'static str> {
     let pem = CStr::from_bytes_with_nul(concat!(include_str!("roots.pem"), "\0").as_bytes())
         .map_err(|_| "tls_roots")?;
@@ -94,5 +93,5 @@ pub async fn transfer(
     ) {
         return Err("tls_certificate");
     }
-    super::transfer(&mut tls, ota, request, deadline).await
+    super::transfer(&mut tls, ota, request).await
 }

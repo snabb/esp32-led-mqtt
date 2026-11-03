@@ -7,8 +7,8 @@
 )]
 
 use embassy_executor::Spawner;
-use embassy_net::{Runner, StackResources};
-use embassy_time::{Duration, Instant, Ticker, Timer};
+use embassy_net::{IpAddress, Runner, Stack, StackResources, dns::DnsQueryType};
+use embassy_time::{Duration, Instant, Ticker, Timer, with_timeout};
 use esp_backtrace as _;
 use esp_hal::{
     clock::CpuClock,
@@ -268,4 +268,22 @@ async fn connection_task(mut controller: WifiController<'static>) {
 #[embassy_executor::task]
 async fn net_task(mut runner: Runner<'static, Interface>) {
     runner.run().await;
+}
+
+/// Resolves an IPv4 literal, or else a DNS A record.
+async fn resolve_ipv4(stack: Stack<'static>, host: &str) -> Result<IpAddress, &'static str> {
+    if let Ok(address) = host.parse() {
+        return Ok(IpAddress::Ipv4(address));
+    }
+    let addresses = with_timeout(
+        Duration::from_secs(15),
+        stack.dns_query(host, DnsQueryType::A),
+    )
+    .await
+    .map_err(|_| "dns_timeout")?
+    .map_err(|_| "dns")?;
+    match addresses.first() {
+        Some(IpAddress::Ipv4(address)) => Ok(IpAddress::Ipv4(*address)),
+        _ => Err("dns"),
+    }
 }
