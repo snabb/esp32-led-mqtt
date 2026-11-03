@@ -101,11 +101,11 @@ Effects live in `src/effects`, with one file per effect. To add one:
 
 1. Add `src/effects/my_effect.rs` with a `render` function.
 2. Add `mod my_effect;` and one dispatch arm in `src/effects/mod.rs`.
-3. Add the `EffectId` variant and `EffectDefinition` entry in `src/lib.rs`.
+3. Add the `EffectId` variant and `EFFECTS` entry in `src/lib.rs`, in the same order.
 4. Add the effect to the animation tests when it should change over time.
 
-Home Assistant discovery, name parsing, button cycling, and numeric effect
-codes are derived from `EFFECT_DEFINITIONS`.
+Home Assistant discovery, name parsing and button cycling are derived from
+`EFFECTS`.
 
 Provision Wi-Fi and MQTT settings over USB using the public CLI:
 

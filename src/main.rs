@@ -23,7 +23,7 @@ use esp_hal::{
 use esp_radio::wifi::{
     self, Config, ControllerConfig, Interface, WifiController, sta::StationConfig,
 };
-use esp32_led_mqtt::{EffectId, EffectRuntime, RgbFrame, effect_id_from_code};
+use esp32_led_mqtt::{EffectId, EffectRuntime, RgbFrame};
 use log::{error, info, warn};
 use smart_leds::{RGB8, SmartLedsWrite};
 use static_cell::StaticCell;
@@ -232,7 +232,7 @@ async fn run_led_loop(mut strip: LedStrip<'static>, mut led_power: Option<Output
         }
 
         if light_on {
-            if let Some(effect_id) = effect_id_from_code(state.effect_code) {
+            if let Some(effect_id) = state.effect {
                 effect_runtime.set_effect(effect_params(effect_id, state));
                 output = effect_runtime
                     .render(now_ms as u32)

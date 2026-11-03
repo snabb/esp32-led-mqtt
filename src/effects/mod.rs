@@ -1,7 +1,7 @@
 use crate::{EffectId, EffectRuntime};
 
 // To add an effect: create a file in this directory, add it below, dispatch it
-// in render(), then add its EffectId and EffectDefinition in lib.rs.
+// in render(), then add its EffectId variant and EFFECTS entry in lib.rs.
 mod aurora;
 mod bpm;
 mod breathe;

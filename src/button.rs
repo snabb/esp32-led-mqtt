@@ -1,7 +1,7 @@
 use embassy_futures::select::{Either, select};
 use embassy_time::{Duration, Instant, Timer};
 use esp_hal::gpio::Input;
-use esp32_led_mqtt::{EFFECT_MAX_CODE, EFFECT_NONE_CODE, random_color};
+use esp32_led_mqtt::{EffectId, random_color};
 
 use crate::light_state;
 
@@ -98,13 +98,7 @@ fn handle_action(action: ButtonAction, now_ms: u64) {
 }
 
 fn cycle_effect() {
-    let current = light_state::get().effect_code;
-    let next = if current >= EFFECT_MAX_CODE {
-        EFFECT_NONE_CODE
-    } else {
-        current + 1
-    };
-    light_state::update(|state| state.effect_code = next);
+    light_state::update(|state| state.effect = EffectId::cycle(state.effect));
     light_state::mark_dirty();
 }
 

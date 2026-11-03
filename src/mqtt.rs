@@ -8,10 +8,7 @@ use embassy_net::{
     tcp::TcpSocket,
 };
 use embassy_time::{Duration, Timer};
-use esp32_led_mqtt::{
-    EFFECT_DEFINITIONS, EFFECT_DISABLED_NAME, EFFECT_NONE_CODE, EffectId, effect_code_from_id,
-    effect_id_from_code,
-};
+use esp32_led_mqtt::{EFFECT_DISABLED_NAME, EFFECTS, EffectId};
 use heapless::Vec;
 use log::{info, warn};
 use minimq::{
@@ -188,7 +185,7 @@ async fn publish_light_state(
         light.color.r,
         light.color.g,
         light.color.b,
-        effect_id_from_code(light.effect_code).map_or(EFFECT_DISABLED_NAME, EffectId::name)
+        light.effect.map_or(EFFECT_DISABLED_NAME, EffectId::name)
     )
     .map_err(|_| MqttRunError::StatePayloadTooLarge)?;
     publish_text(
@@ -230,9 +227,8 @@ fn write_light_discovery_payload(
     )
     .map_err(|_| MqttRunError::StatePayloadTooLarge)?;
 
-    for definition in EFFECT_DEFINITIONS {
-        write!(payload, r#","{}""#, definition.name)
-            .map_err(|_| MqttRunError::StatePayloadTooLarge)?;
+    for (_, name) in EFFECTS {
+        write!(payload, r#","{}""#, name).map_err(|_| MqttRunError::StatePayloadTooLarge)?;
     }
 
     write!(
@@ -336,9 +332,9 @@ fn handle_command(payload: &[u8]) -> bool {
     }
     if let Some(effect) = command.effect {
         if effect.eq_ignore_ascii_case(EFFECT_DISABLED_NAME) {
-            effect_update = Some(EFFECT_NONE_CODE);
+            effect_update = Some(None);
         } else if let Some(effect_id) = EffectId::from_name(effect) {
-            effect_update = Some(effect_code_from_id(effect_id));
+            effect_update = Some(Some(effect_id));
         } else {
             warn!("Ignoring unknown light effect '{}'", effect);
         }
@@ -363,8 +359,8 @@ fn handle_command(payload: &[u8]) -> bool {
                     b: color.b,
                 };
             }
-            if let Some(effect_code) = effect_update {
-                state.effect_code = effect_code;
+            if let Some(effect) = effect_update {
+                state.effect = effect;
             }
         });
     }

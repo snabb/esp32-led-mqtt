@@ -15,43 +15,31 @@ use smart_leds::{
 };
 
 pub const DEFAULT_BRIGHTNESS: u8 = 8;
+/// Home Assistant name for "no effect", which shows the solid color.
 pub const EFFECT_DISABLED_NAME: &str = "None";
-pub const EFFECT_NONE_CODE: u8 = 0;
-pub const EFFECT_MAX_CODE: u8 = 20;
-pub const EFFECT_DEFINITIONS: [EffectDefinition; 20] = [
-    EffectDefinition::new(EffectId::Rainbow, 1, "Rainbow"),
-    EffectDefinition::new(EffectId::ColorWipe, 2, "Color Wipe"),
-    EffectDefinition::new(EffectId::Scan, 3, "Scan"),
-    EffectDefinition::new(EffectId::Twinkle, 4, "Twinkle"),
-    EffectDefinition::new(EffectId::RandomTwinkle, 5, "Random Twinkle"),
-    EffectDefinition::new(EffectId::Fireworks, 6, "Fireworks"),
-    EffectDefinition::new(EffectId::Flicker, 7, "Flicker"),
-    EffectDefinition::new(EffectId::Breathe, 8, "Breathe"),
-    EffectDefinition::new(EffectId::TheaterChase, 9, "Theater Chase"),
-    EffectDefinition::new(EffectId::Confetti, 10, "Confetti"),
-    EffectDefinition::new(EffectId::Sinelon, 11, "Sinelon"),
-    EffectDefinition::new(EffectId::Juggle, 12, "Juggle"),
-    EffectDefinition::new(EffectId::Bpm, 13, "BPM"),
-    EffectDefinition::new(EffectId::Fire2012, 14, "Fire 2012"),
-    EffectDefinition::new(EffectId::Pacifica, 15, "Pacifica"),
-    EffectDefinition::new(EffectId::Aurora, 16, "Aurora"),
-    EffectDefinition::new(EffectId::PlasmaFlow, 17, "Plasma Flow"),
-    EffectDefinition::new(EffectId::Circus, 18, "Circus"),
-    EffectDefinition::new(EffectId::StaticNoise, 19, "Static Noise"),
-    EffectDefinition::new(EffectId::PoliceCar, EFFECT_MAX_CODE, "Police Car"),
+/// Display names in `EffectId` declaration order; also the button cycle order.
+pub const EFFECTS: [(EffectId, &str); 20] = [
+    (EffectId::Rainbow, "Rainbow"),
+    (EffectId::ColorWipe, "Color Wipe"),
+    (EffectId::Scan, "Scan"),
+    (EffectId::Twinkle, "Twinkle"),
+    (EffectId::RandomTwinkle, "Random Twinkle"),
+    (EffectId::Fireworks, "Fireworks"),
+    (EffectId::Flicker, "Flicker"),
+    (EffectId::Breathe, "Breathe"),
+    (EffectId::TheaterChase, "Theater Chase"),
+    (EffectId::Confetti, "Confetti"),
+    (EffectId::Sinelon, "Sinelon"),
+    (EffectId::Juggle, "Juggle"),
+    (EffectId::Bpm, "BPM"),
+    (EffectId::Fire2012, "Fire 2012"),
+    (EffectId::Pacifica, "Pacifica"),
+    (EffectId::Aurora, "Aurora"),
+    (EffectId::PlasmaFlow, "Plasma Flow"),
+    (EffectId::Circus, "Circus"),
+    (EffectId::StaticNoise, "Static Noise"),
+    (EffectId::PoliceCar, "Police Car"),
 ];
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct EffectDefinition {
-    pub id: EffectId,
-    pub code: u8,
-    pub name: &'static str,
-}
-
-impl EffectDefinition {
-    const fn new(id: EffectId, code: u8, name: &'static str) -> Self {
-        Self { id, code, name }
-    }
-}
 
 #[derive(Clone, Copy)]
 pub struct RgbFrame<const N: usize> {
@@ -120,44 +108,21 @@ pub enum EffectId {
 
 impl EffectId {
     pub fn name(self) -> &'static str {
-        effect_definition(self).name
+        EFFECTS[self as usize].1
     }
 
     pub fn from_name(name: &str) -> Option<Self> {
-        for definition in EFFECT_DEFINITIONS {
-            if name.eq_ignore_ascii_case(definition.name) {
-                return Some(definition.id);
-            }
-        }
-        None
-    }
-}
-
-pub fn effect_definition(id: EffectId) -> EffectDefinition {
-    for definition in EFFECT_DEFINITIONS {
-        if definition.id == id {
-            return definition;
-        }
-    }
-    EFFECT_DEFINITIONS[0]
-}
-
-pub fn effect_id_from_code(code: u8) -> Option<EffectId> {
-    if code == EFFECT_NONE_CODE {
-        return None;
+        EFFECTS
+            .iter()
+            .find(|(_, effect_name)| name.eq_ignore_ascii_case(effect_name))
+            .map(|&(id, _)| id)
     }
 
-    for definition in EFFECT_DEFINITIONS {
-        if definition.code == code {
-            return Some(definition.id);
-        }
+    /// The next effect in `EFFECTS` order, with `None` between the last and first.
+    pub fn cycle(current: Option<Self>) -> Option<Self> {
+        let next = current.map_or(0, |id| id as usize + 1);
+        EFFECTS.get(next).map(|&(id, _)| id)
     }
-
-    Some(EffectId::Rainbow)
-}
-
-pub fn effect_code_from_id(id: EffectId) -> u8 {
-    effect_definition(id).code
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -399,26 +364,22 @@ mod tests {
     }
 
     #[test]
-    fn effect_names_round_trip() {
-        for definition in EFFECT_DEFINITIONS {
-            assert_eq!(
-                EffectId::from_name(definition.id.name()),
-                Some(definition.id)
-            );
+    fn effect_table_matches_declaration_order() {
+        for (index, (id, name)) in EFFECTS.into_iter().enumerate() {
+            assert_eq!(id as usize, index, "{name} is out of order");
+            assert_eq!(id.name(), name);
+            assert_eq!(EffectId::from_name(name), Some(id));
         }
     }
 
     #[test]
-    fn effect_registry_is_consistent() {
-        assert_eq!(EFFECT_MAX_CODE as usize, EFFECT_DEFINITIONS.len());
-
-        for (index, definition) in EFFECT_DEFINITIONS.iter().enumerate() {
-            assert_eq!(definition.code as usize, index + 1);
-            assert_eq!(effect_definition(definition.id), *definition);
-            assert_eq!(effect_code_from_id(definition.id), definition.code);
-            assert_eq!(effect_id_from_code(definition.code), Some(definition.id));
+    fn button_cycle_visits_every_effect_then_none() {
+        let mut current = None;
+        for (id, _) in EFFECTS {
+            current = EffectId::cycle(current);
+            assert_eq!(current, Some(id));
         }
-        assert_eq!(effect_id_from_code(EFFECT_NONE_CODE), None);
+        assert_eq!(EffectId::cycle(current), None);
     }
 
     #[test]
