@@ -117,20 +117,20 @@ async fn run_session(
         .await
         {
             Either3::First(Ok(message)) => {
-                if message.topic() == identity.ota_command_topic.as_str() {
+                let topic = message.topic();
+                if topic == identity.ota_command_topic.as_str() {
                     crate::ota::submit(message.payload(), message.retained());
-                } else if message.topic() == identity.command_topic.as_str()
-                    && handle_command(message.payload())
-                {
-                    publish_light_state(&mut session, identity).await?;
-                } else if message.topic() == identity.speed_command_topic.as_str()
-                    && handle_speed_command(message.payload())
-                {
-                    publish_speed_state(&mut session, identity).await?;
+                } else if topic == identity.command_topic.as_str() {
+                    handle_command(message.payload());
+                } else if topic == identity.speed_command_topic.as_str() {
+                    handle_speed_command(message.payload());
                 }
             }
             Either3::First(Err(err)) => return Err(MqttRunError::Mqtt(err)),
-            Either3::Second(()) => publish_light_state(&mut session, identity).await?,
+            Either3::Second(()) => {
+                publish_light_state(&mut session, identity).await?;
+                publish_speed_state(&mut session, identity).await?;
+            }
             Either3::Third(status) => {
                 publish(&mut session, &identity.ota_status_topic, &status).await?
             }
@@ -254,68 +254,48 @@ async fn publish(
     Ok(())
 }
 
-fn handle_command(payload: &[u8]) -> bool {
+fn handle_command(payload: &[u8]) {
     let Ok((command, _)) = serde_json_core::from_slice::<LightCommand<'_>>(payload) else {
         warn!("Ignoring invalid light command JSON");
-        return false;
+        return;
     };
-
-    let mut on_update = None;
-    let mut effect_update = None;
-
-    if let Some(state) = command.state {
-        if state.eq_ignore_ascii_case("ON") {
-            on_update = Some(true);
-        } else if state.eq_ignore_ascii_case("OFF") {
-            on_update = Some(false);
-        }
-    }
-    if let Some(effect) = command.effect {
-        if effect.eq_ignore_ascii_case(EFFECT_DISABLED_NAME) {
-            effect_update = Some(None);
-        } else if let Some(effect_id) = EffectId::from_name(effect) {
-            effect_update = Some(Some(effect_id));
+    let on = match command.state {
+        Some(state) if state.eq_ignore_ascii_case("ON") => Some(true),
+        Some(state) if state.eq_ignore_ascii_case("OFF") => Some(false),
+        _ => None,
+    };
+    let effect = command.effect.and_then(|name| {
+        if name.eq_ignore_ascii_case(EFFECT_DISABLED_NAME) {
+            Some(None)
+        } else if let Some(id) = EffectId::from_name(name) {
+            Some(Some(id))
         } else {
-            warn!("Ignoring unknown light effect '{}'", effect);
+            warn!("Ignoring unknown light effect '{}'", name);
+            None
         }
-    }
+    });
 
-    let changed = on_update.is_some()
-        || command.brightness.is_some()
-        || command.color.is_some()
-        || effect_update.is_some();
-    if changed {
-        light_state::update(|state| {
-            if let Some(on) = on_update {
-                state.on = on;
-            }
-            if let Some(brightness) = command.brightness {
-                state.brightness = brightness;
-            }
-            if let Some(color) = command.color {
-                state.color = RGB8 {
-                    r: color.r,
-                    g: color.g,
-                    b: color.b,
-                };
-            }
-            if let Some(effect) = effect_update {
-                state.effect = effect;
-            }
-        });
-    }
-
-    changed
+    light_state::update(|state| {
+        if let Some(on) = on {
+            state.on = on;
+        }
+        if let Some(brightness) = command.brightness {
+            state.brightness = brightness;
+        }
+        if let Some(LightColor { r, g, b }) = command.color {
+            state.color = RGB8 { r, g, b };
+        }
+        if let Some(effect) = effect {
+            state.effect = effect;
+        }
+    });
 }
 
-fn handle_speed_command(payload: &[u8]) -> bool {
-    let Some(speed) = parse_speed(payload) else {
-        warn!("Ignoring invalid effect speed command");
-        return false;
-    };
-
-    light_state::update(|state| state.speed = speed);
-    true
+fn handle_speed_command(payload: &[u8]) {
+    match parse_speed(payload) {
+        Some(speed) => light_state::update(|state| state.speed = speed),
+        None => warn!("Ignoring invalid effect speed command"),
+    }
 }
 
 fn parse_speed(payload: &[u8]) -> Option<u8> {

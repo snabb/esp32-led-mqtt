@@ -1,14 +1,16 @@
 use core::cell::RefCell;
 
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal};
-use esp32_led_mqtt::{DEFAULT_BRIGHTNESS, EffectId, EffectParams};
+use esp32_led_mqtt::{EffectId, EffectParams};
 use smart_leds::RGB8;
 
-pub(crate) static LIGHT_STATE: critical_section::Mutex<RefCell<LightState>> =
+static LIGHT_STATE: critical_section::Mutex<RefCell<LightState>> =
     critical_section::Mutex::new(RefCell::new(DEFAULT_LIGHT_STATE));
+/// Raised by every `update`; MQTT publishes the new state when it fires.
 pub(crate) static LIGHT_STATE_CHANGED: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
 pub(crate) const MAX_EFFECT_SPEED: u8 = 128;
+const DEFAULT_BRIGHTNESS: u8 = 8;
 const DEFAULT_EFFECT_SPEED: u8 = 64;
 const DEFAULT_LIGHT_STATE: LightState = LightState {
     on: true,
@@ -31,16 +33,13 @@ pub(crate) struct LightState {
     pub(crate) color: RGB8,
 }
 
-pub(crate) fn mark_dirty() {
-    LIGHT_STATE_CHANGED.signal(());
-}
-
 pub(crate) fn get() -> LightState {
     critical_section::with(|cs| *LIGHT_STATE.borrow(cs).borrow())
 }
 
 pub(crate) fn update(update: impl FnOnce(&mut LightState)) {
     critical_section::with(|cs| update(&mut LIGHT_STATE.borrow(cs).borrow_mut()));
+    LIGHT_STATE_CHANGED.signal(());
 }
 
 pub(crate) fn effect_params(id: EffectId, state: LightState) -> EffectParams {

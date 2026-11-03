@@ -11,7 +11,6 @@ pub mod random_color;
 
 use smart_leds::RGB8;
 
-pub const DEFAULT_BRIGHTNESS: u8 = 8;
 /// Home Assistant name for "no effect", which shows the solid color.
 pub const EFFECT_DISABLED_NAME: &str = "None";
 /// Display names in `EffectId` declaration order; also the button cycle order.

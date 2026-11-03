@@ -92,14 +92,12 @@ fn handle_action(action: ButtonAction, now_ms: u64) {
         ButtonAction::RandomColor => set_random_color(now_ms),
         ButtonAction::TogglePower => {
             light_state::update(|state| state.on = !state.on);
-            light_state::mark_dirty();
         }
     }
 }
 
 fn cycle_effect() {
     light_state::update(|state| state.effect = EffectId::cycle(state.effect));
-    light_state::mark_dirty();
 }
 
 fn set_random_color(now_ms: u64) {
@@ -112,7 +110,6 @@ fn set_random_color(now_ms: u64) {
     let color = random_color::from_seed(previous, next_random_u32(&mut rng));
 
     light_state::update(|state| state.color = color);
-    light_state::mark_dirty();
 }
 
 fn next_random_u32(state: &mut u32) -> u32 {
