@@ -119,6 +119,8 @@ pub struct EffectRuntime<const N: usize> {
 
 impl<const N: usize> EffectRuntime<N> {
     pub const fn new(params: EffectParams) -> Self {
+        // Effects index and divide by N; build.rs requires at least one LED.
+        const { assert!(N > 0) };
         Self {
             frame: [RGB8 { r: 0, g: 0, b: 0 }; N],
             params,
@@ -166,7 +168,7 @@ impl<const N: usize> EffectRuntime<N> {
     }
 
     fn chance(&mut self, intensity: u8, percent_at_full: u8) -> bool {
-        let threshold = (u32::from(intensity) * u32::from(percent_at_full) * 255) / 25500;
+        let threshold = u32::from(intensity) * u32::from(percent_at_full) / 100;
         u32::from(self.rng.next_u8()) < threshold
     }
 }
@@ -281,15 +283,6 @@ mod tests {
     }
 
     #[test]
-    fn rainbow_effect_changes_over_time() {
-        let mut runtime = EffectRuntime::<8>::new(EffectParams::default());
-        let first = runtime.render(0).to_vec();
-        let second = runtime.render(100).to_vec();
-
-        assert_ne!(first, second);
-    }
-
-    #[test]
     fn effect_table_matches_declaration_order() {
         for (index, (id, name)) in EFFECTS.into_iter().enumerate() {
             assert_eq!(id as usize, index, "{name} is out of order");
@@ -319,56 +312,33 @@ mod tests {
         assert_eq!(EffectId::from_name("missing"), None);
     }
 
-    #[test]
-    fn new_effects_change_over_time() {
-        for effect in [
-            EffectId::Breathe,
-            EffectId::TheaterChase,
-            EffectId::Confetti,
-            EffectId::Sinelon,
-            EffectId::Juggle,
-            EffectId::Bpm,
-            EffectId::Fire2012,
-            EffectId::Pacifica,
-            EffectId::Aurora,
-            EffectId::PlasmaFlow,
-            EffectId::Circus,
-            EffectId::StaticNoise,
-            EffectId::PoliceCar,
-        ] {
-            let mut runtime = EffectRuntime::<8>::new(EffectParams {
-                id: effect,
-                speed: 10,
-                intensity: 255,
-                ..EffectParams::default()
-            });
-            let first = runtime.render(1).to_vec();
-            let second = runtime.render(240).to_vec();
+    fn runtime<const N: usize>(id: EffectId) -> EffectRuntime<N> {
+        EffectRuntime::new(EffectParams {
+            id,
+            speed: 10,
+            intensity: 255,
+            ..EffectParams::default()
+        })
+    }
 
-            assert_ne!(first, second, "{effect:?} should animate");
+    #[test]
+    fn every_effect_animates() {
+        for (id, name) in EFFECTS {
+            let mut runtime = runtime::<8>(id);
+            let first = runtime.render(1).to_vec();
+            // Random effects may repeat a frame, so allow two seconds of frames.
+            let animates = (1..=120).any(|frame| runtime.render(frame * 16 + 1)[..] != first[..]);
+            assert!(animates, "{name} should animate");
         }
     }
 
     #[test]
-    fn new_effects_render_small_strips() {
-        for effect in [
-            EffectId::Fire2012,
-            EffectId::Pacifica,
-            EffectId::Aurora,
-            EffectId::PlasmaFlow,
-            EffectId::Circus,
-            EffectId::StaticNoise,
-            EffectId::PoliceCar,
-        ] {
-            let mut runtime = EffectRuntime::<1>::new(EffectParams {
-                id: effect,
-                speed: 10,
-                intensity: 255,
-                ..EffectParams::default()
-            });
-
-            runtime.render(1);
-            runtime.render(80);
+    fn every_effect_renders_a_single_led() {
+        for (id, _) in EFFECTS {
+            let mut runtime = runtime::<1>(id);
+            for now_ms in [1, 80, 2_000] {
+                runtime.render(now_ms);
+            }
         }
     }
 }

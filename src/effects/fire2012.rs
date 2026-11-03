@@ -7,8 +7,7 @@ pub(super) fn render<const N: usize>(runtime: &mut EffectRuntime<N>, now_ms: u32
     }
 
     for index in 0..N {
-        let cooling =
-            runtime.rng.next_u8() % (u8::try_from((55 * 10) / N.max(1) + 2).unwrap_or(u8::MAX));
+        let cooling = runtime.rng.next_u8() % (u8::try_from((55 * 10) / N + 2).unwrap_or(u8::MAX));
         runtime.effect_data[index] = runtime.effect_data[index].saturating_sub(cooling);
     }
 
@@ -20,7 +19,7 @@ pub(super) fn render<const N: usize>(runtime: &mut EffectRuntime<N>, now_ms: u32
         runtime.effect_data[index] = heat as u8;
     }
 
-    if N > 0 && runtime.chance(runtime.params.intensity, 45) {
+    if runtime.chance(runtime.params.intensity, 45) {
         let spark_index = (runtime.rng.next_u8() as usize) % fire_spark_height(N);
         let spark = 160_u8.saturating_add(runtime.rng.next_u8() % 96);
         runtime.effect_data[spark_index] = runtime.effect_data[spark_index].saturating_add(spark);

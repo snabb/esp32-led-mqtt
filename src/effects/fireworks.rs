@@ -9,7 +9,7 @@ pub(super) fn render<const N: usize>(runtime: &mut EffectRuntime<N>, now_ms: u32
         let sparks = (u16::from(runtime.params.intensity) * N as u16) / 2550 + 1;
         for _ in 0..sparks {
             if runtime.chance(runtime.params.intensity, 10) {
-                let index = (runtime.rng.next_u16() as usize) % N.max(1);
+                let index = (runtime.rng.next_u16() as usize) % N;
                 runtime.frame[index] = runtime.params.primary;
             }
         }

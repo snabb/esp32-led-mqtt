@@ -6,14 +6,12 @@ pub(super) fn render<const N: usize>(runtime: &mut EffectRuntime<N>, now_ms: u32
             *pixel = fade_to_black(*pixel, 32);
         }
 
-        if N > 0 {
-            let index = (runtime.rng.next_u16() as usize) % N;
-            let hue = runtime
-                .params
-                .primary
-                .r
-                .wrapping_add(runtime.rng.next_u8() & 0x3f);
-            runtime.frame[index] = hsv_rainbow(hue, 200, 255);
-        }
+        let index = (runtime.rng.next_u16() as usize) % N;
+        let hue = runtime
+            .params
+            .primary
+            .r
+            .wrapping_add(runtime.rng.next_u8() & 0x3f);
+        runtime.frame[index] = hsv_rainbow(hue, 200, 255);
     }
 }

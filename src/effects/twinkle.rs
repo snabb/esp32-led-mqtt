@@ -1,10 +1,7 @@
 use crate::{EffectRuntime, half_sin8, scale_rgb, speed_interval};
 
-pub(super) fn render<const N: usize>(runtime: &mut EffectRuntime<N>, now_ms: u32) {
-    render_with_color_mode(runtime, now_ms, false);
-}
-
-pub(super) fn render_with_color_mode<const N: usize>(
+/// Twinkle in the primary color, or in random hues for Random Twinkle.
+pub(super) fn render<const N: usize>(
     runtime: &mut EffectRuntime<N>,
     now_ms: u32,
     random_color: bool,
