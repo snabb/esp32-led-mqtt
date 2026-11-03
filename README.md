@@ -126,8 +126,12 @@ Effects: Rainbow, Color Wipe, Scan, Twinkle, Random Twinkle, Fireworks, Flicker,
 Breathe, Theater Chase, Confetti, Sinelon, Juggle, BPM, Fire 2012, Pacifica,
 Aurora, Plasma Flow, Circus, Static Noise, Police Car.
 
-Light state is not saved across reboots. The device always starts on, showing
-`Rainbow` at brightness 8/255 and speed 64.
+After a reboot the strip stays dark until the device reaches the MQTT broker,
+then restores the light state and effect speed it last published there. If the
+broker has none, or is never reached, the strip stays dark until it is turned on
+from Home Assistant or with the button. The button turns it on as `Rainbow` at
+brightness 8/255 and speed 64, and a button press before the broker is reached
+cancels the restore.
 
 ### Button
 

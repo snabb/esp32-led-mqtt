@@ -1,4 +1,4 @@
-use core::cell::RefCell;
+use core::cell::{Cell, RefCell};
 
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal};
 pub(crate) use esp32_led_mqtt::MAX_EFFECT_SPEED;
@@ -7,12 +7,17 @@ use smart_leds::RGB8;
 
 static LIGHT_STATE: critical_section::Mutex<RefCell<LightState>> =
     critical_section::Mutex::new(RefCell::new(DEFAULT_LIGHT_STATE));
+/// Set until the state from before the reboot is restored or overridden by a
+/// local change; see `restore`.
+static RESTORE_PENDING: critical_section::Mutex<Cell<bool>> =
+    critical_section::Mutex::new(Cell::new(true));
 /// Raised by every `update`; MQTT publishes the new state when it fires.
 pub(crate) static LIGHT_STATE_CHANGED: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
 const DEFAULT_BRIGHTNESS: u8 = 8;
+/// Boots dark until `restore`; the rest is what the button turns on.
 const DEFAULT_LIGHT_STATE: LightState = LightState {
-    on: true,
+    on: false,
     brightness: DEFAULT_BRIGHTNESS,
     effect: Some(EffectId::Rainbow),
     speed: NORMAL_EFFECT_SPEED,
@@ -37,8 +42,30 @@ pub(crate) fn get() -> LightState {
 }
 
 pub(crate) fn update(update: impl FnOnce(&mut LightState)) {
-    critical_section::with(|cs| update(&mut LIGHT_STATE.borrow(cs).borrow_mut()));
+    critical_section::with(|cs| {
+        RESTORE_PENDING.borrow(cs).set(false);
+        update(&mut LIGHT_STATE.borrow(cs).borrow_mut());
+    });
     LIGHT_STATE_CHANGED.signal(());
+}
+
+pub(crate) fn restore_pending() -> bool {
+    critical_section::with(|cs| RESTORE_PENDING.borrow(cs).get())
+}
+
+/// Applies the state from before the reboot, unless it was already restored
+/// or a local change (the button) came first and is therefore newer.
+pub(crate) fn restore(restore: impl FnOnce(&mut LightState)) {
+    let restored = critical_section::with(|cs| {
+        RESTORE_PENDING
+            .borrow(cs)
+            .replace(false)
+            .then(|| restore(&mut LIGHT_STATE.borrow(cs).borrow_mut()))
+            .is_some()
+    });
+    if restored {
+        LIGHT_STATE_CHANGED.signal(());
+    }
 }
 
 pub(crate) fn effect_params(id: EffectId, state: LightState) -> EffectParams {

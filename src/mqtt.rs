@@ -2,21 +2,25 @@ use core::fmt::Write;
 
 use embassy_futures::select::{Either4, select4};
 use embassy_net::{IpEndpoint, Stack, tcp::TcpSocket};
-use embassy_time::{Duration, Ticker, Timer, with_timeout};
+use embassy_time::{Duration, Instant, Ticker, Timer, with_deadline, with_timeout};
 use esp32_led_mqtt::{EFFECT_DISABLED_NAME, EFFECTS, EffectId};
 use log::{info, warn};
 use minimq::{
-    Buffers, ConfigBuilder, ConnectEvent, Connection, Publication, Session, TopicFilter, Will,
+    Buffers, ConfigBuilder, ConnectEvent, Connection, InboundPublish, Publication, Session,
+    TopicFilter, Will,
 };
 use serde::Deserialize;
 use smart_leds::RGB8;
 
 use crate::{
     identity::{DEVICE_MODEL, DEVICE_NAME, DeviceIdentity},
-    light_state::{self, LIGHT_STATE_CHANGED, MAX_EFFECT_SPEED},
+    light_state::{self, LIGHT_STATE_CHANGED, LightState, MAX_EFFECT_SPEED},
 };
 
 const TEMPERATURE_INTERVAL: Duration = Duration::from_secs(60);
+/// Retained messages follow the SUBACK at once, so this only bounds the wait
+/// when the broker has none.
+const RESTORE_WAIT: Duration = Duration::from_secs(2);
 
 #[embassy_executor::task]
 pub async fn task(
@@ -110,6 +114,10 @@ async fn run_connected<IO: minimq::Io>(
     info!("MQTT connected: {:?}", event);
     crate::memory::report("mqtt_connected");
 
+    // Before the first publish, which would replace the retained state.
+    if light_state::restore_pending() {
+        restore_retained_state(&mut session, identity).await?;
+    }
     publish(&mut session, &identity.availability_topic, "online").await?;
     publish_light_discovery(&mut session, identity).await?;
     publish_speed_discovery(&mut session, identity).await?;
@@ -145,16 +153,7 @@ async fn run_connected<IO: minimq::Io>(
         )
         .await
         {
-            Either4::First(Ok(message)) => {
-                let topic = message.topic();
-                if topic == identity.ota_command_topic.as_str() {
-                    crate::ota::submit(message.payload(), message.retained());
-                } else if topic == identity.command_topic.as_str() {
-                    handle_command(message.payload());
-                } else if topic == identity.speed_command_topic.as_str() {
-                    handle_speed_command(message.payload());
-                }
-            }
+            Either4::First(Ok(message)) => handle_message(identity, &message),
             Either4::First(Err(err)) => {
                 return Err(mqtt_error(err));
             }
@@ -167,6 +166,73 @@ async fn run_connected<IO: minimq::Io>(
             }
             Either4::Fourth(()) => publish_temperature(&mut session, identity, chip_temp).await?,
         }
+    }
+}
+
+/// Reads back the light and speed states this device last published (retained)
+/// and restores them. Without them the light stays off.
+async fn restore_retained_state<IO: minimq::Io>(
+    session: &mut Connection<'_, '_, IO>,
+    identity: &DeviceIdentity,
+) -> Result<(), MqttRunError> {
+    let topics = [
+        identity.state_topic.as_str(),
+        identity.speed_state_topic.as_str(),
+    ];
+    session
+        .subscribe(&topics.map(TopicFilter::new), &[])
+        .await
+        .map_err(mqtt_error)?;
+
+    let mut light = None;
+    let mut speed = None;
+    let deadline = Instant::now() + RESTORE_WAIT;
+    while light.is_none() || speed.is_none() {
+        let Ok(message) = with_deadline(deadline, session.recv()).await else {
+            break;
+        };
+        let message = message.map_err(mqtt_error)?;
+        if message.topic() == topics[0] {
+            light = parse_light_command(message.payload());
+        } else if message.topic() == topics[1] {
+            speed = parse_speed(message.payload());
+        } else {
+            // A resumed session may deliver commands; they are newer than
+            // the retained state and cancel the restore.
+            handle_message(identity, &message);
+        }
+    }
+
+    session
+        .unsubscribe(&topics, &[])
+        .await
+        .map_err(mqtt_error)?;
+    info!(
+        "Restoring retained light state: light {}, speed {}",
+        light.is_some(),
+        speed.is_some()
+    );
+    light_state::restore(|state| {
+        if let Some(light) = light {
+            light.apply(state);
+        }
+        if let Some(speed) = speed {
+            state.speed = speed;
+        }
+    });
+    Ok(())
+}
+
+fn handle_message(identity: &DeviceIdentity, message: &InboundPublish<'_>) {
+    let topic = message.topic();
+    if topic == identity.ota_command_topic.as_str() {
+        crate::ota::submit(message.payload(), message.retained());
+    } else if topic == identity.command_topic.as_str() {
+        if let Some(command) = parse_light_command(message.payload()) {
+            light_state::update(|state| command.apply(state));
+        }
+    } else if topic == identity.speed_command_topic.as_str() {
+        handle_speed_command(message.payload());
     }
 }
 
@@ -314,10 +380,11 @@ async fn publish<IO: minimq::Io>(
     Ok(())
 }
 
-fn handle_command(payload: &[u8]) {
+/// Parses a light command, which has the same shape as the published state.
+fn parse_light_command(payload: &[u8]) -> Option<LightUpdate> {
     let Ok((command, _)) = serde_json_core::from_slice::<LightCommand<'_>>(payload) else {
         warn!("Ignoring invalid light command JSON");
-        return;
+        return None;
     };
     let on = match command.state {
         Some(state) if state.eq_ignore_ascii_case("ON") => Some(true),
@@ -335,20 +402,36 @@ fn handle_command(payload: &[u8]) {
         }
     });
 
-    light_state::update(|state| {
-        if let Some(on) = on {
+    Some(LightUpdate {
+        on,
+        brightness: command.brightness,
+        color: command.color.map(|LightColor { r, g, b }| RGB8 { r, g, b }),
+        effect,
+    })
+}
+
+struct LightUpdate {
+    on: Option<bool>,
+    brightness: Option<u8>,
+    color: Option<RGB8>,
+    effect: Option<Option<EffectId>>,
+}
+
+impl LightUpdate {
+    fn apply(&self, state: &mut LightState) {
+        if let Some(on) = self.on {
             state.on = on;
         }
-        if let Some(brightness) = command.brightness {
+        if let Some(brightness) = self.brightness {
             state.brightness = brightness;
         }
-        if let Some(LightColor { r, g, b }) = command.color {
-            state.color = RGB8 { r, g, b };
+        if let Some(color) = self.color {
+            state.color = color;
         }
-        if let Some(effect) = effect {
+        if let Some(effect) = self.effect {
             state.effect = effect;
         }
-    });
+    }
 }
 
 fn handle_speed_command(payload: &[u8]) {

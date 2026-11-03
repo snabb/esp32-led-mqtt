@@ -9,6 +9,10 @@ The device connects with MQTT 5, a 30-second keepalive and a last will that
 sets `status` to `offline`. Everything the device publishes is retained. After
 a lost connection it retries every 5 seconds.
 
+On the first connection after boot, before publishing anything, the device
+subscribes to its own retained `light/state` and `effect_speed/state` for up to
+2 seconds and restores them. It then unsubscribes and publishes as usual.
+
 ## Topics
 
 | Topic | Direction | Payload |
