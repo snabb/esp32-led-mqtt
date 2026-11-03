@@ -53,13 +53,13 @@ pub fn from_seed(previous: RGB8, seed: u32) -> RGB8 {
     farthest_fallback_color(previous)
 }
 
-pub fn color_distance(left: RGB8, right: RGB8) -> u16 {
+fn color_distance(left: RGB8, right: RGB8) -> u16 {
     u16::from(left.r.abs_diff(right.r))
         + u16::from(left.g.abs_diff(right.g))
         + u16::from(left.b.abs_diff(right.b))
 }
 
-pub fn color_brightness(color: RGB8) -> u16 {
+fn color_brightness(color: RGB8) -> u16 {
     u16::from(color.r) + u16::from(color.g) + u16::from(color.b)
 }
 
