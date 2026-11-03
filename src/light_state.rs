@@ -1,7 +1,8 @@
 use core::cell::RefCell;
 
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal};
-use esp32_led_mqtt::{EffectId, EffectParams};
+pub(crate) use esp32_led_mqtt::MAX_EFFECT_SPEED;
+use esp32_led_mqtt::{EffectId, EffectParams, NORMAL_EFFECT_SPEED};
 use smart_leds::RGB8;
 
 static LIGHT_STATE: critical_section::Mutex<RefCell<LightState>> =
@@ -9,14 +10,12 @@ static LIGHT_STATE: critical_section::Mutex<RefCell<LightState>> =
 /// Raised by every `update`; MQTT publishes the new state when it fires.
 pub(crate) static LIGHT_STATE_CHANGED: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
-pub(crate) const MAX_EFFECT_SPEED: u8 = 128;
 const DEFAULT_BRIGHTNESS: u8 = 8;
-const DEFAULT_EFFECT_SPEED: u8 = 64;
 const DEFAULT_LIGHT_STATE: LightState = LightState {
     on: true,
     brightness: DEFAULT_BRIGHTNESS,
     effect: Some(EffectId::Rainbow),
-    speed: DEFAULT_EFFECT_SPEED,
+    speed: NORMAL_EFFECT_SPEED,
     color: RGB8 {
         r: 255,
         g: 96,
@@ -46,15 +45,7 @@ pub(crate) fn effect_params(id: EffectId, state: LightState) -> EffectParams {
     EffectParams {
         id,
         primary: state.color,
-        speed: effect_speed_value(state.speed),
+        speed: state.speed,
         intensity: 128,
     }
-}
-
-fn effect_speed_value(slider: u8) -> u8 {
-    let slider = slider.clamp(1, MAX_EFFECT_SPEED);
-    let offset = u64::from(slider.saturating_sub(1));
-    let max_offset = u64::from(MAX_EFFECT_SPEED - 1);
-    1 + ((offset * offset * offset * offset * offset)
-        / (max_offset * max_offset * max_offset * max_offset)) as u8
 }

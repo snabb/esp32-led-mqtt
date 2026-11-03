@@ -1,4 +1,5 @@
-use crate::{EffectId, EffectRuntime, speed_interval};
+use crate::{EffectId, EffectRuntime, scale_rgb};
+use smart_leds::RGB8;
 
 // To add an effect: create a file in this directory, add it below, dispatch it
 // in render(), then add its EffectId variant and EFFECTS entry in lib.rs.
@@ -22,48 +23,72 @@ mod static_noise;
 mod theater_chase;
 mod twinkle;
 
-pub(crate) fn render<const N: usize>(runtime: &mut EffectRuntime<N>, now_ms: u32) {
+pub(crate) fn render<const N: usize>(runtime: &mut EffectRuntime<N>) {
     match runtime.params.id {
-        EffectId::Rainbow => rainbow::render(runtime, now_ms),
-        EffectId::ColorWipe => color_wipe::render(runtime, now_ms),
-        EffectId::Scan => scan::render(runtime, now_ms),
-        EffectId::Twinkle => twinkle::render(runtime, now_ms, false),
-        EffectId::RandomTwinkle => twinkle::render(runtime, now_ms, true),
-        EffectId::Fireworks => fireworks::render(runtime, now_ms),
-        EffectId::Flicker => flicker::render(runtime, now_ms),
-        EffectId::Breathe => breathe::render(runtime, now_ms),
-        EffectId::TheaterChase => theater_chase::render(runtime, now_ms),
-        EffectId::Confetti => confetti::render(runtime, now_ms),
-        EffectId::Sinelon => sinelon::render(runtime, now_ms),
-        EffectId::Juggle => juggle::render(runtime, now_ms),
-        EffectId::Bpm => bpm::render(runtime, now_ms),
-        EffectId::Fire2012 => fire2012::render(runtime, now_ms),
-        EffectId::Pacifica => pacifica::render(runtime, now_ms),
-        EffectId::Aurora => aurora::render(runtime, now_ms),
-        EffectId::PlasmaFlow => plasma_flow::render(runtime, now_ms),
-        EffectId::Circus => circus::render(runtime, now_ms),
-        EffectId::StaticNoise => static_noise::render(runtime, now_ms),
-        EffectId::PoliceCar => police_car::render(runtime, now_ms),
+        EffectId::Rainbow => rainbow::render(runtime),
+        EffectId::ColorWipe => color_wipe::render(runtime),
+        EffectId::Scan => scan::render(runtime),
+        EffectId::Twinkle => twinkle::render(runtime, false),
+        EffectId::RandomTwinkle => twinkle::render(runtime, true),
+        EffectId::Fireworks => fireworks::render(runtime),
+        EffectId::Flicker => flicker::render(runtime),
+        EffectId::Breathe => breathe::render(runtime),
+        EffectId::TheaterChase => theater_chase::render(runtime),
+        EffectId::Confetti => confetti::render(runtime),
+        EffectId::Sinelon => sinelon::render(runtime),
+        EffectId::Juggle => juggle::render(runtime),
+        EffectId::Bpm => bpm::render(runtime),
+        EffectId::Fire2012 => fire2012::render(runtime),
+        EffectId::Pacifica => pacifica::render(runtime),
+        EffectId::Aurora => aurora::render(runtime),
+        EffectId::PlasmaFlow => plasma_flow::render(runtime),
+        EffectId::Circus => circus::render(runtime),
+        EffectId::StaticNoise => static_noise::render(runtime),
+        EffectId::PoliceCar => police_car::render(runtime),
     }
 }
+
+/// Caps the simulation work of one frame after a stall or at high speed.
+const MAX_TICKS_PER_FRAME: u64 = 64;
 
 /// `index` scaled to 0..=255 across the strip.
 fn strip_position<const N: usize>(index: usize) -> u8 {
     ((index * 256) / N) as u8
 }
 
-/// Wrapping 8-bit wave phase; a higher speed or smaller divisor moves faster.
-fn wave_phase(now_ms: u32, speed: u8, divisor: u32) -> u8 {
-    (now_ms.saturating_mul(u32::from(speed.max(1))) / divisor) as u8
+/// `index` scaled to 0..=u16::MAX across the strip.
+fn strip_position16<const N: usize>(index: usize) -> u16 {
+    ((index * 65536) / N) as u16
 }
 
-/// A position bouncing between both strip ends.
-fn beat_position(now_ms: u32, speed: u8, count: usize) -> usize {
+/// Position at `step` of a dot bouncing between both strip ends, one LED per step.
+fn bounce(step: u32, count: usize) -> usize {
     if count == 1 {
         return 0;
     }
 
     let span = (count - 1) * 2;
-    let step = ((now_ms / speed_interval(16, speed)) as usize) % span;
+    let step = step as usize % span;
     if step < count { step } else { span - step }
+}
+
+fn add_rgb(left: RGB8, right: RGB8) -> RGB8 {
+    RGB8 {
+        r: left.r.saturating_add(right.r),
+        g: left.g.saturating_add(right.g),
+        b: left.b.saturating_add(right.b),
+    }
+}
+
+/// Adds `color` at `wave` (0 = first LED, u16::MAX = last), split between the
+/// two nearest LEDs so the dot moves without hopping.
+fn add_smooth_dot(frame: &mut [RGB8], wave: u16, color: RGB8) {
+    let span = frame.len().saturating_sub(1) as u32;
+    let position = u64::from(wave) * u64::from(span) * 256 / u64::from(u16::MAX);
+    let index = (position >> 8) as usize;
+    let next_weight = position as u8;
+    frame[index] = add_rgb(frame[index], scale_rgb(color, 255 - next_weight));
+    if let Some(next) = frame.get_mut(index + 1) {
+        *next = add_rgb(*next, scale_rgb(color, next_weight));
+    }
 }

@@ -1,35 +1,26 @@
-use super::beat_position;
-use crate::{EffectRuntime, fade_to_black, hsv_rainbow};
-use smart_leds::RGB8;
+use super::{MAX_TICKS_PER_FRAME, add_smooth_dot};
+use crate::{EffectRuntime, ease_wave16, fade_to_black, hsv_rainbow16, phase_at};
 
-pub(super) fn render<const N: usize>(runtime: &mut EffectRuntime<N>, now_ms: u32) {
-    for pixel in &mut runtime.frame {
-        *pixel = fade_to_black(*pixel, 48);
-    }
+const TICK_MS: u32 = 10;
+const HUE_CYCLE_MS: u32 = 10_000;
 
-    let dots = N.min(6);
-    for dot in 0..dots {
-        let speed = juggle_dot_speed(runtime.params.speed, dot as u8);
-        let time = now_ms / 4;
-        let position = beat_position(time.wrapping_add((dot * 73) as u32), speed, N);
-        let hue = (dot as u8)
-            .wrapping_mul(32)
-            .wrapping_add(runtime.phase as u8);
-        let color = hsv_rainbow(hue, 220, 255);
-        runtime.frame[position] = add_rgb(runtime.frame[position], color);
-    }
-    runtime.phase = runtime.phase.wrapping_add(1);
-}
+pub(super) fn render<const N: usize>(runtime: &mut EffectRuntime<N>) {
+    runtime.simulate(TICK_MS, MAX_TICKS_PER_FRAME, |runtime, time_us| {
+        for pixel in &mut runtime.tick_frame {
+            *pixel = fade_to_black(*pixel, 20);
+        }
 
-fn juggle_dot_speed(base_speed: u8, dot: u8) -> u8 {
-    let speed = u16::from(base_speed) + u16::from(dot) * 3;
-    speed.min(u16::from(u8::MAX)) as u8
-}
-
-fn add_rgb(left: RGB8, right: RGB8) -> RGB8 {
-    RGB8 {
-        r: left.r.saturating_add(right.r),
-        g: left.g.saturating_add(right.g),
-        b: left.b.saturating_add(right.b),
-    }
+        let hue_drift = phase_at(time_us, HUE_CYCLE_MS);
+        for dot in 0..N.min(6) as u16 {
+            // Dot `i` runs at 7 + i BPM, so the dots drift in and out of sync.
+            let period_ms = 60_000 / (7 + u32::from(dot));
+            let phase = phase_at(time_us, period_ms).wrapping_add(dot.wrapping_mul(0x2aaa));
+            let hue = hue_drift.wrapping_add(dot << 13);
+            add_smooth_dot(
+                &mut runtime.tick_frame,
+                ease_wave16(phase),
+                hsv_rainbow16(hue, 220, 255),
+            );
+        }
+    });
 }

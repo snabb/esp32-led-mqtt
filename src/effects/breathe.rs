@@ -1,8 +1,10 @@
-use super::wave_phase;
-use crate::{EffectRuntime, half_sin8, scale_rgb};
+use crate::{EffectRuntime, ease_wave16, scale_rgb};
 
-pub(super) fn render<const N: usize>(runtime: &mut EffectRuntime<N>, now_ms: u32) {
-    let wave = wave_phase(now_ms, runtime.params.speed, 96);
-    let level = half_sin8(wave).saturating_add(8);
+const BREATH_MS: u32 = 5_000;
+const FLOOR: u8 = 8;
+
+pub(super) fn render<const N: usize>(runtime: &mut EffectRuntime<N>) {
+    let wave = ease_wave16(runtime.phase(BREATH_MS));
+    let level = FLOOR + (u32::from(wave) * u32::from(255 - FLOOR) / u32::from(u16::MAX)) as u8;
     runtime.frame.fill(scale_rgb(runtime.params.primary, level));
 }

@@ -225,7 +225,7 @@ async fn run_led_loop(mut strip: LedStrip<'static>, mut led_power: Option<Output
 
     loop {
         ticker.next().await;
-        let now_ms = Instant::now().as_millis();
+        let now_us = Instant::now().as_micros() as u32;
         let state = light_state();
         let light_on = state.on;
         if light_on && !led_power_on {
@@ -239,7 +239,7 @@ async fn run_led_loop(mut strip: LedStrip<'static>, mut led_power: Option<Output
             (false, _) => [RGB8 { r: 0, g: 0, b: 0 }; LED_COUNT],
             (true, Some(effect_id)) => {
                 effect_runtime.set_effect(effect_params(effect_id, state));
-                corrected(effect_runtime.render(now_ms as u32), state.brightness)
+                corrected(effect_runtime.render(now_us), state.brightness)
             }
             (true, None) => corrected(&[state.color; LED_COUNT], state.brightness),
         };

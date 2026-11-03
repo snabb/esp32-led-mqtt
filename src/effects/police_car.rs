@@ -1,15 +1,16 @@
-use crate::{EffectRuntime, scale_rgb, speed_interval};
+use crate::{EffectRuntime, scale_rgb};
 use smart_leds::RGB8;
 
-pub(super) fn render<const N: usize>(runtime: &mut EffectRuntime<N>, now_ms: u32) {
-    let step = (now_ms / speed_interval(45, runtime.params.speed)) as usize;
-    let flash = step % 12;
-    let left_on = matches!(flash, 0 | 2 | 4);
-    let right_on = matches!(flash, 6 | 8 | 10);
-    let white_strobe = matches!(flash, 5 | 11);
+const STEP_MS: u32 = 70;
+
+pub(super) fn render<const N: usize>(runtime: &mut EffectRuntime<N>) {
     let center = N / 2;
 
-    for (index, pixel) in runtime.frame.iter_mut().enumerate() {
+    runtime.render_steps(STEP_MS, |step, index| {
+        let flash = step % 12;
+        let left_on = matches!(flash, 0 | 2 | 4);
+        let right_on = matches!(flash, 6 | 8 | 10);
+        let white_strobe = matches!(flash, 5 | 11);
         let side_on = if index < center { left_on } else { right_on };
         let base = if index < center {
             RGB8 { r: 255, g: 0, b: 0 }
@@ -17,7 +18,7 @@ pub(super) fn render<const N: usize>(runtime: &mut EffectRuntime<N>, now_ms: u32
             RGB8 { r: 0, g: 0, b: 255 }
         };
 
-        *pixel = if white_strobe && police_strobe_pixel(index, N) {
+        if white_strobe && police_strobe_pixel(index, N) {
             RGB8 {
                 r: 255,
                 g: 255,
@@ -27,8 +28,8 @@ pub(super) fn render<const N: usize>(runtime: &mut EffectRuntime<N>, now_ms: u32
             base
         } else {
             scale_rgb(base, 20)
-        };
-    }
+        }
+    });
 }
 
 fn police_strobe_pixel(index: usize, count: usize) -> bool {

@@ -80,10 +80,19 @@ impl EffectId {
     }
 }
 
+/// Slider value for 1× effect speed.
+pub const NORMAL_EFFECT_SPEED: u8 = 64;
+pub const MAX_EFFECT_SPEED: u8 = 128;
+
+/// Longest wall-clock gap one frame may advance the effect clock by, so a stall
+/// (flash writes, OTA) doesn't make the animation jump.
+const MAX_FRAME_STEP_US: u32 = 100_000;
+
 #[derive(Clone, Copy, Debug)]
 pub struct EffectParams {
     pub id: EffectId,
     pub primary: RGB8,
+    /// Slider value `1..=MAX_EFFECT_SPEED`; see `speed_rate_q16`.
     pub speed: u8,
     pub intensity: u8,
 }
@@ -97,20 +106,43 @@ impl Default for EffectParams {
                 g: 96,
                 b: 24,
             },
-            speed: 10,
+            speed: NORMAL_EFFECT_SPEED,
             intensity: 128,
         }
     }
 }
 
+/// Effect clock rate in Q16: `2^((slider - 64) / 16)`, i.e. 1/16× to 16×.
+/// Exponential because perceived speed is roughly logarithmic, so every slider
+/// step feels like the same change (≈4.4 %).
+fn speed_rate_q16(slider: u8) -> u32 {
+    // round(65536 * 2^(k / 16))
+    const MANTISSA: [u32; 16] = [
+        65536, 68438, 71468, 74632, 77936, 81386, 84990, 88752, 92682, 96785, 101070, 105545,
+        110218, 115098, 120194, 125515,
+    ];
+    let exponent = i32::from(slider.clamp(1, MAX_EFFECT_SPEED)) - i32::from(NORMAL_EFFECT_SPEED);
+    let mantissa = MANTISSA[exponent.rem_euclid(16) as usize];
+    let octave = exponent.div_euclid(16);
+    if octave >= 0 {
+        mantissa << octave
+    } else {
+        mantissa >> -octave
+    }
+}
+
 pub struct EffectRuntime<const N: usize> {
     frame: [RGB8; N],
+    /// Simulation state after the latest tick; see `simulate`.
+    tick_frame: [RGB8; N],
+    prev_tick_frame: [RGB8; N],
     params: EffectParams,
-    last_step_ms: u32,
-    phase: u16,
-    wipe_index: usize,
-    scan_position: usize,
-    scan_forward: bool,
+    last_us: Option<u32>,
+    /// Effect time: wall time scaled by the speed rate, so effects only see
+    /// time at 1× and speed changes never jump.
+    clock_us: u64,
+    clock_frac_q16: u16,
+    ticks_done: u64,
     effect_data: [u8; N],
     twinkle_color: [RGB8; N],
     rng: XorShift32,
@@ -122,12 +154,13 @@ impl<const N: usize> EffectRuntime<N> {
         const { assert!(N > 0) };
         Self {
             frame: [RGB8 { r: 0, g: 0, b: 0 }; N],
+            tick_frame: [RGB8 { r: 0, g: 0, b: 0 }; N],
+            prev_tick_frame: [RGB8 { r: 0, g: 0, b: 0 }; N],
             params,
-            last_step_ms: 0,
-            phase: 0,
-            wipe_index: 0,
-            scan_position: 0,
-            scan_forward: true,
+            last_us: None,
+            clock_us: 0,
+            clock_frac_q16: 0,
+            ticks_done: 0,
             effect_data: [0; N],
             twinkle_color: [RGB8 { r: 0, g: 0, b: 0 }; N],
             rng: XorShift32::new(0x1234_abcd),
@@ -141,28 +174,81 @@ impl<const N: usize> EffectRuntime<N> {
         self.params = params;
     }
 
-    pub fn render(&mut self, now_ms: u32) -> &[RGB8; N] {
-        effects::render(self, now_ms);
+    /// Renders the frame for wall time `now_us`, which may wrap.
+    pub fn render(&mut self, now_us: u32) -> &[RGB8; N] {
+        self.advance_clock(now_us);
+        effects::render(self);
         &self.frame
     }
 
     fn reset(&mut self) {
-        self.last_step_ms = 0;
-        self.phase = 0;
-        self.wipe_index = 0;
-        self.scan_position = 0;
-        self.scan_forward = true;
+        self.clock_us = 0;
+        self.clock_frac_q16 = 0;
+        self.ticks_done = 0;
         self.effect_data.fill(0);
         self.twinkle_color.fill(RGB8 { r: 0, g: 0, b: 0 });
         self.frame.fill(RGB8 { r: 0, g: 0, b: 0 });
+        self.tick_frame.fill(RGB8 { r: 0, g: 0, b: 0 });
+        self.prev_tick_frame.fill(RGB8 { r: 0, g: 0, b: 0 });
     }
 
-    fn elapsed(&mut self, now_ms: u32, interval_ms: u32) -> bool {
-        if self.last_step_ms == 0 || now_ms.wrapping_sub(self.last_step_ms) >= interval_ms {
-            self.last_step_ms = now_ms;
-            true
-        } else {
-            false
+    fn advance_clock(&mut self, now_us: u32) {
+        if let Some(last_us) = self.last_us {
+            let elapsed = now_us.wrapping_sub(last_us).min(MAX_FRAME_STEP_US);
+            let scaled = u64::from(elapsed) * u64::from(speed_rate_q16(self.params.speed))
+                + u64::from(self.clock_frac_q16);
+            self.clock_us += scaled >> 16;
+            self.clock_frac_q16 = scaled as u16;
+        }
+        self.last_us = Some(now_us);
+    }
+
+    /// Wrapping phase of a cycle lasting `period_ms` at 1×.
+    fn phase(&self, period_ms: u32) -> u16 {
+        phase_at(self.clock_us, period_ms)
+    }
+
+    /// Fills the frame from `pixel(step, index)` for a pattern that advances one
+    /// step every `step_ms` at 1×, crossfading into the next step at its end.
+    fn render_steps(&mut self, step_ms: u32, pixel: impl Fn(u32, usize) -> RGB8) {
+        let step_us = u64::from(step_ms) * 1000;
+        let step = (self.clock_us / step_us) as u32;
+        let progress = (((self.clock_us % step_us) << 16) / step_us) as u16;
+        let weight = step_crossfade(progress);
+        for (index, out) in self.frame.iter_mut().enumerate() {
+            let current = pixel(step, index);
+            *out = if weight == 0 {
+                current
+            } else {
+                blend_rgb(current, pixel(step.wrapping_add(1), index), weight)
+            };
+        }
+    }
+
+    /// Runs `tick(self, tick_time_us)` on `tick_frame` once per `tick_ms` of
+    /// effect time (1×) since the last frame, at most `max_ticks` times, then
+    /// shows the previous tick blended into the latest one by the progress
+    /// towards the next tick. That keeps slow ticks continuous, one tick late.
+    fn simulate(&mut self, tick_ms: u32, max_ticks: u64, mut tick: impl FnMut(&mut Self, u64)) {
+        let tick_us = u64::from(tick_ms) * 1000;
+        let target = self.clock_us / tick_us;
+        let run = (target - self.ticks_done).min(max_ticks);
+        for index in target - run..target {
+            if index + 1 == target {
+                self.prev_tick_frame = self.tick_frame;
+            }
+            tick(self, (index + 1) * tick_us);
+        }
+        self.ticks_done = target;
+
+        let progress = (((self.clock_us % tick_us) << 8) / tick_us) as u8;
+        for ((out, prev), next) in self
+            .frame
+            .iter_mut()
+            .zip(&self.prev_tick_frame)
+            .zip(&self.tick_frame)
+        {
+            *out = blend_rgb(*prev, *next, progress);
         }
     }
 
@@ -170,6 +256,25 @@ impl<const N: usize> EffectRuntime<N> {
         let threshold = u32::from(intensity) * u32::from(percent_at_full) / 100;
         u32::from(self.rng.next_u8()) < threshold
     }
+}
+
+/// Wrapping phase at effect time `clock_us` of a cycle lasting `period_ms`.
+fn phase_at(clock_us: u64, period_ms: u32) -> u16 {
+    let period_us = u64::from(period_ms) * 1000;
+    (((clock_us % period_us) << 16) / period_us) as u16
+}
+
+/// Weight of the next step at `progress` through the current one: hold for 70 %,
+/// then smoothstep. The ramp scales with the step, so normal speed keeps crisp
+/// steps while slow speeds fade.
+fn step_crossfade(progress: u16) -> u8 {
+    const HOLD: u32 = 65536 * 7 / 10;
+    let progress = u32::from(progress);
+    if progress < HOLD {
+        return 0;
+    }
+    let x = (progress - HOLD) * 255 / (65536 - HOLD);
+    (x * x * (3 * 255 - 2 * x) / (255 * 255)) as u8
 }
 
 /// Gamma-correct and scale a frame for output.
@@ -182,8 +287,14 @@ pub fn corrected<const N: usize>(frame: &[RGB8; N], brightness: u8) -> [RGB8; N]
 }
 
 pub fn hsv_rainbow(hue: u8, sat: u8, val: u8) -> RGB8 {
-    let region = hue / 43;
-    let remainder = (u16::from(hue % 43) * 6) as u8;
+    hsv_rainbow16(u16::from(hue) << 8, sat, val)
+}
+
+/// `hsv_rainbow` with 256 sub-steps per hue region, for slow hue drifts.
+pub fn hsv_rainbow16(hue: u16, sat: u8, val: u8) -> RGB8 {
+    let scaled = u32::from(hue) * 6;
+    let region = scaled >> 16;
+    let remainder = (scaled >> 8) as u8;
     let p = scale8(val, 255 - sat);
     let q = scale8(val, 255 - scale8(sat, remainder));
     let t = scale8(val, 255 - scale8(sat, 255 - remainder));
@@ -215,24 +326,47 @@ pub fn scale_rgb(color: RGB8, scale: u8) -> RGB8 {
     }
 }
 
-pub fn half_sin8(value: u8) -> u8 {
-    let value = u16::from(value);
-    if value < 128 {
-        let x = value * 2;
-        ((x * x) / 255) as u8
-    } else {
-        let x = (255 - value) * 2;
-        ((x * x) / 255) as u8
+/// `a` blended towards `b` by `weight` (0 = `a`, 255 = `b`).
+pub fn blend_rgb(a: RGB8, b: RGB8, weight: u8) -> RGB8 {
+    let mix = |a: u8, b: u8| {
+        ((u16::from(a) * u16::from(255 - weight) + u16::from(b) * u16::from(weight)) / 255) as u8
+    };
+    RGB8 {
+        r: mix(a.r, b.r),
+        g: mix(a.g, b.g),
+        b: mix(a.b, b.b),
     }
+}
+
+pub fn half_sin8(value: u8) -> u8 {
+    half_sin16(u16::from(value) << 8)
+}
+
+/// A pulse over one cycle: 0 at both ends, rising quadratically to a peak at
+/// the middle.
+pub fn half_sin16(value: u16) -> u8 {
+    let x = u64::from(if value < 0x8000 {
+        value
+    } else {
+        u16::MAX - value
+    }) * 2;
+    (x * x * 255 / (65535 * 65535)) as u8
+}
+
+/// A smooth, sine-like wave over one cycle: 0 at both ends, `u16::MAX` at the
+/// middle, with no cusp at either turn.
+pub fn ease_wave16(value: u16) -> u16 {
+    let x = u64::from(if value < 0x8000 {
+        value
+    } else {
+        u16::MAX - value
+    }) * 2;
+    (x * x * (3 * 65535 - 2 * x) / (65535 * 65535)) as u16
 }
 
 fn gamma_correct(value: u8) -> u8 {
     let value = u16::from(value);
     ((value * value) / u16::from(u8::MAX)) as u8
-}
-
-fn speed_interval(base_ms: u32, speed: u8) -> u32 {
-    ((base_ms * 10) / u32::from(speed.max(1))).max(1)
 }
 
 #[derive(Clone, Copy)]
@@ -311,22 +445,42 @@ mod tests {
         assert_eq!(EffectId::from_name("missing"), None);
     }
 
-    fn runtime<const N: usize>(id: EffectId) -> EffectRuntime<N> {
+    const FRAME_US: u32 = 16_667;
+
+    fn runtime<const N: usize>(id: EffectId, speed: u8) -> EffectRuntime<N> {
         EffectRuntime::new(EffectParams {
             id,
-            speed: 10,
+            speed,
             intensity: 255,
             ..EffectParams::default()
         })
     }
 
+    fn largest_channel_change(a: &[RGB8], b: &[RGB8]) -> u8 {
+        a.iter()
+            .zip(b)
+            .flat_map(|(a, b)| [a.r.abs_diff(b.r), a.g.abs_diff(b.g), a.b.abs_diff(b.b)])
+            .max()
+            .unwrap_or(0)
+    }
+
+    #[test]
+    fn speed_rate_doubles_every_16_steps() {
+        assert_eq!(speed_rate_q16(NORMAL_EFFECT_SPEED), 1 << 16);
+        assert_eq!(speed_rate_q16(48), 1 << 15);
+        assert_eq!(speed_rate_q16(80), 2 << 16);
+        assert_eq!(speed_rate_q16(MAX_EFFECT_SPEED), 16 << 16);
+        assert!((4096..4400).contains(&speed_rate_q16(1)));
+        assert!((1..MAX_EFFECT_SPEED).all(|s| speed_rate_q16(s) < speed_rate_q16(s + 1)));
+    }
+
     #[test]
     fn every_effect_animates() {
         for (id, name) in EFFECTS {
-            let mut runtime = runtime::<8>(id);
-            let first = runtime.render(1).to_vec();
+            let mut runtime = runtime::<8>(id, NORMAL_EFFECT_SPEED);
+            let first = runtime.render(0).to_vec();
             // Random effects may repeat a frame, so allow two seconds of frames.
-            let animates = (1..=120).any(|frame| runtime.render(frame * 16 + 1)[..] != first[..]);
+            let animates = (1..=120).any(|frame| runtime.render(frame * FRAME_US)[..] != first[..]);
             assert!(animates, "{name} should animate");
         }
     }
@@ -334,9 +488,62 @@ mod tests {
     #[test]
     fn every_effect_renders_a_single_led() {
         for (id, _) in EFFECTS {
-            let mut runtime = runtime::<1>(id);
-            for now_ms in [1, 80, 2_000] {
-                runtime.render(now_ms);
+            let mut runtime = runtime::<1>(id, MAX_EFFECT_SPEED);
+            for now_us in [0, 80_000, 2_000_000, u32::MAX, 50_000] {
+                runtime.render(now_us);
+            }
+        }
+    }
+
+    #[test]
+    fn every_effect_follows_the_effect_clock() {
+        for (id, name) in EFFECTS {
+            let mut double = runtime::<16>(id, 80);
+            let mut normal = runtime::<16>(id, NORMAL_EFFECT_SPEED);
+            for frame in 0..600 {
+                assert_eq!(
+                    double.render(frame * FRAME_US),
+                    normal.render(frame * 2 * FRAME_US),
+                    "{name} differs at frame {frame}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn speed_changes_do_not_jump() {
+        for (id, name) in EFFECTS {
+            let mut runtime = runtime::<16>(id, 1);
+            for frame in 0..300 {
+                runtime.render(frame * FRAME_US);
+            }
+            let now_us = 300 * FRAME_US;
+            let before = *runtime.render(now_us);
+            runtime.set_effect(EffectParams {
+                speed: MAX_EFFECT_SPEED,
+                ..runtime.params
+            });
+            assert_eq!(runtime.render(now_us), &before, "{name}");
+        }
+    }
+
+    #[test]
+    fn slowest_speed_changes_gradually() {
+        // A full-scale change spread over at least ~7 frames; the shortest
+        // crossfades (Scan, Color Wipe) set the bound.
+        const MAX_CHANGE: u8 = 40;
+        for (id, name) in EFFECTS {
+            let mut runtime = runtime::<60>(id, 1);
+            let mut previous = *runtime.render(0);
+            // One minute of frames.
+            for frame in 1..=3_600 {
+                let current = *runtime.render(frame * FRAME_US);
+                let change = largest_channel_change(&previous, &current);
+                assert!(
+                    change <= MAX_CHANGE,
+                    "{name} changes by {change} at frame {frame}"
+                );
+                previous = current;
             }
         }
     }

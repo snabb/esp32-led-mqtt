@@ -1,10 +1,10 @@
 use super::strip_position;
-use crate::{EffectRuntime, half_sin8, hsv_rainbow, scale_rgb};
+use crate::{EffectRuntime, half_sin16, hsv_rainbow, scale_rgb};
 
-pub(super) fn render<const N: usize>(runtime: &mut EffectRuntime<N>, now_ms: u32) {
-    let bpm = 30 + u32::from(runtime.params.speed) / 2;
-    let wave = (((now_ms / 4).saturating_mul(bpm) / 60) & 0xff) as u8;
-    let level = half_sin8(wave).saturating_add(48);
+const BEAT_MS: u32 = 1_000;
+
+pub(super) fn render<const N: usize>(runtime: &mut EffectRuntime<N>) {
+    let level = half_sin16(runtime.phase(BEAT_MS)).saturating_add(48);
 
     for (index, pixel) in runtime.frame.iter_mut().enumerate() {
         let hue = strip_position::<N>(index);

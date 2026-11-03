@@ -1,11 +1,15 @@
-use crate::{EffectRuntime, speed_interval};
+use super::MAX_TICKS_PER_FRAME;
+use crate::EffectRuntime;
 use smart_leds::RGB8;
 
-pub(super) fn render<const N: usize>(runtime: &mut EffectRuntime<N>, now_ms: u32) {
-    if !runtime.elapsed(now_ms, speed_interval(90, runtime.params.speed)) {
-        return;
-    }
+/// The original Fire2012 runs at 60 FPS.
+const TICK_MS: u32 = 17;
 
+pub(super) fn render<const N: usize>(runtime: &mut EffectRuntime<N>) {
+    runtime.simulate(TICK_MS, MAX_TICKS_PER_FRAME, |runtime, _| tick(runtime));
+}
+
+fn tick<const N: usize>(runtime: &mut EffectRuntime<N>) {
     for index in 0..N {
         let cooling = runtime.rng.next_u8() % (u8::try_from((55 * 10) / N + 2).unwrap_or(u8::MAX));
         runtime.effect_data[index] = runtime.effect_data[index].saturating_sub(cooling);
@@ -26,7 +30,7 @@ pub(super) fn render<const N: usize>(runtime: &mut EffectRuntime<N>, now_ms: u32
     }
 
     for index in 0..N {
-        runtime.frame[index] = heat_color(runtime.effect_data[index]);
+        runtime.tick_frame[index] = heat_color(runtime.effect_data[index]);
     }
 }
 

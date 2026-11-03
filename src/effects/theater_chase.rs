@@ -1,16 +1,15 @@
-use crate::{EffectRuntime, speed_interval};
+use crate::EffectRuntime;
 use smart_leds::RGB8;
 
-pub(super) fn render<const N: usize>(runtime: &mut EffectRuntime<N>, now_ms: u32) {
-    if runtime.elapsed(now_ms, speed_interval(120, runtime.params.speed)) {
-        runtime.phase = (runtime.phase + 1) % 3;
-    }
+const STEP_MS: u32 = 100;
 
-    for (index, pixel) in runtime.frame.iter_mut().enumerate() {
-        *pixel = if (index + usize::from(runtime.phase)) % 3 == 0 {
-            runtime.params.primary
+pub(super) fn render<const N: usize>(runtime: &mut EffectRuntime<N>) {
+    let primary = runtime.params.primary;
+    runtime.render_steps(STEP_MS, |step, index| {
+        if (index + step as usize).is_multiple_of(3) {
+            primary
         } else {
             RGB8 { r: 0, g: 0, b: 0 }
-        };
-    }
+        }
+    });
 }

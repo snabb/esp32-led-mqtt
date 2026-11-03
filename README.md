@@ -118,7 +118,7 @@ The device has four entities:
 
 - **LED Strip** (light): on/off, RGB color, brightness and effect. The `None`
   effect shows the solid color.
-- **Effect Speed** (number, 1–128, default 64): the scale is finer at the slow end.
+- **Effect Speed** (number, 1–128, default 64 = normal): exponential, from 1/16× to 16×.
 - **Chip Temperature** (diagnostic sensor, °C): die temperature, updated every minute.
 - **Firmware Version** (diagnostic sensor): the running build ID.
 

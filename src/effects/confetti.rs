@@ -1,9 +1,12 @@
-use crate::{EffectRuntime, fade_to_black, hsv_rainbow, speed_interval};
+use super::MAX_TICKS_PER_FRAME;
+use crate::{EffectRuntime, fade_to_black, hsv_rainbow};
 
-pub(super) fn render<const N: usize>(runtime: &mut EffectRuntime<N>, now_ms: u32) {
-    if runtime.elapsed(now_ms, speed_interval(24, runtime.params.speed)) {
-        for pixel in &mut runtime.frame {
-            *pixel = fade_to_black(*pixel, 32);
+const TICK_MS: u32 = 30;
+
+pub(super) fn render<const N: usize>(runtime: &mut EffectRuntime<N>) {
+    runtime.simulate(TICK_MS, MAX_TICKS_PER_FRAME, |runtime, _| {
+        for pixel in &mut runtime.tick_frame {
+            *pixel = fade_to_black(*pixel, 24);
         }
 
         let index = (runtime.rng.next_u16() as usize) % N;
@@ -12,6 +15,6 @@ pub(super) fn render<const N: usize>(runtime: &mut EffectRuntime<N>, now_ms: u32
             .primary
             .r
             .wrapping_add(runtime.rng.next_u8() & 0x3f);
-        runtime.frame[index] = hsv_rainbow(hue, 200, 255);
-    }
+        runtime.tick_frame[index] = hsv_rainbow(hue, 200, 255);
+    });
 }

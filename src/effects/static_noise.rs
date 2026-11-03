@@ -1,21 +1,24 @@
-use crate::{EffectRuntime, speed_interval};
+use crate::EffectRuntime;
 use smart_leds::RGB8;
 
-pub(super) fn render<const N: usize>(runtime: &mut EffectRuntime<N>, now_ms: u32) {
-    if !runtime.elapsed(now_ms, speed_interval(24, runtime.params.speed)) {
-        return;
-    }
+const TICK_MS: u32 = 40;
 
+pub(super) fn render<const N: usize>(runtime: &mut EffectRuntime<N>) {
+    // Each tick replaces the whole frame, so skipped ticks are never visible.
+    runtime.simulate(TICK_MS, 1, |runtime, _| tick(runtime));
+}
+
+fn tick<const N: usize>(runtime: &mut EffectRuntime<N>) {
     let color_chance = 8 + runtime.params.intensity / 12;
 
-    for pixel in &mut runtime.frame {
+    for index in 0..N {
         let level = if runtime.rng.next_u8() & 1 == 0 {
             runtime.rng.next_u8() >> 2
         } else {
             192_u8.saturating_add(runtime.rng.next_u8() >> 2)
         };
 
-        *pixel = if runtime.rng.next_u8() < color_chance {
+        runtime.tick_frame[index] = if runtime.rng.next_u8() < color_chance {
             match runtime.rng.next_u8() & 0x03 {
                 0 => RGB8 {
                     r: 255,

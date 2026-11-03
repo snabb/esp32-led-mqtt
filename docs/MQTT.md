@@ -54,8 +54,9 @@ The device answers on `PREFIX/light/state`:
 
 ## Effect speed
 
-`1` is slowest and `128` fastest, and the default is `64`. The slider maps to the
-internal speed on a fifth-power curve, so the slow end gets most of the range.
+`64` (the default) is normal speed. The scale is exponential: every 16 steps
+double or halve the speed, so `1` is about 1/16× and `128` is 16×. Changing the
+speed never makes an effect jump.
 
 ```sh
 mosquitto_pub -h BROKER -t PREFIX/effect_speed/set -m 20

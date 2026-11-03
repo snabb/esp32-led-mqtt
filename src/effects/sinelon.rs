@@ -1,13 +1,17 @@
-use super::beat_position;
-use crate::{EffectRuntime, fade_to_black, speed_interval};
+use super::{MAX_TICKS_PER_FRAME, add_smooth_dot};
+use crate::{EffectRuntime, ease_wave16, fade_to_black, phase_at};
 
-pub(super) fn render<const N: usize>(runtime: &mut EffectRuntime<N>, now_ms: u32) {
-    if runtime.elapsed(now_ms, speed_interval(20, runtime.params.speed)) {
-        for pixel in &mut runtime.frame {
-            *pixel = fade_to_black(*pixel, 40);
+/// 13 BPM, one full back-and-forth.
+const PERIOD_MS: u32 = 4_600;
+const TICK_MS: u32 = 10;
+
+pub(super) fn render<const N: usize>(runtime: &mut EffectRuntime<N>) {
+    let primary = runtime.params.primary;
+    runtime.simulate(TICK_MS, MAX_TICKS_PER_FRAME, |runtime, time_us| {
+        for pixel in &mut runtime.tick_frame {
+            *pixel = fade_to_black(*pixel, 20);
         }
-    }
-
-    let position = beat_position(now_ms / 5, runtime.params.speed, N);
-    runtime.frame[position] = runtime.params.primary;
+        let wave = ease_wave16(phase_at(time_us, PERIOD_MS));
+        add_smooth_dot(&mut runtime.tick_frame, wave, primary);
+    });
 }
