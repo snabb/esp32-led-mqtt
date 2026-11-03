@@ -7,10 +7,21 @@ the [Mozilla CA certificate program](https://www.mozilla.org/en-US/about/governa
 
 The build extracts DER-encoded subject names and public keys from these roots.
 Only that binary trust data is embedded in firmware. The verification callback
-selects a root by issuer name and parses only its key during a handshake;
-MbedTLS retains chain, hostname and date verification. The callback follows the
+selects a root by issuer name and parses only its key during a handshake.
+MbedTLS checks the peer's chain signatures, leaf hostname and leaf/intermediate
+dates using the [build-time date policy](../docs/OTA.md#certificate-dates).
+The bundled anchors' own validity dates are not stored or checked. A non-leaf
+peer certificate matching a bundled subject and public key is treated as that
+anchor, so its cross-signature and validity dates are ignored. The callback
+follows the
 [official upstream CA-bundle example](https://github.com/esp-rs/mbedtls-rs/blob/07aeabb493ac5c71b06199414807cf49d899dec6/examples/common/ca_bundle.rs).
 The upstream dependency is pinned to that revision for its callback API.
+
+A chain that continues above a trusted anchor to an unknown root can still fail:
+MbedTLS calls the verifier from the chain top downward, and the unknown root is
+rejected before the bundled anchor is reached. Servers should omit that extra
+root rather than send the cross-signer's root above a bundled anchor. This is
+also a limitation of ESP-IDF's certificate-bundle callback approach.
 
 SHA-256 fingerprints:
 
@@ -27,7 +38,8 @@ SHA-256 fingerprints:
 1. Append the root certificate in PEM format to `roots.pem`.
 2. Compare its fingerprint with a trusted source:
    `openssl x509 -in root.pem -noout -fingerprint -sha256`
-3. Add it to the list above, then rebuild.
+3. Add it to the list above, then rebuild. Binary trust data and the certificate
+   list used by the tests are generated automatically from `roots.pem`.
 
 Devices pick up the new root only after they run an image that includes it.
 To get it there, update from a host the old roots already cover, or reinstall

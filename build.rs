@@ -248,6 +248,7 @@ fn emit_trust_roots() {
     let pem = std::fs::read_to_string("src/roots.pem").expect("read trust roots");
     let out = std::path::PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR"));
     let mut entries = String::new();
+    let mut certificates = String::new();
     let mut count = 0;
     for block in pem.split_inclusive("-----END CERTIFICATE-----") {
         let Some(start) = block.find("-----BEGIN CERTIFICATE-----") else {
@@ -274,8 +275,16 @@ fn emit_trust_roots() {
         entries.push_str(&format!(
             "Root {{ subject: include_bytes!(concat!(env!(\"OUT_DIR\"), \"/root-{count}-subject.der\")), key: include_bytes!(concat!(env!(\"OUT_DIR\"), \"/root-{count}-key.der\")) }},\n"
         ));
+        certificates.push_str(&format!(
+            "include_bytes!(concat!(env!(\"OUT_DIR\"), \"/{filename}\")) as &[u8],\n"
+        ));
         count += 1;
     }
     assert!(count > 0, "empty trust roots");
     std::fs::write(out.join("roots.rs"), format!("&[{entries}]")).expect("write root table");
+    std::fs::write(
+        out.join("root-certificates.rs"),
+        format!("&[{certificates}]"),
+    )
+    .expect("write test certificate table");
 }

@@ -22,12 +22,28 @@ pub fn callback() -> VerifyCallback {
 unsafe extern "C" fn verify(
     _context: *mut c_void,
     certificate: *mut mbedtls_x509_crt,
-    _depth: c_int,
+    depth: c_int,
     flags: *mut u32,
 ) -> c_int {
     // SAFETY: MbedTLS supplies a live certificate and writable verification flags
     // for the duration of this callback; the root table has static lifetime.
     let (child, flags) = unsafe { (&*certificate, &mut *flags) };
+    if depth > 0 {
+        // Trust comes from the bundled subject AND key, not the peer's copy:
+        // its cross-signature, validity dates and other flags do not constrain
+        // the anchor. A leaf must still pass hostname and date verification.
+        // SAFETY: these DER views belong to the live parsed certificate.
+        let subject =
+            unsafe { core::slice::from_raw_parts(child.subject_raw.p, child.subject_raw.len) };
+        let key = unsafe { core::slice::from_raw_parts(child.pk_raw.p, child.pk_raw.len) };
+        if ROOTS
+            .iter()
+            .any(|root| root.subject == subject && root.key == key)
+        {
+            *flags = 0;
+            return 0;
+        }
+    }
     // Preserve every other verification failure. FUTURE is retained for the
     // caller's build-time date policy, including certificates issued after build.
     if *flags & !MBEDTLS_X509_BADCERT_FUTURE != MBEDTLS_X509_BADCERT_NOT_TRUSTED {
@@ -35,19 +51,6 @@ unsafe extern "C" fn verify(
     }
     // SAFETY: issuer_raw is a parsed DER Name owned by the live certificate.
     let issuer = unsafe { core::slice::from_raw_parts(child.issuer_raw.p, child.issuer_raw.len) };
-    // A peer may send a cross-signed version of a root we already trust. Anchor
-    // at the known subject AND key, rather than requiring its external signer.
-    // SAFETY: these DER views belong to the live parsed certificate.
-    let subject =
-        unsafe { core::slice::from_raw_parts(child.subject_raw.p, child.subject_raw.len) };
-    let key = unsafe { core::slice::from_raw_parts(child.pk_raw.p, child.pk_raw.len) };
-    if ROOTS
-        .iter()
-        .any(|root| root.subject == subject && root.key == key)
-    {
-        *flags &= !MBEDTLS_X509_BADCERT_NOT_TRUSTED;
-        return 0;
-    }
     for root in ROOTS.iter().filter(|root| root.subject == issuer) {
         // SAFETY: child remains live and root.key is immutable static DER.
         if unsafe { verifies_signature(child, root.key) } {
@@ -90,15 +93,7 @@ unsafe fn verifies_signature(child: &mbedtls_x509_crt, key_der: &[u8]) -> bool {
 mod tests {
     use super::*;
 
-    const CERTIFICATES: &[&[u8]] = &[
-        include_bytes!(concat!(env!("OUT_DIR"), "/root-0.der")),
-        include_bytes!(concat!(env!("OUT_DIR"), "/root-1.der")),
-        include_bytes!(concat!(env!("OUT_DIR"), "/root-2.der")),
-        include_bytes!(concat!(env!("OUT_DIR"), "/root-3.der")),
-        include_bytes!(concat!(env!("OUT_DIR"), "/root-4.der")),
-        include_bytes!(concat!(env!("OUT_DIR"), "/root-5.der")),
-        include_bytes!(concat!(env!("OUT_DIR"), "/root-6.der")),
-    ];
+    const CERTIFICATES: &[&[u8]] = include!(concat!(env!("OUT_DIR"), "/root-certificates.rs"));
 
     struct Certificate(mbedtls_x509_crt);
     impl Certificate {
@@ -115,9 +110,12 @@ mod tests {
             }
         }
         fn verify(&mut self, flags: &mut u32) -> c_int {
+            self.verify_at_depth(0, flags)
+        }
+        fn verify_at_depth(&mut self, depth: c_int, flags: &mut u32) -> c_int {
             // SAFETY: the context and flags remain live throughout the callback.
             let callback = callback();
-            unsafe { (callback.f)(callback.p_ctx, &mut self.0, 0, flags) }
+            unsafe { (callback.f)(callback.p_ctx, &mut self.0, depth, flags) }
         }
     }
     impl Drop for Certificate {
@@ -128,12 +126,12 @@ mod tests {
     }
 
     #[test]
-    fn every_bundled_root_verifies_with_its_flash_public_key() {
+    fn every_bundled_root_is_recognized_as_an_anchor() {
         assert_eq!(ROOTS.len(), CERTIFICATES.len());
         for der in CERTIFICATES {
             let mut certificate = Certificate::parse(der);
             let mut flags = MBEDTLS_X509_BADCERT_NOT_TRUSTED;
-            assert_eq!(certificate.verify(&mut flags), 0);
+            assert_eq!(certificate.verify_at_depth(1, &mut flags), 0);
             assert_eq!(flags, 0);
         }
     }
@@ -143,10 +141,10 @@ mod tests {
 
     #[test]
     fn signed_intermediate_and_cross_signed_anchor_are_trusted() {
-        for der in [INTERMEDIATE, CROSS_SIGNED] {
+        for (der, depth) in [(INTERMEDIATE, 1), (CROSS_SIGNED, 2)] {
             let mut certificate = Certificate::parse(der);
             let mut flags = MBEDTLS_X509_BADCERT_NOT_TRUSTED;
-            assert_eq!(certificate.verify(&mut flags), 0);
+            assert_eq!(certificate.verify_at_depth(depth, &mut flags), 0);
             assert_eq!(flags, 0);
         }
     }
@@ -179,12 +177,28 @@ mod tests {
         certificate.0.subject_raw.len = ROOTS[0].subject.len();
         certificate.0.issuer_raw.len = 0;
         let mut flags = MBEDTLS_X509_BADCERT_NOT_TRUSTED;
-        let result = certificate.verify(&mut flags);
+        let result = certificate.verify_at_depth(1, &mut flags);
         certificate.0.subject_raw.p = subject.0;
         certificate.0.subject_raw.len = subject.1;
         certificate.0.issuer_raw.len = issuer_len;
         assert_ne!(result, 0);
         assert_ne!(flags & MBEDTLS_X509_BADCERT_NOT_TRUSTED, 0);
+    }
+
+    #[test]
+    fn expired_cross_signed_copy_is_ignored_only_above_the_leaf() {
+        let mut certificate = Certificate::parse(CROSS_SIGNED);
+        for depth in [1, 2] {
+            let mut flags = MBEDTLS_X509_BADCERT_NOT_TRUSTED | MBEDTLS_X509_BADCERT_EXPIRED;
+            assert_eq!(certificate.verify_at_depth(depth, &mut flags), 0);
+            assert_eq!(flags, 0);
+        }
+        let original = MBEDTLS_X509_BADCERT_NOT_TRUSTED
+            | MBEDTLS_X509_BADCERT_EXPIRED
+            | MBEDTLS_X509_BADCERT_CN_MISMATCH;
+        let mut flags = original;
+        assert_eq!(certificate.verify_at_depth(0, &mut flags), 0);
+        assert_eq!(flags, original);
     }
 
     #[test]
@@ -195,7 +209,7 @@ mod tests {
             MBEDTLS_X509_BADCERT_BAD_MD,
             MBEDTLS_X509_BADCERT_BAD_KEY,
         ] {
-            let mut certificate = Certificate::parse(CERTIFICATES[0]);
+            let mut certificate = Certificate::parse(INTERMEDIATE);
             let original = MBEDTLS_X509_BADCERT_NOT_TRUSTED | failure;
             let mut flags = original;
             assert_eq!(certificate.verify(&mut flags), 0);
@@ -205,7 +219,7 @@ mod tests {
 
     #[test]
     fn future_flag_is_retained_for_the_build_time_policy() {
-        let mut certificate = Certificate::parse(CERTIFICATES[0]);
+        let mut certificate = Certificate::parse(INTERMEDIATE);
         let mut flags = MBEDTLS_X509_BADCERT_NOT_TRUSTED | MBEDTLS_X509_BADCERT_FUTURE;
         assert_eq!(certificate.verify(&mut flags), 0);
         assert_eq!(flags, MBEDTLS_X509_BADCERT_FUTURE);
