@@ -2,7 +2,7 @@ use core::fmt::Write;
 
 use embassy_futures::select::{Either3, select3};
 use embassy_net::{IpEndpoint, Stack, tcp::TcpSocket};
-use embassy_time::{Duration, Timer};
+use embassy_time::{Duration, Timer, with_timeout};
 use esp32_led_mqtt::{EFFECT_DISABLED_NAME, EFFECTS, EffectId};
 use log::{info, warn};
 use minimq::{
@@ -50,11 +50,29 @@ async fn run_session(
     let mut tcp_rx = [0_u8; 2048];
     let mut tcp_tx = [0_u8; 2048];
     let mut socket = TcpSocket::new(stack, &mut tcp_rx, &mut tcp_tx);
-    socket
-        .connect(IpEndpoint::new(address, settings.mqtt_port))
-        .await
-        .map_err(MqttRunError::TcpConnect)?;
+    with_timeout(
+        Duration::from_secs(15),
+        socket.connect(IpEndpoint::new(address, settings.mqtt_port)),
+    )
+    .await
+    .map_err(|_| MqttRunError::Resolve("connect_timeout"))?
+    .map_err(MqttRunError::TcpConnect)?;
+    if settings.mqtt_tls {
+        let context = crate::tls::initialize().map_err(MqttRunError::Resolve)?;
+        let mut tls =
+            crate::tls::connect(context, crate::tls::Socket(socket), &settings.mqtt_broker)
+                .await
+                .map_err(MqttRunError::Resolve)?;
+        return bridge::run(&mut tls, identity, settings).await;
+    }
+    run_connected(socket, identity, settings).await
+}
 
+async fn run_connected<IO: minimq::Io>(
+    socket: IO,
+    identity: &DeviceIdentity,
+    settings: &esp32_led_mqtt::device_config::DeviceConfig,
+) -> Result<(), MqttRunError> {
     let mut mqtt_rx = [0_u8; 1024];
     let mut mqtt_tx = [0_u8; 4096];
     let will = Will::new(identity.availability_topic.as_str(), b"offline", &[])
@@ -79,7 +97,7 @@ async fn run_session(
     let mut session = mqtt_session
         .connect(socket)
         .await
-        .map_err(MqttRunError::Mqtt)?;
+        .map_err(|_| MqttRunError::Transport)?;
     let event = session.connect_event();
     info!("MQTT connected: {:?}", event);
 
@@ -100,7 +118,7 @@ async fn run_session(
                 &[],
             )
             .await
-            .map_err(MqttRunError::Mqtt)?;
+            .map_err(|_| MqttRunError::Transport)?;
     }
 
     crate::ota::MQTT_READY.store(true, core::sync::atomic::Ordering::Release);
@@ -122,7 +140,12 @@ async fn run_session(
                     handle_speed_command(message.payload());
                 }
             }
-            Either3::First(Err(err)) => return Err(MqttRunError::Mqtt(err)),
+            Either3::First(Err(err)) => {
+                return Err({
+                    let _ = err;
+                    MqttRunError::Transport
+                });
+            }
             Either3::Second(()) => {
                 publish_light_state(&mut session, identity).await?;
                 publish_speed_state(&mut session, identity).await?;
@@ -134,8 +157,8 @@ async fn run_session(
     }
 }
 
-async fn publish_light_state(
-    session: &mut Connection<'_, '_, TcpSocket<'_>>,
+async fn publish_light_state<IO: minimq::Io>(
+    session: &mut Connection<'_, '_, IO>,
     identity: &DeviceIdentity,
 ) -> Result<(), MqttRunError> {
     let light = light_state::get();
@@ -153,8 +176,8 @@ async fn publish_light_state(
     publish(session, &identity.state_topic, &payload).await
 }
 
-async fn publish_light_discovery(
-    session: &mut Connection<'_, '_, TcpSocket<'_>>,
+async fn publish_light_discovery<IO: minimq::Io>(
+    session: &mut Connection<'_, '_, IO>,
     identity: &DeviceIdentity,
 ) -> Result<(), MqttRunError> {
     let mut payload: heapless::String<1400> = heapless::String::new();
@@ -178,8 +201,8 @@ async fn publish_light_discovery(
     publish(session, &identity.discovery_topic, &payload).await
 }
 
-async fn publish_speed_discovery(
-    session: &mut Connection<'_, '_, TcpSocket<'_>>,
+async fn publish_speed_discovery<IO: minimq::Io>(
+    session: &mut Connection<'_, '_, IO>,
     identity: &DeviceIdentity,
 ) -> Result<(), MqttRunError> {
     let mut payload: heapless::String<700> = heapless::String::new();
@@ -198,8 +221,8 @@ async fn publish_speed_discovery(
     publish(session, &identity.speed_discovery_topic, &payload).await
 }
 
-async fn publish_speed_state(
-    session: &mut Connection<'_, '_, TcpSocket<'_>>,
+async fn publish_speed_state<IO: minimq::Io>(
+    session: &mut Connection<'_, '_, IO>,
     identity: &DeviceIdentity,
 ) -> Result<(), MqttRunError> {
     let mut payload: heapless::String<3> = heapless::String::new();
@@ -209,8 +232,8 @@ async fn publish_speed_state(
 
 /// Every topic this device publishes is retained, so Home Assistant sees the
 /// current state after a restart.
-async fn publish(
-    session: &mut Connection<'_, '_, TcpSocket<'_>>,
+async fn publish<IO: minimq::Io>(
+    session: &mut Connection<'_, '_, IO>,
     topic: &str,
     payload: &str,
 ) -> Result<(), MqttRunError> {
@@ -218,7 +241,7 @@ async fn publish(
         .publish(Publication::text(topic, payload).retain())
         .await
         .map_err(|err| match err {
-            minimq::PubError::Session(err) => MqttRunError::Mqtt(err),
+            minimq::PubError::Session(_) => MqttRunError::Transport,
             minimq::PubError::Payload(_) => MqttRunError::PayloadTooLarge,
         })?;
     Ok(())
@@ -298,7 +321,7 @@ struct LightColor {
 #[derive(Debug)]
 enum MqttRunError {
     Config(minimq::ConfigError),
-    Mqtt(minimq::Error<embassy_net::tcp::Error>),
+    Transport,
     PayloadTooLarge,
     Resolve(&'static str),
     TcpConnect(embassy_net::tcp::ConnectError),
@@ -309,3 +332,5 @@ impl From<core::fmt::Error> for MqttRunError {
         Self::PayloadTooLarge
     }
 }
+
+mod bridge;

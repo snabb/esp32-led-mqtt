@@ -104,7 +104,7 @@ pub async fn start(
         && !option_env!("OTA_ALLOWED_HOSTS").unwrap_or("").is_empty()
         && stack.is_some()
     {
-        tls::initialize().ok()
+        crate::tls::initialize().ok()
     } else {
         None
     };

@@ -36,6 +36,7 @@ mod identity;
 mod light_state;
 mod mqtt;
 mod ota;
+mod tls;
 
 use identity::DeviceIdentity;
 use light_state::{effect_params, get as light_state};

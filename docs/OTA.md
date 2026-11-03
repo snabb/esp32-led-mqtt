@@ -205,3 +205,16 @@ this layout at boot and turns off OTA and settings storage if it doesn't match.
 
 The bootloader sits at `0x0` and the partition table at `0x8000`. There is no
 factory slot.
+
+## MQTT over TLS
+
+Settings schema 2 adds `mqtt_tls` (default `false`). Set it to `true` and set
+`mqtt_port` to your broker's TLS port, normally 8883. `mqtt_broker` remains a
+hostname without a URL scheme. TLS verifies that hostname and the chain against
+the bundled roots before sending MQTT credentials. It uses the certificate-date
+policy described above. TLS failures never fall back to plaintext.
+
+Existing schema 1 settings require `erase-config` followed by USB provisioning
+with schema 2. Downgrading to older firmware also requires reprovisioning.
+MQTTS works independently of the OTA build options. MQTT and HTTPS OTA share
+TLS initialization but use separate connections.

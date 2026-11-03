@@ -191,7 +191,7 @@ mod tests {
     fn unsupported_schema_is_preserved_until_an_explicit_reset() {
         block_on(async {
             let mut flash = Flash::new();
-            let future = br#"{"schema":2,"wifi_ssid":"network","wifi_password":"password1","mqtt_broker":"broker.example"}"#;
+            let future = br#"{"schema":3,"wifi_ssid":"network","wifi_password":"password1","mqtt_broker":"broker.example"}"#;
             {
                 let mut map = MapStorage::<(), _, _>::new(
                     &mut flash,

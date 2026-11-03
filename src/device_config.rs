@@ -4,7 +4,7 @@ use core::ops::Range;
 use heapless::String;
 use serde::{Deserialize, Serialize};
 
-pub const SCHEMA: u16 = 1;
+pub const SCHEMA: u16 = 2;
 /// The `device_config` entry in `partitions.csv`.
 pub const PARTITION: Range<u32> = 0x3f0000..0x400000;
 pub const MAX_BYTES: usize = 4096;
@@ -24,6 +24,8 @@ pub struct DeviceConfig {
     pub mqtt_broker: String<128>,
     #[serde(default = "mqtt_port")]
     pub mqtt_port: u16,
+    #[serde(default)]
+    pub mqtt_tls: bool,
     #[serde(default)]
     pub mqtt_username: String<128>,
     #[serde(default)]
@@ -121,6 +123,7 @@ mod tests {
         let config = DeviceConfig::decode(VALID).unwrap();
         assert_eq!(config.schema, SCHEMA);
         assert_eq!(config.mqtt_port, 1883);
+        assert!(!config.mqtt_tls);
         let mut output = [0; MAX_BYTES];
         let len = config.encode(&mut output).unwrap();
         let decoded = DeviceConfig::decode(&output[..len]).unwrap();
@@ -136,12 +139,24 @@ mod tests {
             valid.replace("private-pass", "short"),
             valid.replace("mqtt.example", "http://mqtt.example"),
             valid.replace("\"mqtt_broker\"", "\"unknown\""),
-            valid.replace("{", "{\"schema\":2,"),
+            valid.replace("{", "{\"schema\":3,"),
             valid.replace("private\"", &format!("{}\"", "x".repeat(33))),
             valid.replace("{", "{\"mqtt_port\":0,"),
         ] {
             assert!(DeviceConfig::decode(bad.as_bytes()).is_err());
         }
+    }
+
+    #[test]
+    fn tls_settings_round_trip() {
+        let mut config = DeviceConfig::decode(VALID).unwrap();
+        config.mqtt_tls = true;
+        config.mqtt_port = 8883;
+        let mut bytes = [0; MAX_BYTES];
+        let n = config.encode(&mut bytes).unwrap();
+        let decoded = DeviceConfig::decode(&bytes[..n]).unwrap();
+        assert!(decoded.mqtt_tls);
+        assert_eq!(decoded.mqtt_port, 8883);
     }
 
     #[test]

@@ -34,7 +34,7 @@ ownership, USB I/O) are tested only on hardware.
 | `src/effects/` | One file per effect |
 | `src/flash.rs` | The only owner of `FlashStorage`: partition-layout check, watchdog, one flash job at a time (OTA or settings) |
 | `src/config.rs` | USB command loop, settings load and save |
-| `src/ota.rs`, `src/ota/tls.rs` | Download, trial confirmation, MbedTLS client |
+| `src/ota.rs`, `src/ota/tls.rs`, `src/tls.rs` | Download, trial confirmation, shared MbedTLS client |
 | `src/ota_protocol.rs` | Host-tested OTA command, HTTP and image checks |
 | `src/device_config.rs`, `src/provisioning.rs`, `src/config_store.rs` | Host-tested settings schema, USB framing and flash store |
 | `tools/provision.py` | Host side of USB provisioning |
@@ -86,7 +86,7 @@ Home Assistant's effect list, name parsing and the button cycle all come from
 Settings outlive the image that wrote them, and a rollback can bring back an
 older image. So:
 
-- Images that use schema 1 must read the same format and must not rewrite it
+- Images that use schema 2 must read the same format and must not rewrite it
   during a trial boot.
 - Unknown or unsupported data is reported, never silently replaced with
   defaults.
