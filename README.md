@@ -23,7 +23,7 @@ WS2812 LED, data GPIO20 and power GPIO19.
 
 Wi-Fi and MQTT settings are stored separately in the `device_config` flash
 partition. Firmware builds never read credentials. Provision them over USB as
-shown under [Development](#development); see
+shown under [Install](#install); see
 [persistent configuration](docs/DEVICE_CONFIG.md) for details.
 An unconfigured device runs its LEDs/button and accepts USB configuration.
 
@@ -31,31 +31,56 @@ MQTT topics and Home Assistant identifiers are generated from the MAC address,
 for example `esp32_led_mqtt_123456`. A short button press cycles effects, a double
 press changes color, and a long press toggles power.
 
-## Flash
+## Install
 
-Connect the ESP32-C6 over USB and run:
+The firmware boots through a rollback-enabled bootloader and a two-slot
+partition table. See [OTA updates](docs/OTA.md) for details on each step.
 
-```sh
-cargo run --release
-```
+1. Build the bootloader once. This needs Docker:
 
-After preparing the rollback bootloader as described in the OTA guide, Cargo uses
-the configured runner:
+   ```sh
+   tools/build-ota-bootloader.sh
+   ```
 
-```sh
-espflash flash --monitor --chip esp32c6
-```
+2. Build with OTA enabled, listing the exact hosts that will serve updates.
+   Without these variables the image works but cannot be updated over OTA:
 
-In non-interactive shells the flash can succeed even if the monitor cannot
-attach afterward.
+   ```sh
+   OTA_ALLOWED_HOSTS=firmware.example.com OTA_ROLLBACK_BOOTLOADER=1 \
+     cargo build --locked --release
+   ```
 
-## OTA prototype
+3. Connect the board over USB and flash the bootloader, partition table and
+   application. Erasing `otadata` is for the first installation; see
+   [reinstalling over USB](docs/OTA.md#reinstalling-over-usb) later:
 
-See [OTA setup and testing](docs/OTA.md) before flashing. The repository uses
-a two-slot partition table and a custom rollback bootloader, generated with
-`tools/build-ota-bootloader.sh`. OTA commands use MQTT and download application
-images over HTTPS, with build-time certificate expiry checks and a two-minute
-trial confirmation window.
+   ```sh
+   espflash flash --chip esp32c6 --port PORT --partition-table partitions.csv \
+     --bootloader bootloader/esp32c6-rollback.bin --target-app-partition ota_0 \
+     --erase-parts otadata target/riscv32imac-unknown-none-elf/release/esp32-led-mqtt
+   ```
+
+4. Provision Wi-Fi and MQTT settings. `local/` is ignored by Git:
+
+   ```sh
+   mkdir -p local
+   cp tools/device.example.json local/device.json
+   # Edit local/device.json with your settings.
+   uv run tools/provision.py provision --port PORT --config local/device.json
+   uv run tools/provision.py status --port PORT
+   ```
+
+   Provisioning saves the settings in a separate flash partition and reboots.
+   Firmware updates preserve them. `espflash monitor --chip esp32c6` shows the
+   boot log, including the device's MQTT prefix (`Device identity ...`).
+
+## Updates over OTA
+
+Build later images with the same `hardware.json` and OTA variables, upload the
+binary to an allowed host and publish an update command over MQTT; see
+[create and send an update](docs/OTA.md#create-and-send-an-update). An updated
+image runs on trial and rolls back unless the LEDs, Wi-Fi and MQTT work within
+two minutes. HTTPS checks certificates against a bundled set of roots.
 
 ## Other ESP32 Chips
 
@@ -105,17 +130,3 @@ Effects live in `src/effects`, with one file per effect. To add one:
 
 Home Assistant discovery, name parsing and button cycling are derived from
 `EFFECTS`.
-
-Provision Wi-Fi and MQTT settings over USB using the public CLI:
-
-```sh
-mkdir -p local
-cp tools/device.example.json local/device.json
-# Edit local/device.json with your settings.
-uv run tools/provision.py provision --port /dev/ttyACM0 --config local/device.json
-uv run tools/provision.py status --port /dev/ttyACM0
-```
-
-Create `local/` first if needed; it is ignored by Git. Provisioning saves settings
-in a separate flash partition and reboots. Firmware updates preserve them.
-See [OTA documentation](docs/OTA.md) for initial flashing and update behavior.

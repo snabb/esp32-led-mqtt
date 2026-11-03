@@ -21,4 +21,4 @@ digest and `SHA256SUMS` alongside `esp32c6-rollback.bin`. Full build output is c
 repeat a particular build if overriding the default image.
 
 Do not replace this artifact with espflash's default bootloader: it does not
-provide the rollback behavior expected by the prototype.
+provide the rollback behavior the OTA updater requires.

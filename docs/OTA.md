@@ -1,16 +1,16 @@
-# OTA prototype
+# OTA updates
 
-This prototype uses MQTT commands and a separate HTTP(S) download, writing only
-the inactive application slot. It verifies the expected byte count, ESP32-C6
+The firmware takes update commands over MQTT and downloads the image over
+HTTP(S), writing only the inactive application slot. It verifies the expected byte count, ESP32-C6
 image header, application name, build identity, SHA-256, and CRC32. `finish(true)`
 reads the image back before selecting it for a trial boot.
 
-This is a trusted-network prototype. The MQTT command authorizes the update and
+This is meant for a trusted network. The MQTT command authorizes the update and
 supplies its digest; firmware signatures and security anti-rollback are not
 implemented. Do not retain update commands. The receiver rejects retained
 commands, concurrent updates, and commands for the currently running build.
 
-## Build and first provisioning
+## First installation over USB
 
 The 4 MiB layout has two 1,984 KiB application slots and 8 KiB of OTA metadata.
 There is no factory slot. The initial application goes in `ota_0`.
@@ -39,8 +39,8 @@ There is no factory slot. The initial application goes in `ota_0`.
    ordinary LED/MQTT operation continues. Keep these settings on every OTA build.
    For an explicit local HTTP trial only, also set `OTA_ALLOW_HTTP=1`.
 
-3. The new layout reuses part of the former NVS area for `otadata`.
-   Fresh-provision the connected board with an explicit port:
+3. Flash the bootloader, partition table and application into `ota_0`, erasing
+   the OTA metadata:
 
    ```sh
    espflash flash --chip esp32c6 --port PORT --partition-table partitions.csv \
@@ -48,11 +48,8 @@ There is no factory slot. The initial application goes in `ota_0`.
      --erase-parts otadata target/riscv32imac-unknown-none-elf/release/esp32-led-mqtt
    ```
 
-   Erasing `otadata` is for this initial provisioning only. Normal OTA updates
-   preserve it. Do not use the fresh-provisioning command for routine USB updates
-   without deciding which image should boot afterward. `espflash.toml` selects
-   the custom table and bootloader for local tools; a normal USB flash into
-   `ota_0` does not override metadata selecting `ota_1`.
+   OTA updates preserve `otadata`; see [reinstalling over USB](#reinstalling-over-usb)
+   before erasing it again.
 
 4. Provision a private JSON or YAML configuration file over USB:
 
@@ -69,12 +66,22 @@ There is no factory slot. The initial application goes in `ota_0`.
 
 5. Inspect serial output for the running build/slot, LED, Wi-Fi, MQTT and OTA
    ready state. A blank metadata partition is initialized as valid `ota_0`.
+   The log line `Device identity esp32_led_mqtt_SUFFIX` gives the MQTT topic
+   prefix used below; `SUFFIX` is the last six hex digits of the MAC address.
 
 The build ID appears in the app descriptor and logs. Its default is UTC build
 time plus eight Git SHA characters, such as `20261102T194500Z-ad6073d4`, with
 `-dirty` appended for an uncommitted working tree. `OTA_BUILD_ID=trial-2` can select a
-short explicit identity. `SOURCE_DATE_EPOCH` supplies the timestamp for
-reproducible builds; it also sets the TLS time lower bound, so choose it honestly.
+short explicit identity of at most 31 letters, digits, dots, underscores or
+hyphens. `SOURCE_DATE_EPOCH` supplies the timestamp for reproducible builds; it
+also sets the TLS time lower bound, so choose it honestly.
+
+## Reinstalling over USB
+
+After an OTA update, `otadata` may select `ota_1`, and a USB flash into `ota_0`
+then has no effect. To install an image over USB, repeat the step 3 command:
+erasing `otadata` makes the bootloader start `ota_0` again. Stored Wi-Fi and
+MQTT settings are kept because `device_config` is not erased.
 
 ## HTTPS policy
 
@@ -94,26 +101,61 @@ DigiCert Global Root G2. It is not a complete public root store. Add the appropr
 reviewed root for another provider before deploying that URL; private CAs also
 need explicit provisioning. See [root provenance](../src/ota/ROOTS.md).
 
-## Create an update
+## Create and send an update
 
-Build a different image with the same OTA settings, then generate an application
-binary without `--merge`:
+1. Build with the same `hardware.json`, `OTA_ALLOWED_HOSTS` and
+   `OTA_ROLLBACK_BOOTLOADER` as the running image, and an explicit build ID that
+   differs from the running one. Images for another hardware profile are
+   rejected with `image_identity`.
 
-```sh
-espflash save-image --chip esp32c6 --partition-table partitions.csv \
-  target/riscv32imac-unknown-none-elf/release/esp32-led-mqtt firmware.bin
-```
+   ```sh
+   OTA_BUILD_ID=trial-2 OTA_ALLOWED_HOSTS=firmware.example.com \
+   OTA_ROLLBACK_BOOTLOADER=1 cargo build --locked --release
+   ```
 
-Host that binary at an allowed URL. Publish a JSON command, without retain,
-to `esp32_led_mqtt_SUFFIX/ota/set`. A command has this shape:
+2. Generate the application binary, without `--merge`:
 
-```json
-{"url":"https://firmware.example.com/firmware.bin","size":700000,"crc32":123456789,"sha256":"64 hexadecimal digits","target":"esp32c6","build":"trial-2"}
-```
+   ```sh
+   espflash save-image --chip esp32c6 --partition-table partitions.csv \
+     target/riscv32imac-unknown-none-elf/release/esp32-led-mqtt firmware.bin
+   ```
 
-Subscribe to `esp32_led_mqtt_SUFFIX/ota/status` for retained state/progress. Logs
-provide the running slot/build and errors. Status updates are snapshots, not a
-lossless event stream.
+3. Upload `firmware.bin` to a URL on an allowed host. The allowlist is compiled
+   into the running image, so a new host takes effect only after an update to an
+   image that allows it.
+
+4. Generate the command. `crc32` is the standard zlib CRC-32 of the whole file:
+
+   ```sh
+   python3 - firmware.bin https://firmware.example.com/firmware.bin trial-2 \
+     > command.json <<'EOF'
+   import hashlib, json, sys, zlib
+   image = open(sys.argv[1], "rb").read()
+   print(json.dumps({"url": sys.argv[2], "size": len(image), "crc32": zlib.crc32(image),
+                     "sha256": hashlib.sha256(image).hexdigest(), "target": "esp32c6",
+                     "build": sys.argv[3]}, separators=(",", ":")))
+   EOF
+   ```
+
+   A command has this shape:
+
+   ```json
+   {"url":"https://firmware.example.com/firmware.bin","size":700000,"crc32":123456789,"sha256":"64 hexadecimal digits","target":"esp32c6","build":"trial-2"}
+   ```
+
+5. Watch the status topic, then publish the command without retain. Add
+   `-u USER -P PASSWORD` if the broker requires them:
+
+   ```sh
+   mosquitto_sub -h BROKER -t esp32_led_mqtt_SUFFIX/ota/status -v &
+   mosquitto_pub -h BROKER -t esp32_led_mqtt_SUFFIX/ota/set -f command.json
+   ```
+
+A successful update reports `downloading` in 10% steps, `rebooting`
+(`verified`), then `trial` and `ready` with the new `running_build`. `rejected`
+and `failed` give the reason in `detail`. The status topic is retained and
+reports snapshots, not a lossless event stream; serial logs show the running
+slot, build and errors.
 
 The HTTP response must be status 200 with exactly one matching Content-Length.
 Redirects, chunked transfer encoding and compressed responses are rejected.
