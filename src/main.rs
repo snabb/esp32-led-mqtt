@@ -202,7 +202,13 @@ async fn main(spawner: Spawner) -> ! {
         );
 
         if settings.mqtt_tls || ota::enabled() {
-            tls_context = tls::initialize();
+            tls_context = tls::initialize(
+                mbedtls_rs::sys::hook::backend::esp::EspAccel::new()
+                    .with_sha(peripherals.SHA)
+                    .with_rsa(peripherals.RSA)
+                    .with_aes(peripherals.AES)
+                    .with_ecc(peripherals.ECC),
+            );
             if let Err(reason) = tls_context {
                 warn!("TLS initialization failed: {}", reason);
             }

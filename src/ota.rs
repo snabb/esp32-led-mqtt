@@ -5,6 +5,7 @@ use embassy_net::{IpEndpoint, Stack, tcp::TcpSocket};
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal};
 use embassy_time::{Duration, Instant, Timer, with_timeout};
 use embedded_io_async::{Read, Write};
+use esp_hal::sha::Sha256Context;
 use esp_hal_ota::{Ota, OtaImgState};
 use esp_storage::FlashStorage;
 use esp32_led_mqtt::ota_protocol::{self, Request, Verifier};
@@ -36,7 +37,8 @@ impl embedded_storage::Storage for FlashAccess<'_> {
 }
 type Updater<'a> = Ota<FlashAccess<'a>>;
 
-/// Network and TLS context for downloading updates.
+/// Network and TLS context for downloading updates. Holding the TLS context also
+/// proves `tls::initialize` started the SHA queue, without which hashing hangs.
 pub struct Client {
     stack: Stack<'static>,
     tls: &'static mbedtls_rs::Tls<'static>,
@@ -265,7 +267,7 @@ async fn transfer<IO: Read + Write>(
     ota_protocol::validate_headers(&headers[..len], request.size).map_err(|_| "http_framing")?;
     let mut remaining = request.size as usize;
     let mut block = [0; 4096];
-    let mut verifier = Verifier::new(request);
+    let mut verifier = Verifier::<Sha256Context>::new(request);
     let mut first = true;
     let mut last_percent = 0;
     while remaining != 0 {

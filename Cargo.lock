@@ -1500,6 +1500,7 @@ name = "esp32-led-mqtt"
 version = "0.1.0"
 dependencies = [
  "critical-section",
+ "digest 0.11.3",
  "embassy-embedded-hal",
  "embassy-executor",
  "embassy-futures",

@@ -1,8 +1,8 @@
 //! Bounded OTA command, response, and image validation shared with host tests.
 
+use digest::Digest;
 use heapless::String;
 use serde::Deserialize;
-use sha2::{Digest, Sha256};
 
 pub const SLOT_SIZE: u32 = 0x1f0000;
 pub const IMAGE_PREFIX_SIZE: usize = 288;
@@ -202,16 +202,17 @@ pub fn validate_image_prefix(prefix: &[u8], build: &str) -> Result<(), Error> {
 }
 
 /// Streaming integrity check. Activation requires both exact length and matching SHA-256.
-pub struct Verifier {
-    hash: Sha256,
+/// `H` is the SHA-256 implementation, so host tests can run without the accelerator.
+pub struct Verifier<H> {
+    hash: H,
     expected: [u8; 32],
     remaining: u32,
 }
 
-impl Verifier {
+impl<H: Digest> Verifier<H> {
     pub fn new(request: &Request) -> Self {
         Self {
-            hash: Sha256::new(),
+            hash: H::new(),
             expected: request.sha256,
             remaining: request.size,
         }
@@ -391,16 +392,16 @@ mod tests {
     fn digest_and_exact_length_gate_completion() {
         let mut request = parse("https://fw.example/fw.bin").unwrap();
         request.size = 3;
-        let mut verifier = Verifier::new(&request);
+        let mut verifier = Verifier::<sha2::Sha256>::new(&request);
         verifier.update(b"a").unwrap();
         verifier.update(b"bc").unwrap();
         assert_eq!(verifier.finish(), Ok(()));
-        let mut verifier = Verifier::new(&request);
+        let mut verifier = Verifier::<sha2::Sha256>::new(&request);
         verifier.update(b"ab").unwrap();
         assert_eq!(verifier.finish(), Err(Error::Incomplete));
-        let mut verifier = Verifier::new(&request);
+        let mut verifier = Verifier::<sha2::Sha256>::new(&request);
         assert_eq!(verifier.update(b"abcd"), Err(Error::Size));
-        let mut verifier = Verifier::new(&request);
+        let mut verifier = Verifier::<sha2::Sha256>::new(&request);
         verifier.update(b"bad").unwrap();
         assert_eq!(verifier.finish(), Err(Error::Digest));
     }

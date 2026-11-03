@@ -8,7 +8,11 @@ use esp_hal::rng::Trng;
 use mbedtls_rs::{
     AuthMode, ClientSessionConfig, Session, SessionConfig, Tls,
     sys::{
-        hook::{timer::MbedtlsTimer, wall_clock::MbedtlsWallClock},
+        hook::{
+            backend::esp::{EspAccel, EspAccelQueue, EspHooksGuard},
+            timer::MbedtlsTimer,
+            wall_clock::MbedtlsWallClock,
+        },
         tm,
     },
 };
@@ -17,6 +21,9 @@ use static_cell::StaticCell;
 /// Shared initialization outcome, retaining the failure reason for both clients.
 pub type Context = Result<&'static Tls<'static>, &'static str>;
 
+static ACCEL: StaticCell<EspAccel<'static>> = StaticCell::new();
+static QUEUE: StaticCell<EspAccelQueue<'static, 'static>> = StaticCell::new();
+static HOOKS: StaticCell<EspHooksGuard<'static>> = StaticCell::new();
 static RNG: StaticCell<Trng> = StaticCell::new();
 static CONTEXT: StaticCell<Tls<'static>> = StaticCell::new();
 static CLOCK: Clock = Clock;
@@ -44,12 +51,18 @@ impl MbedtlsWallClock for Clock {
     }
 }
 
-/// Install the global MbedTLS hooks once, before any TLS object is created.
-pub fn initialize() -> Context {
+/// Install the global MbedTLS hooks once, before any TLS object is created, and
+/// start the crypto work queues. The queues also serve the OTA digest.
+pub fn initialize(accel: EspAccel<'static>) -> Context {
+    let queue = QUEUE.init(ACCEL.init(accel).start());
     // SAFETY: main installs these static hooks once before creating TLS sessions.
+    // Contexts created under the crypto hooks can't move to the software path, so
+    // neither the hooks nor the queues they block on may ever be removed: the
+    // static guards are never dropped.
     unsafe {
         mbedtls_rs::sys::hook::timer::hook_timer(Some(&CLOCK));
         mbedtls_rs::sys::hook::wall_clock::hook_wall_clock(Some(&CLOCK));
+        HOOKS.init(queue.hook());
     }
     let rng = Trng::try_new().map_err(|_| "tls_entropy")?;
     let tls = Tls::new(RNG.init(rng)).map_err(|_| "tls_init")?;
