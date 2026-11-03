@@ -1,4 +1,4 @@
-use core::{convert::Infallible, ffi::CStr};
+use core::ffi::CStr;
 
 use embassy_net::tcp::TcpSocket;
 use embassy_time::{Duration, Instant, with_timeout};
@@ -10,27 +10,11 @@ use mbedtls_rs::{
         tm,
     },
 };
-use rand_core::{TryCryptoRng, TryRng};
 use static_cell::StaticCell;
 
 use super::{Request, Updater};
 
-struct HardwareRng(Trng);
-impl TryRng for HardwareRng {
-    type Error = Infallible;
-    fn try_next_u32(&mut self) -> Result<u32, Infallible> {
-        Ok(self.0.random())
-    }
-    fn try_next_u64(&mut self) -> Result<u64, Infallible> {
-        Ok((u64::from(self.0.random()) << 32) | u64::from(self.0.random()))
-    }
-    fn try_fill_bytes(&mut self, output: &mut [u8]) -> Result<(), Infallible> {
-        self.0.read(output);
-        Ok(())
-    }
-}
-impl TryCryptoRng for HardwareRng {}
-static RNG: StaticCell<HardwareRng> = StaticCell::new();
+static RNG: StaticCell<Trng> = StaticCell::new();
 static CONTEXT: StaticCell<Tls<'static>> = StaticCell::new();
 static CLOCK: Clock = Clock;
 struct Clock;
@@ -65,7 +49,7 @@ pub fn initialize() -> Result<&'static Tls<'static>, &'static str> {
         mbedtls_rs::sys::hook::wall_clock::hook_wall_clock(Some(&CLOCK));
     }
     let rng = Trng::try_new().map_err(|_| "tls_entropy")?;
-    let tls = Tls::new(RNG.init(HardwareRng(rng))).map_err(|_| "tls_init")?;
+    let tls = Tls::new(RNG.init(rng)).map_err(|_| "tls_init")?;
     Ok(CONTEXT.init(tls))
 }
 

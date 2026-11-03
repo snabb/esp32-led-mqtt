@@ -1489,7 +1489,6 @@ dependencies = [
  "log",
  "mbedtls-rs",
  "minimq",
- "rand_core 0.10.1",
  "sequential-storage",
  "serde",
  "serde-json-core",

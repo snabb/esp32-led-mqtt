@@ -46,7 +46,6 @@ embedded-io-async = "0.7.0"
 embedded-storage = "0.3.2"
 embassy-embedded-hal = "0.6.0"
 mbedtls-rs = { version = "0.3.0", default-features = false, features = ["tls", "esp32c6", "hook-wall-clock", "ssl-out-content-len-2048"] }
-rand_core = { version = "0.10.1", default-features = false }
 time = { version = "0.3.55", default-features = false }
 esp-rtos    = { version = "0.4.0", features = ["embassy", "esp-radio", "esp32c6", "log-04"] }
 log         = "0.4.35"
