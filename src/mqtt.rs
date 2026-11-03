@@ -133,9 +133,8 @@ async fn run_connected<IO: minimq::Io>(
     }
 
     crate::ota::MQTT_READY.store(true, core::sync::atomic::Ordering::Release);
-    // First tick is immediate; the initial reading was published above.
+    // The first tick fires one interval from now; the initial reading was published above.
     let mut temperature_ticker = Ticker::every(TEMPERATURE_INTERVAL);
-    temperature_ticker.next().await;
     loop {
         match select4(
             session.recv(),
