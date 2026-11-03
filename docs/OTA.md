@@ -101,7 +101,7 @@ transitions can be skipped:
 | `state` | `detail` |
 |---|---|
 | `ready` | Ready to accept a command |
-| `disabled` | `configure_network_and_ota`: OTA isn't built in, or there are no device settings. Anything else: the boot check failed (see below). |
+| `disabled` | `configure_network_and_ota`: OTA isn't built in, or there are no device settings. `tls_entropy` or `tls_init`: TLS initialization failed. Other details identify a failed boot check. |
 | `trial` | `health_check`: the new image is waiting for LEDs, Wi-Fi and MQTT |
 | `downloading` | `progress` is 0–100 |
 | `verifying` | `flash_readback` |
@@ -208,13 +208,4 @@ factory slot.
 
 ## MQTT over TLS
 
-Settings schema 2 adds `mqtt_tls` (default `false`). Set it to `true` and set
-`mqtt_port` to your broker's TLS port, normally 8883. `mqtt_broker` remains a
-hostname without a URL scheme. TLS verifies that hostname and the chain against
-the bundled roots before sending MQTT credentials. It uses the certificate-date
-policy described above. TLS failures never fall back to plaintext.
-
-Existing schema 1 settings require `erase-config` followed by USB provisioning
-with schema 2. Downgrading to older firmware also requires reprovisioning.
-MQTTS works independently of the OTA build options. MQTT and HTTPS OTA share
-TLS initialization but use separate connections.
+See [MQTT over TLS configuration](CONFIGURATION.md#mqtt-over-tls).

@@ -12,6 +12,9 @@ use mbedtls_rs::{
 };
 use static_cell::StaticCell;
 
+/// Shared initialization outcome, retaining the failure reason for both clients.
+pub type Context = Result<&'static Tls<'static>, &'static str>;
+
 static RNG: StaticCell<Trng> = StaticCell::new();
 static CONTEXT: StaticCell<Tls<'static>> = StaticCell::new();
 static CLOCK: Clock = Clock;

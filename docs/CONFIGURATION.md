@@ -90,6 +90,22 @@ The broker name is resolved through DNS (A records only). Multicast names such
 as `.local` work only if the DHCP-provided DNS server resolves them. If it
 doesn't, use an IPv4 address.
 
+### MQTT over TLS
+
+Set `mqtt_tls` to `true` and `mqtt_port` to the broker's TLS port (normally
+8883). The certificate must match `mqtt_broker` and chain to one of the seven
+[bundled public roots](../src/ROOTS.md). Private CA and self-signed LAN broker
+certificates require adding the trusted root and rebuilding. The example uses
+plaintext port 1883, as used by a default Home Assistant Mosquitto broker.
+TLS never falls back to plaintext. Certificate dates use the
+[build-time policy](OTA.md#certificate-dates).
+
+MQTTS works independently of the OTA build options. MQTT and HTTPS OTA share
+TLS initialization but use separate connections.
+
+Existing schema 1 settings require `erase-config` followed by USB provisioning
+with schema 2. Downgrading to older firmware also requires reprovisioning.
+
 ### Provisioning tool
 
 ```sh
@@ -124,13 +140,3 @@ This keeps the running settings the same as the stored ones.
 | `OTA_ALLOWED_HOSTS`, `OTA_ROLLBACK_BOOTLOADER`, `OTA_ALLOW_HTTP`, `OTA_BUILD_ID`, `SOURCE_DATE_EPOCH` | OTA and build identity. See [OTA build variables](OTA.md#build-variables). |
 
 Changing any of these variables triggers a rebuild.
-
-### MQTT over TLS
-
-Set `mqtt_tls` to `true` and `mqtt_port` to the broker's TLS port (normally
-8883). The certificate must match `mqtt_broker` and chain to one of the seven
-[bundled public roots](../src/ROOTS.md). Private CA and self-signed LAN broker
-certificates require adding the trusted root and rebuilding. The example uses
-plaintext port 1883, as used by a default Home Assistant Mosquitto broker.
-TLS never falls back to plaintext. Certificate dates use the
-[build-time policy](OTA.md#certificate-dates).

@@ -21,7 +21,7 @@ pub async fn task(
     stack: Stack<'static>,
     identity: &'static DeviceIdentity,
     settings: &'static esp32_led_mqtt::device_config::DeviceConfig,
-    tls_context: Option<&'static mbedtls_rs::Tls<'static>>,
+    tls_context: crate::tls::Context,
 ) {
     loop {
         stack.wait_config_up().await;
@@ -44,8 +44,13 @@ async fn run_session(
     stack: Stack<'static>,
     identity: &'static DeviceIdentity,
     settings: &'static esp32_led_mqtt::device_config::DeviceConfig,
-    tls_context: Option<&'static mbedtls_rs::Tls<'static>>,
+    tls_context: crate::tls::Context,
 ) -> Result<(), MqttRunError> {
+    let tls = if settings.mqtt_tls {
+        Some(tls_context.map_err(MqttRunError::Tls)?)
+    } else {
+        None
+    };
     let address = crate::resolve_ipv4(stack, &settings.mqtt_broker)
         .await
         .map_err(MqttRunError::Resolve)?;
@@ -59,8 +64,7 @@ async fn run_session(
     .await
     .map_err(|_| MqttRunError::ConnectTimeout)?
     .map_err(MqttRunError::TcpConnect)?;
-    if settings.mqtt_tls {
-        let context = tls_context.ok_or(MqttRunError::Tls("tls_unavailable"))?;
+    if let Some(context) = tls {
         let mut tls =
             crate::tls::connect(context, crate::tls::Socket(socket), &settings.mqtt_broker)
                 .await

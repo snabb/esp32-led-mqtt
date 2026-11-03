@@ -16,9 +16,6 @@ impl<R: Read> ErrorType for Stream<'_, R> {
 }
 impl<R: Read> Read for Stream<'_, R> {
     async fn read(&mut self, bytes: &mut [u8]) -> Result<usize, Self::Error> {
-        if bytes.is_empty() {
-            return Ok(0);
-        }
         self.reader.read(bytes).await
     }
 }

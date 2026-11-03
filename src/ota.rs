@@ -82,13 +82,19 @@ fn status(state: &str, detail: &str, percent: u8) {
     STATUS.signal(value);
 }
 
+/// Whether this image was built with the settings required for OTA.
+pub fn enabled() -> bool {
+    option_env!("OTA_ROLLBACK_BOOTLOADER") == Some("1")
+        && !option_env!("OTA_ALLOWED_HOSTS").unwrap_or("").is_empty()
+}
+
 /// Confirms or rolls back a trial image, then enables updates when configured.
 /// Returns `Err` for an unhealthy boot, which must keep flash writes disabled.
 pub async fn start(
     stack: Option<Stack<'static>>,
     flash: &mut FlashStorage<'static>,
     layout: Result<(), &'static str>,
-    tls_context: Option<&'static mbedtls_rs::Tls<'static>>,
+    tls_context: crate::tls::Context,
 ) -> Result<Option<Client>, &'static str> {
     let health = match layout {
         Ok(()) => boot_health(stack, flash).await,
@@ -99,20 +105,20 @@ pub async fn start(
         status("disabled", reason, 0);
         return Err(reason);
     }
-    let tls = if option_env!("OTA_ROLLBACK_BOOTLOADER") == Some("1")
-        && !option_env!("OTA_ALLOWED_HOSTS").unwrap_or("").is_empty()
-        && stack.is_some()
-    {
-        tls_context
+    let (client, disabled_reason) = if enabled() {
+        match (stack, tls_context) {
+            (Some(stack), Ok(tls)) => (Some(Client { stack, tls }), ""),
+            (Some(_), Err(reason)) => (None, reason),
+            (None, _) => (None, "configure_network_and_ota"),
+        }
     } else {
-        None
+        (None, "configure_network_and_ota")
     };
-    let client = stack.zip(tls).map(|(stack, tls)| Client { stack, tls });
     AVAILABLE.store(client.is_some(), Ordering::Release);
     if client.is_some() {
         status("ready", "", 0);
     } else {
-        status("disabled", "configure_network_and_ota", 0);
+        status("disabled", disabled_reason, 0);
     }
     Ok(client)
 }

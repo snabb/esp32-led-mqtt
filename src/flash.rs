@@ -90,7 +90,7 @@ pub async fn task(
     mut flash: FlashStorage<'static>,
     mut wdt: Wdt<TIMG0<'static>>,
     layout: Result<(), &'static str>,
-    tls: Option<&'static mbedtls_rs::Tls<'static>>,
+    tls: crate::tls::Context,
 ) {
     let started = ota::start(stack, &mut flash, layout, tls).await;
     wdt.disable();
