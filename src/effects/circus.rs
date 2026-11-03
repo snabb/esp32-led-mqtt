@@ -8,13 +8,15 @@ pub(super) fn render<const N: usize>(runtime: &mut EffectRuntime<N>) {
     let border_width = 1 + usize::from(N >= 48);
     let group_width = panel_width + border_width;
 
-    runtime.render_steps(STEP_MS, |step, index| {
-        let step = step as usize;
-        let marquee_on = (step & 1) == 0;
+    // No crossfade: blending the moving panels into each other muddies the colors.
+    let step = runtime.step(STEP_MS) as usize;
+    let marquee_on = (step & 1) == 0;
+
+    for (index, pixel) in runtime.frame.iter_mut().enumerate() {
         let moving = index + step;
         let position = moving % group_width;
 
-        if position < border_width {
+        *pixel = if position < border_width {
             if (moving / group_width + usize::from(marquee_on)) & 1 == 0 {
                 RGB8 {
                     r: 255,
@@ -30,8 +32,8 @@ pub(super) fn render<const N: usize>(runtime: &mut EffectRuntime<N>) {
             }
         } else {
             circus_panel_color((moving / group_width) as u8)
-        }
-    });
+        };
+    }
 }
 
 fn circus_panel_color(index: u8) -> RGB8 {

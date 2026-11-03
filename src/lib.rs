@@ -208,11 +208,16 @@ impl<const N: usize> EffectRuntime<N> {
         phase_at(self.clock_us, period_ms)
     }
 
+    /// Index of the current step of a pattern that advances every `step_ms` at 1×.
+    fn step(&self, step_ms: u32) -> u32 {
+        (self.clock_us / (u64::from(step_ms) * 1000)) as u32
+    }
+
     /// Fills the frame from `pixel(step, index)` for a pattern that advances one
     /// step every `step_ms` at 1×, crossfading into the next step at its end.
     fn render_steps(&mut self, step_ms: u32, pixel: impl Fn(u32, usize) -> RGB8) {
         let step_us = u64::from(step_ms) * 1000;
-        let step = (self.clock_us / step_us) as u32;
+        let step = self.step(step_ms);
         let progress = (((self.clock_us % step_us) << 16) / step_us) as u16;
         let weight = step_crossfade(progress);
         for (index, out) in self.frame.iter_mut().enumerate() {
@@ -532,7 +537,11 @@ mod tests {
         // A full-scale change spread over at least ~7 frames; the shortest
         // crossfades (Scan, Color Wipe) set the bound.
         const MAX_CHANGE: u8 = 40;
-        for (id, name) in EFFECTS {
+        // Circus deliberately hops: crossfading its moving panels muddies their colors.
+        for (id, name) in EFFECTS
+            .into_iter()
+            .filter(|&(id, _)| id != EffectId::Circus)
+        {
             let mut runtime = runtime::<60>(id, 1);
             let mut previous = *runtime.render(0);
             // One minute of frames.
