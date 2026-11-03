@@ -1,132 +1,196 @@
 # esp32-led-mqtt
 
-Bare-metal Rust Embassy firmware for ESP32-C6 boards driving WS281x- and
-SK68xx-compatible addressable RGB LED strips with ESP-HAL RMT output, Wi-Fi, and
-Home Assistant MQTT discovery/control. The default configuration works out of
-the box with the [M5Stack NanoC6](https://docs.m5stack.com/en/core/M5NanoC6)
-and 60 LED [M5Stack RGB LED Strip](https://docs.m5stack.com/en/unit/rgb_led_strip).
+Bare-metal Rust firmware ([Embassy](https://embassy.dev/) + esp-hal) that
+runs an addressable RGB LED strip from an ESP32-C6 and connects it to
+Home Assistant over MQTT.
 
-## Hardware
+- 20 animated effects plus a solid color, with brightness and effect-speed control
+- Home Assistant MQTT discovery: a light entity plus an effect-speed slider
+- Optional push button: next effect, random color, power on/off
+- Wi-Fi and MQTT settings are written over USB and kept in flash, so one
+  firmware image (with no credentials in it) works for every device
+- Optional over-the-air (OTA) updates over HTTPS, started by an MQTT message, with
+  a trial boot and automatic rollback
 
-- ESP32-C6 board [M5Stack NanoC6](https://docs.m5stack.com/en/core/M5NanoC6)
-- 60 LED SK6812 LED strip [M5Stack RGB LED Strip](https://docs.m5stack.com/en/unit/rgb_led_strip)
-- LED data on GPIO2
-- Common ground between the board and strip power supply
+## Supported hardware
 
-## Configuration
+| | |
+|---|---|
+| Board | ESP32-C6 with 4 MiB flash and the built-in USB Serial/JTAG port. Tested on the [M5Stack NanoC6](https://docs.m5stack.com/en/core/M5NanoC6). Other ESP32 chips are not supported. |
+| LED strip | WS2812, WS2812B, WS2811 or SK6812 (RGB), 1–512 LEDs. Tested with the 60-LED [M5Stack RGB LED Strip](https://docs.m5stack.com/en/unit/rgb_led_strip). |
+| Wiring | Strip data on one GPIO (default GPIO2), with the board and the strip power supply sharing a ground. |
+| Network | 2.4 GHz Wi-Fi, WPA2-Personal or open. MQTT 5 over plain TCP, IPv4. The broker must support MQTT 5. |
 
-Hardware settings are compiled from [`hardware.json`](hardware.json): LED count,
-controller timing, RGB color order, data GPIO, optional power GPIO/polarity,
-button GPIO and frame interval. The default is 60 SK6812 LEDs, GRB, data GPIO2,
-button GPIO9 and no power-enable pin. For the NanoC6 internal LED, select one
-WS2812 LED, data GPIO20 and power GPIO19.
+The defaults in [`hardware.json`](hardware.json) match the NanoC6 driving the
+M5Stack strip from its Grove port. For any other setup, see
+[hardware profile](docs/CONFIGURATION.md#hardware-profile).
 
-Wi-Fi and MQTT settings are stored separately in the `device_config` flash
-partition. Firmware builds never read credentials. Provision them over USB as
-shown under [Install](#install); see
-[persistent configuration](docs/DEVICE_CONFIG.md) for details.
-An unconfigured device runs its LEDs/button and accepts USB configuration.
+## Quick start
 
-MQTT topics and Home Assistant identifiers are generated from the MAC address,
-for example `esp32_led_mqtt_123456`. A short button press cycles effects, a double
-press changes color, and a long press toggles power.
+### Prerequisites
 
-## Install
+- [Rust](https://rustup.rs/) through rustup. `rust-toolchain.toml` installs the
+  RISC-V target and components on first build.
+- [espflash](https://github.com/esp-rs/espflash) 4.x (tested with 4.6.0):
+  `cargo install espflash --locked`
+- Docker, to build the bootloader
+- [uv](https://docs.astral.sh/uv/), to run the provisioning tool
+- An MQTT broker. Home Assistant needs its MQTT integration set up.
 
-The firmware boots through a rollback-enabled bootloader and a two-slot
-partition table. See [OTA updates](docs/OTA.md) for details on each step.
-
-1. Build the bootloader once. This needs Docker:
-
-   ```sh
-   tools/build-ota-bootloader.sh
-   ```
-
-2. Build with OTA enabled, listing the exact hosts that will serve updates.
-   Without these variables the image works but cannot be updated over OTA:
-
-   ```sh
-   OTA_ALLOWED_HOSTS=firmware.example.com OTA_ROLLBACK_BOOTLOADER=1 \
-     cargo build --locked --release
-   ```
-
-3. Connect the board over USB and flash the bootloader, partition table and
-   application. Erasing `otadata` is for the first installation; see
-   [reinstalling over USB](docs/OTA.md#reinstalling-over-usb) later:
-
-   ```sh
-   espflash flash --chip esp32c6 --port PORT --partition-table partitions.csv \
-     --bootloader bootloader/esp32c6-rollback.bin --target-app-partition ota_0 \
-     --erase-parts otadata target/riscv32imac-unknown-none-elf/release/esp32-led-mqtt
-   ```
-
-4. Provision Wi-Fi and MQTT settings. `local/` is ignored by Git:
-
-   ```sh
-   mkdir -p local
-   cp tools/device.example.json local/device.json
-   # Edit local/device.json with your settings.
-   uv run tools/provision.py provision --port PORT --config local/device.json
-   uv run tools/provision.py status --port PORT
-   ```
-
-   Provisioning saves the settings in a separate flash partition and reboots.
-   Firmware updates preserve them. `espflash monitor --chip esp32c6` shows the
-   boot log, including the device's MQTT prefix (`Device identity ...`).
-
-## Updates over OTA
-
-Build later images with the same `hardware.json` and OTA variables, upload the
-binary to an allowed host and publish an update command over MQTT; see
-[create and send an update](docs/OTA.md#create-and-send-an-update). An updated
-image runs on trial and rolls back unless the LEDs, Wi-Fi and MQTT work within
-two minutes. HTTPS checks certificates against a bundled set of roots.
-
-## Other ESP32 Chips
-
-The firmware currently targets ESP32-C6. Other Wi-Fi ESP32 chips with RMT, such
-as ESP32-C3, ESP32-S3, and the original ESP32, should be possible by changing
-the ESP crate chip features, Rust target, and `espflash --chip` setting, but
-they are not tested by this repository.
-
-## Home Assistant
-
-The firmware publishes MQTT discovery for one JSON-schema light and one sibling
-number entity on the same device. Home Assistant can control:
-
-- Power
-- RGB color
-- Brightness
-- Effect
-- Effect Speed
-
-The `None` effect disables animations and uses the Home Assistant RGB color
-directly. `Effect Speed` is a 1-128 slider with finer adjustment at slow speeds;
-the default is `64`. The default boot effect is `Rainbow` at the firmware
-default brightness.
-
-## Development
-
-### Build and Check
-
-The repository pins the Rust target and ESP flash runner in `.cargo/config.toml`.
-These commands are useful before submitting changes; they are not required
-before flashing a configured device.
+The commands below are for Linux. The board usually shows up as
+`/dev/ttyACM0`:
 
 ```sh
-cargo fmt --check
-cargo test --lib --target x86_64-unknown-linux-gnu
-cargo check
-cargo clippy --target riscv32imac-unknown-none-elf --lib --bin esp32-led-mqtt
+git clone https://github.com/snabb/esp32-led-mqtt.git
+cd esp32-led-mqtt
+PORT=/dev/ttyACM0
 ```
 
-### Adding Effects
+### 1. Build the bootloader (once)
 
-Effects live in `src/effects`, with one file per effect. To add one:
+The firmware needs an ESP-IDF bootloader with app rollback enabled. This script
+builds one in a pinned ESP-IDF container and writes it to
+`bootloader/esp32c6-rollback.bin`:
 
-1. Add `src/effects/my_effect.rs` with a `render` function.
-2. Add `mod my_effect;` and one dispatch arm in `src/effects/mod.rs`.
-3. Add the `EffectId` variant and `EFFECTS` entry in `src/lib.rs`, in the same order.
+```sh
+tools/build-ota-bootloader.sh
+```
 
-Home Assistant discovery, name parsing and button cycling are derived from
-`EFFECTS`.
+### 2. Build the firmware
+
+Edit `hardware.json` first if your hardware differs from the defaults. To make
+OTA updates possible, list the hosts that will serve firmware images:
+
+```sh
+OTA_ALLOWED_HOSTS=firmware.example.com OTA_ROLLBACK_BOOTLOADER=1 \
+  cargo build --locked --release
+```
+
+Leaving out both variables (`cargo build --locked --release`) builds an image
+that can't be updated over OTA. You can turn OTA on later by reinstalling over
+USB. See [OTA updates](docs/OTA.md#enabling-ota) for details.
+
+### 3. Flash over USB
+
+```sh
+espflash flash --chip esp32c6 --port $PORT --partition-table partitions.csv \
+  --bootloader bootloader/esp32c6-rollback.bin --target-app-partition ota_0 \
+  --erase-parts otadata target/riscv32imac-unknown-none-elf/release/esp32-led-mqtt
+```
+
+Run the same command to reinstall later. Erasing `otadata` makes the device boot
+the new image in `ota_0` and leaves the stored Wi-Fi and MQTT settings alone.
+
+The LEDs should now show the `Rainbow` effect at low brightness. The device
+needs settings before it can connect.
+
+### 4. Provision Wi-Fi and MQTT
+
+`local/` is ignored by Git, so it's a safe place for credentials:
+
+```sh
+mkdir -p local
+cp tools/device.example.json local/device.json
+$EDITOR local/device.json
+uv run tools/provision.py provision --port $PORT --config local/device.json
+```
+
+The device saves the settings and reboots. For every field, see
+[device settings](docs/CONFIGURATION.md#device-settings).
+
+### 5. Check that it's running
+
+```sh
+espflash monitor --chip esp32c6 --port $PORT
+```
+
+Look for `Device identity esp32_led_mqtt_XXXXXX` (its MQTT topic prefix, made
+from the last six hex digits of the MAC address), then `Network ready with IP`
+and `MQTT connected`. Home Assistant should now list a new **ESP32 LED MQTT**
+device. Close the monitor before using `provision.py` again, because both use
+the same port.
+
+## Usage
+
+### Home Assistant
+
+The device has two entities:
+
+- **LED Strip** (light): on/off, RGB color, brightness and effect. The `None`
+  effect shows the solid color.
+- **Effect Speed** (number, 1–128, default 64): the scale is finer at the slow end.
+
+Effects: Rainbow, Color Wipe, Scan, Twinkle, Random Twinkle, Fireworks, Flicker,
+Breathe, Theater Chase, Confetti, Sinelon, Juggle, BPM, Fire 2012, Pacifica,
+Aurora, Plasma Flow, Circus, Static Noise, Police Car.
+
+Light state is not saved across reboots. The device always starts on, showing
+`Rainbow` at brightness 8/255 and speed 64.
+
+### Button
+
+When `button_gpio` is set (GPIO9, the NanoC6 button, by default). The button is
+active-low and uses the internal pull-up.
+
+| Press | Action |
+|---|---|
+| Short | Next effect. After the last effect comes `None` (solid color), then `Rainbow` again. |
+| Double | Pick a random color |
+| Long (≥ 0.7 s) | Turn on or off |
+
+### MQTT without Home Assistant
+
+Send JSON commands to `esp32_led_mqtt_XXXXXX/light/set`:
+
+```sh
+mosquitto_pub -h BROKER -t esp32_led_mqtt_XXXXXX/light/set \
+  -m '{"state":"ON","effect":"Fire 2012","brightness":64}'
+```
+
+All topics and payloads are listed in the [MQTT reference](docs/MQTT.md).
+
+### Firmware updates
+
+Build a new image with the same `hardware.json` and OTA settings, upload it to
+an allowed HTTPS host, then publish an update command over MQTT. The device
+checks the image, boots it on trial, and rolls back if LEDs, Wi-Fi and MQTT
+aren't all working within two minutes. See [OTA updates](docs/OTA.md).
+
+## Documentation
+
+| Document | Contents |
+|---|---|
+| [Configuration](docs/CONFIGURATION.md) | `hardware.json`, device settings and provisioning, build options |
+| [MQTT reference](docs/MQTT.md) | Topics, payloads, Home Assistant discovery |
+| [OTA updates](docs/OTA.md) | Enabling OTA, sending updates, rollback, HTTPS hosting, troubleshooting |
+| [Development](docs/DEVELOPMENT.md) | Checks, code layout, adding effects, design notes, test status |
+| [Bootloader](bootloader/README.md) | How the rollback bootloader is built, and its provenance |
+
+## Troubleshooting
+
+| Symptom | Check |
+|---|---|
+| LEDs stay dark or flicker | `data_gpio`, `timing` and `led_count` in `hardware.json`; a shared ground; strip power. The default brightness is low. |
+| Colors are swapped | `color_order` in `hardware.json` |
+| Log says `Device configuration required` | The device has no settings yet. Run step 4. |
+| `provision.py` reports `invalid` | A setting failed validation, such as a WPA2 password that isn't 8–63 characters. See [device settings](docs/CONFIGURATION.md#device-settings). |
+| `provision.py` reports `busy` | An OTA update or trial boot is running. Wait two minutes. If it keeps happening, look for `OTA unavailable: partition_layout` in the log and reflash using step 3. |
+| `provision.py` times out | Another program, such as `espflash monitor`, has the port open. |
+| A USB flash changes nothing | After an OTA update the device boots `ota_1`. Flash with `--erase-parts otadata` as in step 3. |
+| Wi-Fi keeps reconnecting | Transmit power is capped at 10 dBm (`set_max_tx_power(40)` in `src/main.rs`). Move closer to the access point. |
+| No device in Home Assistant | The log should show `MQTT connected`. Discovery uses the default `homeassistant` prefix. |
+
+## Limitations
+
+- MQTT runs without TLS, and Wi-Fi and MQTT credentials sit unencrypted in
+  flash. Use this on a trusted network.
+- Anyone who can publish to the broker can start an OTA update from an allowed
+  host. Images are checked against the digests in the command, but they aren't
+  signed. See [OTA security model](docs/OTA.md#security-model).
+- The Home Assistant discovery prefix (`homeassistant`) and the device name are
+  fixed in the firmware.
+- No web or Bluetooth setup. Settings can only be changed over USB.
+
+## License
+
+[MIT](LICENSE)
