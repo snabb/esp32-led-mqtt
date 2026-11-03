@@ -341,3 +341,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(all(test, not(target_arch = "riscv32")))]
+#[path = "tls/roots.rs"]
+mod tls_roots;

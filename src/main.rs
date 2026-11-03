@@ -34,6 +34,7 @@ mod config;
 mod flash;
 mod identity;
 mod light_state;
+mod memory;
 mod mqtt;
 mod ota;
 mod tls;
@@ -75,7 +76,8 @@ async fn main(spawner: Spawner) -> ! {
     let peripherals = esp_hal::init(config);
 
     esp_alloc::heap_allocator!(#[ram(reclaimed)] size: 64 * 1024);
-    esp_alloc::heap_allocator!(size: 36 * 1024);
+    // MQTT remains connected while OTA negotiates a second TLS session.
+    esp_alloc::heap_allocator!(size: 100 * 1024);
 
     let mut timg0 = TimerGroup::new(peripherals.TIMG0);
     // Outlasts the two-minute OTA trial window; flash::task disables it afterwards.
@@ -208,6 +210,7 @@ async fn main(spawner: Spawner) -> ! {
         network = Some(stack);
     }
     spawner.spawn(flash::task(network, flash, timg0.wdt, layout, tls_context).unwrap());
+    memory::report("boot_ready");
     run_led_loop(strip, led_power).await
 }
 

@@ -5,6 +5,7 @@ fn main() {
     let firmware_target = target.starts_with("riscv32imac-unknown-none-elf");
     emit_build_identity();
     emit_hardware();
+    emit_trust_roots();
 
     if !firmware_target {
         return;
@@ -239,4 +240,42 @@ fn linker_be_nice() {
         "cargo:rustc-link-arg=--error-handling-script={}",
         std::env::current_exe().unwrap().display()
     );
+}
+
+fn emit_trust_roots() {
+    use x509_cert::der::{Decode, Encode};
+    println!("cargo:rerun-if-changed=src/roots.pem");
+    let pem = std::fs::read_to_string("src/roots.pem").expect("read trust roots");
+    let out = std::path::PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR"));
+    let mut entries = String::new();
+    let mut count = 0;
+    for block in pem.split_inclusive("-----END CERTIFICATE-----") {
+        let Some(start) = block.find("-----BEGIN CERTIFICATE-----") else {
+            assert!(block.trim().is_empty(), "unexpected trust-root content");
+            continue;
+        };
+        let (label, der) =
+            pem_rfc7468::decode_vec(&block.as_bytes()[start..]).expect("valid PEM root");
+        assert_eq!(label, "CERTIFICATE");
+        let filename = format!("root-{count}.der");
+        let certificate = x509_cert::Certificate::from_der(&der).expect("valid X.509 root");
+        let tbs = certificate.tbs_certificate();
+        std::fs::write(
+            out.join(format!("root-{count}-subject.der")),
+            tbs.subject().to_der().expect("subject DER"),
+        )
+        .expect("write subject");
+        std::fs::write(
+            out.join(format!("root-{count}-key.der")),
+            tbs.subject_public_key_info().to_der().expect("SPKI DER"),
+        )
+        .expect("write key");
+        std::fs::write(out.join(&filename), der).expect("write DER root");
+        entries.push_str(&format!(
+            "Root {{ subject: include_bytes!(concat!(env!(\"OUT_DIR\"), \"/root-{count}-subject.der\")), key: include_bytes!(concat!(env!(\"OUT_DIR\"), \"/root-{count}-key.der\")) }},\n"
+        ));
+        count += 1;
+    }
+    assert!(count > 0, "empty trust roots");
+    std::fs::write(out.join("roots.rs"), format!("&[{entries}]")).expect("write root table");
 }

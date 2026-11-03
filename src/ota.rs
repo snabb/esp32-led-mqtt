@@ -71,6 +71,7 @@ pub fn submit(payload: &[u8], retained: bool) {
 }
 
 fn status(state: &str, detail: &str, percent: u8) {
+    crate::memory::report(state);
     let value = heapless::format!(
         "{{\"state\":\"{}\",\"detail\":\"{}\",\"progress\":{},\"running_build\":\"{}\"}}",
         state,

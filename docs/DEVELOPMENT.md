@@ -22,6 +22,25 @@ USB command framing, and the settings store, including simulated power loss
 at every step of a settings write. The binary-only modules (networking, flash
 ownership, USB I/O) are tested only on hardware.
 
+## Heap measurements
+
+Build with `--features heap-stats` to enable the allocator's allocation-time
+high-water counter. Serial `HEAP` records show current usage, peak usage and
+minimum free heap at TLS, MQTT and OTA milestones. The counter resets on reboot;
+it is an observed heap peak, not a bound on stack or total RAM use.
+
+MQTTS and HTTPS OTA need two concurrent TLS sessions. The heap is 164 KiB,
+including 64 KiB of reclaimed startup RAM. Trust-root subject names and public keys are converted to DER at build time.
+The verification callback selects a key directly from flash, without parsing
+a complete root store into heap memory.
+
+On 2026-11-03, a NanoC6 completed HTTPS OTA in both slot directions while
+connected to a Let’s Encrypt-authenticated MQTTS broker. The callback build
+recorded peaks of 133,024 and 140,432 bytes, leaving at least 27,504 bytes free
+in those runs. These are observations for those certificate chains and traffic,
+not worst-case bounds. The earlier 100 KiB heap failed concurrent OTA with
+`tls_roots`.
+
 ## Code layout
 
 | Path | Role |

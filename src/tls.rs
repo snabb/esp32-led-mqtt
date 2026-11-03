@@ -1,10 +1,12 @@
+mod roots;
+
 use core::ffi::CStr;
 
 use embassy_net::tcp::TcpSocket;
 use embassy_time::{Duration, Instant, with_timeout};
 use esp_hal::rng::Trng;
 use mbedtls_rs::{
-    AuthMode, Certificate, ClientSessionConfig, Session, SessionConfig, Tls, X509,
+    AuthMode, ClientSessionConfig, Session, SessionConfig, Tls,
     sys::{
         hook::{timer::MbedtlsTimer, wall_clock::MbedtlsWallClock},
         tm,
@@ -43,7 +45,7 @@ impl MbedtlsWallClock for Clock {
 }
 
 /// Install the global MbedTLS hooks once, before any TLS object is created.
-pub fn initialize() -> Result<&'static Tls<'static>, &'static str> {
+pub fn initialize() -> Context {
     // SAFETY: main installs these static hooks once before creating TLS sessions.
     unsafe {
         mbedtls_rs::sys::hook::timer::hook_timer(Some(&CLOCK));
@@ -59,14 +61,11 @@ pub async fn connect<'a>(
     socket: Socket<'a>,
     host: &str,
 ) -> Result<Session<'a, Socket<'a>>, &'static str> {
-    let pem = CStr::from_bytes_with_nul(concat!(include_str!("roots.pem"), "\0").as_bytes())
-        .map_err(|_| "tls_roots")?;
-    let ca = Certificate::new(X509::PEM(pem)).map_err(|_| "tls_roots")?;
     let mut hostname = heapless::String::<129>::try_from(host).map_err(|_| "tls_host")?;
     hostname.push('\0').map_err(|_| "tls_host")?;
 
     let config = SessionConfig::Client(ClientSessionConfig {
-        ca_chain: Some(ca),
+        verify_callback: Some(roots::callback()),
         server_name: None,
         // Dates are checked against the build-time lower bound. OPTIONAL permits
         // a renewed certificate's FUTURE flag; every other failure is rejected
@@ -77,6 +76,7 @@ pub async fn connect<'a>(
     let mut tls = Session::new(context.reference(), socket, &config).map_err(|_| "tls_session")?;
     let server = CStr::from_bytes_with_nul(hostname.as_bytes()).map_err(|_| "tls_host")?;
     tls.set_server_name(server).map_err(|_| "tls_host")?;
+    crate::memory::report("tls_before_handshake");
     with_timeout(Duration::from_secs(30), tls.connect())
         .await
         .map_err(|_| "tls_timeout")?
@@ -94,6 +94,7 @@ pub async fn connect<'a>(
     ) {
         return Err("tls_certificate");
     }
+    crate::memory::report("tls_connected");
     Ok(tls)
 }
 

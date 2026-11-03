@@ -103,6 +103,7 @@ async fn run_connected<IO: minimq::Io>(
     let mut session = mqtt_session.connect(socket).await.map_err(mqtt_error)?;
     let event = session.connect_event();
     info!("MQTT connected: {:?}", event);
+    crate::memory::report("mqtt_connected");
 
     publish(&mut session, &identity.availability_topic, "online").await?;
     publish_light_discovery(&mut session, identity).await?;

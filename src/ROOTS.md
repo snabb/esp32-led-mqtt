@@ -5,6 +5,13 @@ deliberately small subset of public roots, copied on 2026-11-02 from the
 development host's Mozilla CA store (`/usr/share/ca-certificates/mozilla`). See
 the [Mozilla CA certificate program](https://www.mozilla.org/en-US/about/governance/policies/security-group/certs/).
 
+The build extracts DER-encoded subject names and public keys from these roots.
+Only that binary trust data is embedded in firmware. The verification callback
+selects a root by issuer name and parses only its key during a handshake;
+MbedTLS retains chain, hostname and date verification. The callback follows the
+[official upstream CA-bundle example](https://github.com/esp-rs/mbedtls-rs/blob/07aeabb493ac5c71b06199414807cf49d899dec6/examples/common/ca_bundle.rs).
+The upstream dependency is pinned to that revision for its callback API.
+
 SHA-256 fingerprints:
 
 - ISRG_Root_X1: `96:BC:EC:06:26:49:76:F3:74:60:77:9A:CF:28:C5:A7:CF:E8:A3:C0:AA:E1:1A:8F:FC:EE:05:C0:BD:DF:08:C6`
