@@ -87,13 +87,7 @@ async fn run_session(
     let event = session.connect_event();
     info!("MQTT connected: {:?}", event);
 
-    publish_text(
-        &mut session,
-        identity.availability_topic.as_str(),
-        "online",
-        true,
-    )
-    .await?;
+    publish(&mut session, &identity.availability_topic, "online").await?;
     publish_light_discovery(&mut session, identity).await?;
     publish_speed_discovery(&mut session, identity).await?;
     publish_light_state(&mut session, identity).await?;
@@ -138,7 +132,7 @@ async fn run_session(
             Either3::First(Err(err)) => return Err(MqttRunError::Mqtt(err)),
             Either3::Second(()) => publish_light_state(&mut session, identity).await?,
             Either3::Third(status) => {
-                publish_text(&mut session, &identity.ota_status_topic, &status, true).await?
+                publish(&mut session, &identity.ota_status_topic, &status).await?
             }
         }
     }
@@ -175,26 +169,18 @@ async fn publish_light_state(
     identity: &DeviceIdentity,
 ) -> Result<(), MqttRunError> {
     let light = light_state::get();
-    let state = if light.on { "ON" } else { "OFF" };
     let mut payload: heapless::String<192> = heapless::String::new();
     write!(
         payload,
         r#"{{"state":"{}","brightness":{},"color_mode":"rgb","color":{{"r":{},"g":{},"b":{}}},"effect":"{}"}}"#,
-        state,
+        if light.on { "ON" } else { "OFF" },
         light.brightness,
         light.color.r,
         light.color.g,
         light.color.b,
         light.effect.map_or(EFFECT_DISABLED_NAME, EffectId::name)
-    )
-    .map_err(|_| MqttRunError::StatePayloadTooLarge)?;
-    publish_text(
-        session,
-        identity.state_topic.as_str(),
-        payload.as_str(),
-        true,
-    )
-    .await
+    )?;
+    publish(session, &identity.state_topic, &payload).await
 }
 
 async fn publish_light_discovery(
@@ -202,43 +188,24 @@ async fn publish_light_discovery(
     identity: &DeviceIdentity,
 ) -> Result<(), MqttRunError> {
     let mut payload: heapless::String<1400> = heapless::String::new();
-    write_light_discovery_payload(&mut payload, identity)?;
-    publish_text(
-        session,
-        identity.discovery_topic.as_str(),
-        payload.as_str(),
-        true,
-    )
-    .await
-}
-
-fn write_light_discovery_payload(
-    payload: &mut heapless::String<1400>,
-    identity: &DeviceIdentity,
-) -> Result<(), MqttRunError> {
     write!(
         payload,
         r#"{{"name":"LED Strip","unique_id":"{}","schema":"json","command_topic":"{}","state_topic":"{}","availability_topic":"{}","payload_available":"online","payload_not_available":"offline","brightness":true,"brightness_scale":255,"supported_color_modes":["rgb"],"effect":true,"effect_list":["{}""#,
-        identity.slug.as_str(),
-        identity.command_topic.as_str(),
-        identity.state_topic.as_str(),
-        identity.availability_topic.as_str(),
+        identity.slug,
+        identity.command_topic,
+        identity.state_topic,
+        identity.availability_topic,
         EFFECT_DISABLED_NAME,
-    )
-    .map_err(|_| MqttRunError::StatePayloadTooLarge)?;
-
+    )?;
     for (_, name) in EFFECTS {
-        write!(payload, r#","{}""#, name).map_err(|_| MqttRunError::StatePayloadTooLarge)?;
+        write!(payload, r#","{}""#, name)?;
     }
-
     write!(
         payload,
         r#"],"device":{{"identifiers":["{}"],"name":"{}","manufacturer":"esp32-led-mqtt","model":"{}"}}}}"#,
-        identity.slug.as_str(),
-        DEVICE_NAME,
-        DEVICE_MODEL,
-    )
-    .map_err(|_| MqttRunError::StatePayloadTooLarge)
+        identity.slug, DEVICE_NAME, DEVICE_MODEL,
+    )?;
+    publish(session, &identity.discovery_topic, &payload).await
 }
 
 async fn publish_speed_discovery(
@@ -246,32 +213,19 @@ async fn publish_speed_discovery(
     identity: &DeviceIdentity,
 ) -> Result<(), MqttRunError> {
     let mut payload: heapless::String<700> = heapless::String::new();
-    write_speed_discovery_payload(&mut payload, identity)?;
-    publish_text(
-        session,
-        identity.speed_discovery_topic.as_str(),
-        payload.as_str(),
-        true,
-    )
-    .await
-}
-
-fn write_speed_discovery_payload(
-    payload: &mut heapless::String<700>,
-    identity: &DeviceIdentity,
-) -> Result<(), MqttRunError> {
     write!(
         payload,
-        r#"{{"name":"Effect Speed","unique_id":"{}_effect_speed","command_topic":"{}","state_topic":"{}","availability_topic":"{}","payload_available":"online","payload_not_available":"offline","min":1,"max":128,"step":1,"mode":"slider","device":{{"identifiers":["{}"],"name":"{}","manufacturer":"esp32-led-mqtt","model":"{}"}}}}"#,
-        identity.slug.as_str(),
-        identity.speed_command_topic.as_str(),
-        identity.speed_state_topic.as_str(),
-        identity.availability_topic.as_str(),
-        identity.slug.as_str(),
+        r#"{{"name":"Effect Speed","unique_id":"{}_effect_speed","command_topic":"{}","state_topic":"{}","availability_topic":"{}","payload_available":"online","payload_not_available":"offline","min":1,"max":{},"step":1,"mode":"slider","device":{{"identifiers":["{}"],"name":"{}","manufacturer":"esp32-led-mqtt","model":"{}"}}}}"#,
+        identity.slug,
+        identity.speed_command_topic,
+        identity.speed_state_topic,
+        identity.availability_topic,
+        MAX_EFFECT_SPEED,
+        identity.slug,
         DEVICE_NAME,
         DEVICE_MODEL,
-    )
-    .map_err(|_| MqttRunError::StatePayloadTooLarge)
+    )?;
+    publish(session, &identity.speed_discovery_topic, &payload).await
 }
 
 async fn publish_speed_state(
@@ -279,39 +233,25 @@ async fn publish_speed_state(
     identity: &DeviceIdentity,
 ) -> Result<(), MqttRunError> {
     let mut payload: heapless::String<3> = heapless::String::new();
-    write!(payload, "{}", light_state::get().speed)
-        .map_err(|_| MqttRunError::StatePayloadTooLarge)?;
-    publish_text(
-        session,
-        identity.speed_state_topic.as_str(),
-        payload.as_str(),
-        true,
-    )
-    .await
+    write!(payload, "{}", light_state::get().speed)?;
+    publish(session, &identity.speed_state_topic, &payload).await
 }
 
-async fn publish_text(
+/// Every topic this device publishes is retained, so Home Assistant sees the
+/// current state after a restart.
+async fn publish(
     session: &mut Connection<'_, '_, TcpSocket<'_>>,
     topic: &str,
     payload: &str,
-    retain: bool,
 ) -> Result<(), MqttRunError> {
-    let mut publication = Publication::text(topic, payload);
-    if retain {
-        publication = publication.retain();
-    }
     session
-        .publish(publication)
+        .publish(Publication::text(topic, payload).retain())
         .await
-        .map_err(|err| MqttRunError::Publish(format_pub_error(err)))?;
+        .map_err(|err| match err {
+            minimq::PubError::Session(err) => MqttRunError::Mqtt(err),
+            minimq::PubError::Payload(_) => MqttRunError::PayloadTooLarge,
+        })?;
     Ok(())
-}
-
-fn format_pub_error<E, T>(err: minimq::PubError<E, T>) -> PublishError<T> {
-    match err {
-        minimq::PubError::Session(err) => PublishError::Session(err),
-        minimq::PubError::Payload(_) => PublishError::Payload,
-    }
 }
 
 fn handle_command(payload: &[u8]) -> bool {
@@ -404,21 +344,19 @@ struct LightColor {
     b: u8,
 }
 
-#[allow(dead_code)]
-#[derive(Debug)]
-enum PublishError<T> {
-    Session(minimq::Error<T>),
-    Payload,
-}
-
-#[allow(dead_code)]
+#[allow(dead_code, reason = "fields are only read by Debug when logging")]
 #[derive(Debug)]
 enum MqttRunError {
     Config(minimq::ConfigError),
     Dns(embassy_net::dns::Error),
     Mqtt(minimq::Error<embassy_net::tcp::Error>),
     NoBrokerAddress,
-    Publish(PublishError<embassy_net::tcp::Error>),
-    StatePayloadTooLarge,
+    PayloadTooLarge,
     TcpConnect(embassy_net::tcp::ConnectError),
+}
+
+impl From<core::fmt::Error> for MqttRunError {
+    fn from(_: core::fmt::Error) -> Self {
+        Self::PayloadTooLarge
+    }
 }
