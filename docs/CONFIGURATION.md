@@ -104,7 +104,9 @@ MQTTS works independently of the OTA build options. MQTT and HTTPS OTA share
 TLS initialization but use separate connections.
 
 Existing schema 1 settings require `erase-config` followed by USB provisioning
-with schema 2. Downgrading to older firmware also requires reprovisioning.
+with schema 2. This upgrade requires USB: an OTA update from a schema 1 image
+boots without usable settings, fails the health check and rolls back after
+120 seconds. Downgrading to older firmware also requires reprovisioning.
 
 ### Provisioning tool
 

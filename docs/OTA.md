@@ -7,6 +7,7 @@ and keeps it only if the LEDs, Wi-Fi and MQTT all work within two minutes.
 Otherwise the bootloader goes back to the previous image.
 
 Stored Wi-Fi and MQTT settings are never touched by an update.
+See also [MQTT over TLS configuration](CONFIGURATION.md#mqtt-over-tls).
 
 ## Enabling OTA
 
@@ -205,7 +206,3 @@ this layout at boot and turns off OTA and settings storage if it doesn't match.
 
 The bootloader sits at `0x0` and the partition table at `0x8000`. There is no
 factory slot.
-
-## MQTT over TLS
-
-See [MQTT over TLS configuration](CONFIGURATION.md#mqtt-over-tls).
