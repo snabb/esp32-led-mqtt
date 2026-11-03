@@ -68,10 +68,11 @@ under `local/`, which Git ignores.
 | `wifi_password` | yes | WPA2: 8–63 characters, or 64 hex digits. Open networks: `""`. |
 | `wifi_auth` | no | `wpa2_personal` (default) or `open` |
 | `mqtt_broker` | yes | Host name or IPv4 address made of letters, digits, `.` and `-`, up to 128 bytes. No scheme or port. |
-| `mqtt_port` | no | Default `1883` |
+| `mqtt_port` | no | Default `1883`; normally `8883` with TLS |
+| `mqtt_tls` | no | Default `false`. Enable MQTT over TLS. |
 | `mqtt_username` | no | Up to 128 bytes. The device logs in only if the username or password is non-empty. |
 | `mqtt_password` | no | Up to 128 bytes |
-| `schema` | no | Must be `1` |
+| `schema` | no | Must be `2` |
 
 Unknown fields are rejected.
 
@@ -100,7 +101,7 @@ uv run tools/provision.py erase-config --port $PORT
 The tool opens the USB serial port (which may reset the board), sends one
 command and waits up to 30 s (`--timeout`) for the answer. Credentials are read
 from the file, never from the command line. Replies carry only metadata, for
-example `{"id":"…","status":"saved","schema":1,"generation":2}`. The
+example `{"id":"…","status":"saved","schema":2,"generation":2}`. The
 `generation` count goes up by one with every save.
 
 | Status | Meaning |
@@ -123,3 +124,13 @@ This keeps the running settings the same as the stored ones.
 | `OTA_ALLOWED_HOSTS`, `OTA_ROLLBACK_BOOTLOADER`, `OTA_ALLOW_HTTP`, `OTA_BUILD_ID`, `SOURCE_DATE_EPOCH` | OTA and build identity. See [OTA build variables](OTA.md#build-variables). |
 
 Changing any of these variables triggers a rebuild.
+
+### MQTT over TLS
+
+Set `mqtt_tls` to `true` and `mqtt_port` to the broker's TLS port (normally
+8883). The certificate must match `mqtt_broker` and chain to one of the seven
+[bundled public roots](../src/ROOTS.md). Private CA and self-signed LAN broker
+certificates require adding the trusted root and rebuilding. The example uses
+plaintext port 1883, as used by a default Home Assistant Mosquitto broker.
+TLS never falls back to plaintext. Certificate dates use the
+[build-time policy](OTA.md#certificate-dates).

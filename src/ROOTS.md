@@ -1,6 +1,6 @@
-# OTA trust roots
+# TLS trust roots
 
-[`roots.pem`](roots.pem) is the CA set used for HTTPS OTA downloads. It is a
+[`roots.pem`](roots.pem) is the CA set used for HTTPS OTA downloads and MQTT over TLS. It is a
 deliberately small subset of public roots, copied on 2026-11-02 from the
 development host's Mozilla CA store (`/usr/share/ca-certificates/mozilla`). See
 the [Mozilla CA certificate program](https://www.mozilla.org/en-US/about/governance/policies/security-group/certs/).

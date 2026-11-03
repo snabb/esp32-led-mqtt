@@ -21,6 +21,7 @@ pub async fn task(
     stack: Stack<'static>,
     identity: &'static DeviceIdentity,
     settings: &'static esp32_led_mqtt::device_config::DeviceConfig,
+    tls_context: Option<&'static mbedtls_rs::Tls<'static>>,
 ) {
     loop {
         stack.wait_config_up().await;
@@ -28,7 +29,7 @@ pub async fn task(
             info!("Network ready with IP {}", config.address);
         }
 
-        let result = run_session(stack, identity, settings).await;
+        let result = run_session(stack, identity, settings, tls_context).await;
         crate::ota::MQTT_READY.store(false, core::sync::atomic::Ordering::Release);
         match result {
             Ok(()) => warn!("MQTT session ended"),
@@ -43,6 +44,7 @@ async fn run_session(
     stack: Stack<'static>,
     identity: &'static DeviceIdentity,
     settings: &'static esp32_led_mqtt::device_config::DeviceConfig,
+    tls_context: Option<&'static mbedtls_rs::Tls<'static>>,
 ) -> Result<(), MqttRunError> {
     let address = crate::resolve_ipv4(stack, &settings.mqtt_broker)
         .await
@@ -55,14 +57,14 @@ async fn run_session(
         socket.connect(IpEndpoint::new(address, settings.mqtt_port)),
     )
     .await
-    .map_err(|_| MqttRunError::Resolve("connect_timeout"))?
+    .map_err(|_| MqttRunError::ConnectTimeout)?
     .map_err(MqttRunError::TcpConnect)?;
     if settings.mqtt_tls {
-        let context = crate::tls::initialize().map_err(MqttRunError::Resolve)?;
+        let context = tls_context.ok_or(MqttRunError::Tls("tls_unavailable"))?;
         let mut tls =
             crate::tls::connect(context, crate::tls::Socket(socket), &settings.mqtt_broker)
                 .await
-                .map_err(MqttRunError::Resolve)?;
+                .map_err(MqttRunError::Tls)?;
         return bridge::run(&mut tls, identity, settings).await;
     }
     run_connected(socket, identity, settings).await
@@ -94,10 +96,7 @@ async fn run_connected<IO: minimq::Io>(
     }
 
     let mut mqtt_session = Session::new(builder);
-    let mut session = mqtt_session
-        .connect(socket)
-        .await
-        .map_err(|_| MqttRunError::Transport)?;
+    let mut session = mqtt_session.connect(socket).await.map_err(mqtt_error)?;
     let event = session.connect_event();
     info!("MQTT connected: {:?}", event);
 
@@ -118,7 +117,7 @@ async fn run_connected<IO: minimq::Io>(
                 &[],
             )
             .await
-            .map_err(|_| MqttRunError::Transport)?;
+            .map_err(mqtt_error)?;
     }
 
     crate::ota::MQTT_READY.store(true, core::sync::atomic::Ordering::Release);
@@ -141,10 +140,7 @@ async fn run_connected<IO: minimq::Io>(
                 }
             }
             Either3::First(Err(err)) => {
-                return Err({
-                    let _ = err;
-                    MqttRunError::Transport
-                });
+                return Err(mqtt_error(err));
             }
             Either3::Second(()) => {
                 publish_light_state(&mut session, identity).await?;
@@ -241,7 +237,7 @@ async fn publish<IO: minimq::Io>(
         .publish(Publication::text(topic, payload).retain())
         .await
         .map_err(|err| match err {
-            minimq::PubError::Session(_) => MqttRunError::Transport,
+            minimq::PubError::Session(err) => mqtt_error(err),
             minimq::PubError::Payload(_) => MqttRunError::PayloadTooLarge,
         })?;
     Ok(())
@@ -322,6 +318,9 @@ struct LightColor {
 enum MqttRunError {
     Config(minimq::ConfigError),
     Transport,
+    TlsIo(mbedtls_rs::SessionError),
+    ConnectTimeout,
+    Tls(&'static str),
     PayloadTooLarge,
     Resolve(&'static str),
     TcpConnect(embassy_net::tcp::ConnectError),
@@ -334,3 +333,8 @@ impl From<core::fmt::Error> for MqttRunError {
 }
 
 mod bridge;
+
+fn mqtt_error<E: core::fmt::Debug>(error: minimq::Error<E>) -> MqttRunError {
+    warn!("MQTT protocol/transport error: {:?}", error);
+    MqttRunError::Transport
+}

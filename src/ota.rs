@@ -1,5 +1,3 @@
-mod tls;
-
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use embassy_futures::yield_now;
@@ -90,6 +88,7 @@ pub async fn start(
     stack: Option<Stack<'static>>,
     flash: &mut FlashStorage<'static>,
     layout: Result<(), &'static str>,
+    tls_context: Option<&'static mbedtls_rs::Tls<'static>>,
 ) -> Result<Option<Client>, &'static str> {
     let health = match layout {
         Ok(()) => boot_health(stack, flash).await,
@@ -104,7 +103,7 @@ pub async fn start(
         && !option_env!("OTA_ALLOWED_HOSTS").unwrap_or("").is_empty()
         && stack.is_some()
     {
-        crate::tls::initialize().ok()
+        tls_context
     } else {
         None
     };
@@ -216,7 +215,9 @@ async fn download(
     .map_err(|_| "connect_timeout")?
     .map_err(|_| "connect")?;
     if request.tls {
-        tls::transfer(tls_context, socket, ota, request).await
+        let mut stream =
+            crate::tls::connect(tls_context, crate::tls::Socket(socket), &request.host).await?;
+        transfer(&mut stream, ota, request).await
     } else {
         transfer(&mut socket, ota, request).await
     }

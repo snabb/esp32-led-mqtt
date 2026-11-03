@@ -158,10 +158,10 @@ so that the device boots `ota_0`, and leaves the device settings alone.
   (`Content-Encoding` other than `identity`). Redirects aren't followed.
 - The response headers must fit in 2 KiB.
 - The server certificate has to chain to one of the
-  [bundled roots](../src/ota/ROOTS.md): ISRG Root X1/X2 (Let's Encrypt), GTS
+  [bundled roots](../src/ROOTS.md): ISRG Root X1/X2 (Let's Encrypt), GTS
   Root R1/R3/R4 (Google Trust Services), Amazon Root CA 1 and DigiCert Global
   Root G2. Private CAs and other providers need their root added to
-  `src/ota/roots.pem`, followed by a rebuild.
+  `src/roots.pem`, followed by a rebuild.
 
 ### Certificate dates
 

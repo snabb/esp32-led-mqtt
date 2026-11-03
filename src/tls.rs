@@ -14,8 +14,6 @@ use static_cell::StaticCell;
 
 static RNG: StaticCell<Trng> = StaticCell::new();
 static CONTEXT: StaticCell<Tls<'static>> = StaticCell::new();
-static POINTER: core::sync::atomic::AtomicPtr<Tls<'static>> =
-    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
 static CLOCK: Clock = Clock;
 struct Clock;
 impl MbedtlsTimer for Clock {
@@ -43,22 +41,14 @@ impl MbedtlsWallClock for Clock {
 
 /// Install the global MbedTLS hooks once, before any TLS object is created.
 pub fn initialize() -> Result<&'static Tls<'static>, &'static str> {
-    static READY: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
-    if READY.load(core::sync::atomic::Ordering::Acquire) {
-        // SAFETY: initialized once on the network executor and never freed.
-        return Ok(unsafe { &*POINTER.load(core::sync::atomic::Ordering::Acquire) });
-    }
-    // SAFETY: Both network clients run on one executor; hooks outlive all sessions.
+    // SAFETY: main installs these static hooks once before creating TLS sessions.
     unsafe {
         mbedtls_rs::sys::hook::timer::hook_timer(Some(&CLOCK));
         mbedtls_rs::sys::hook::wall_clock::hook_wall_clock(Some(&CLOCK));
     }
     let rng = Trng::try_new().map_err(|_| "tls_entropy")?;
     let tls = Tls::new(RNG.init(rng)).map_err(|_| "tls_init")?;
-    let context = CONTEXT.init(tls);
-    POINTER.store(context as *mut _, core::sync::atomic::Ordering::Release);
-    READY.store(true, core::sync::atomic::Ordering::Release);
-    Ok(context)
+    Ok(CONTEXT.init(tls))
 }
 
 pub async fn connect<'a>(
@@ -66,7 +56,7 @@ pub async fn connect<'a>(
     socket: Socket<'a>,
     host: &str,
 ) -> Result<Session<'a, Socket<'a>>, &'static str> {
-    let pem = CStr::from_bytes_with_nul(concat!(include_str!("ota/roots.pem"), "\0").as_bytes())
+    let pem = CStr::from_bytes_with_nul(concat!(include_str!("roots.pem"), "\0").as_bytes())
         .map_err(|_| "tls_roots")?;
     let ca = Certificate::new(X509::PEM(pem)).map_err(|_| "tls_roots")?;
     let mut hostname = heapless::String::<129>::try_from(host).map_err(|_| "tls_host")?;
@@ -89,7 +79,7 @@ pub async fn connect<'a>(
         .map_err(|_| "tls_timeout")?
         .map_err(|err| {
             log::warn!(
-                "OTA TLS verification/handshake failed: {:?}, flags={:#x}",
+                "TLS verification/handshake failed: {:?}, flags={:#x}",
                 err,
                 tls.tls_verification_details()
             );

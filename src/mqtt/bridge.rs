@@ -1,28 +1,28 @@
 use super::*;
-use core::sync::atomic::{AtomicUsize, Ordering};
+use core::cell::Cell;
 use embassy_futures::select::{Either, select};
 use embassy_sync::{blocking_mutex::raw::NoopRawMutex, pipe::Pipe, signal::Signal};
-use embedded_io_async::{ErrorKind, ErrorType, Read, Write};
+use embedded_io_async::{ErrorType, Read, Write};
 
-struct Stream<'a> {
-    rx: &'a Pipe<NoopRawMutex, 2048>,
+struct Stream<'a, R> {
+    reader: R,
     tx: &'a Pipe<NoopRawMutex, 2048>,
     sent: usize,
-    drained: &'a AtomicUsize,
+    drained: &'a Cell<usize>,
     progress: &'a Signal<NoopRawMutex, ()>,
 }
-impl ErrorType for Stream<'_> {
-    type Error = ErrorKind;
+impl<R: Read> ErrorType for Stream<'_, R> {
+    type Error = R::Error;
 }
-impl Read for Stream<'_> {
+impl<R: Read> Read for Stream<'_, R> {
     async fn read(&mut self, bytes: &mut [u8]) -> Result<usize, Self::Error> {
         if bytes.is_empty() {
             return Ok(0);
         }
-        Ok(self.rx.read(bytes).await)
+        self.reader.read(bytes).await
     }
 }
-impl Write for Stream<'_> {
+impl<R: Read> Write for Stream<'_, R> {
     async fn write(&mut self, bytes: &[u8]) -> Result<usize, Self::Error> {
         if bytes.is_empty() {
             return Ok(0);
@@ -32,7 +32,7 @@ impl Write for Stream<'_> {
         Ok(n)
     }
     async fn flush(&mut self) -> Result<(), Self::Error> {
-        while self.drained.load(Ordering::Acquire) != self.sent {
+        while self.drained.get() != self.sent {
             self.progress.wait().await;
         }
         Ok(())
@@ -44,49 +44,36 @@ pub(super) async fn run(
     identity: &DeviceIdentity,
     settings: &esp32_led_mqtt::device_config::DeviceConfig,
 ) -> Result<(), MqttRunError> {
-    let rx = Pipe::<NoopRawMutex, 2048>::new();
     let tx = Pipe::<NoopRawMutex, 2048>::new();
-    let drained = AtomicUsize::new(0);
+    let drained = Cell::new(0_usize);
     let progress = Signal::<NoopRawMutex, ()>::new();
-    let (mut reader, mut writer) = tls.split().await.map_err(|_| MqttRunError::Transport)?;
-    // Only termination of the entire connection cancels these TLS operations.
-    let incoming = async {
-        let mut bytes = [0; 1024];
-        loop {
-            let n = reader.read(&mut bytes).await.map_err(|_| ())?;
-            if n == 0 {
-                return Err::<(), ()>(());
-            }
-            let mut offset = 0;
-            while offset < n {
-                offset += rx.write(&bytes[offset..n]).await;
-            }
-        }
-    };
+    let (reader, mut writer) = tls.split().await.map_err(MqttRunError::TlsIo)?;
+    // recv() may send keepalives before select cancels it. Keep TLS writes in
+    // this pump so cancellation cannot replay an unacknowledged partial record.
     let outgoing = async {
         let mut bytes = [0; 1024];
-        loop {
+        let result: Result<(), MqttRunError> = loop {
             let n = tx.read(&mut bytes).await;
-            writer.write_all(&bytes[..n]).await.map_err(|_| ())?;
-            writer.flush().await.map_err(|_| ())?;
-            drained.fetch_add(n, Ordering::Release);
+            if let Err(err) = writer.write_all(&bytes[..n]).await {
+                break Err(MqttRunError::TlsIo(err));
+            }
+            if let Err(err) = writer.flush().await {
+                break Err(MqttRunError::TlsIo(err));
+            }
+            drained.set(drained.get().wrapping_add(n));
             progress.signal(());
-        }
-        #[allow(unreachable_code)]
-        Ok::<(), ()>(())
-    };
-    let pump = async {
-        select(incoming, outgoing).await;
+        };
+        result
     };
     let stream = Stream {
-        rx: &rx,
+        reader,
         tx: &tx,
         sent: 0,
         drained: &drained,
         progress: &progress,
     };
-    match select(super::run_connected(stream, identity, settings), pump).await {
+    match select(super::run_connected(stream, identity, settings), outgoing).await {
         Either::First(result) => result,
-        Either::Second(()) => Err(MqttRunError::Transport),
+        Either::Second(result) => result,
     }
 }

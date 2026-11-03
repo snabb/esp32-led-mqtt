@@ -151,6 +151,7 @@ async fn main(spawner: Spawner) -> ! {
     }
 
     let mut network = None;
+    let mut tls_context = None;
     if let Some(settings) = device_config {
         let authentication = match settings.wifi_auth {
             esp32_led_mqtt::device_config::WifiAuth::Open => wifi::AuthenticationMethodConfig::Open,
@@ -195,12 +196,24 @@ async fn main(spawner: Spawner) -> ! {
             seed,
         );
 
+        let needs_tls = settings.mqtt_tls
+            || (option_env!("OTA_ROLLBACK_BOOTLOADER") == Some("1")
+                && !option_env!("OTA_ALLOWED_HOSTS").unwrap_or("").is_empty());
+        if needs_tls {
+            tls_context = match tls::initialize() {
+                Ok(context) => Some(context),
+                Err(reason) => {
+                    warn!("TLS initialization failed: {}", reason);
+                    None
+                }
+            };
+        }
         spawner.spawn(connection_task(controller).unwrap());
         spawner.spawn(net_task(runner).unwrap());
-        spawner.spawn(mqtt::task(stack, identity, settings).unwrap());
+        spawner.spawn(mqtt::task(stack, identity, settings, tls_context).unwrap());
         network = Some(stack);
     }
-    spawner.spawn(flash::task(network, flash, timg0.wdt, layout).unwrap());
+    spawner.spawn(flash::task(network, flash, timg0.wdt, layout, tls_context).unwrap());
     run_led_loop(strip, led_power).await
 }
 

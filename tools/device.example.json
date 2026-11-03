@@ -4,8 +4,8 @@
   "wifi_password": "YOUR_WIFI_PASSWORD",
   "wifi_auth": "wpa2_personal",
   "mqtt_broker": "mqtt.example.invalid",
-  "mqtt_port": 8883,
-  "mqtt_tls": true,
+  "mqtt_port": 1883,
+  "mqtt_tls": false,
   "mqtt_username": "",
   "mqtt_password": ""
 }
