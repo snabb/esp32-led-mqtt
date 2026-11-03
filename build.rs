@@ -90,7 +90,6 @@ fn emit_build_identity() {
     );
     let id = env::var("OTA_BUILD_ID")
         .unwrap_or_else(|_| format!("{stamp}-{short}{}", if dirty { "-dirty" } else { "" }));
-    println!("cargo:rustc-env=FIRMWARE_GIT_REVISION={revision}");
     assert!(
         !id.is_empty()
             && id.len() <= 31

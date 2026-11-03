@@ -65,7 +65,7 @@ async fn run_session(
         .map_err(MqttRunError::Config)?
         .retained();
     let mut builder = ConfigBuilder::new(Buffers::new(&mut mqtt_rx, &mut mqtt_tx))
-        .client_id(identity.client_id.as_str())
+        .client_id(identity.slug.as_str())
         .map_err(MqttRunError::Config)?
         .keepalive_interval(30)
         .will(will)

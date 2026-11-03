@@ -31,16 +31,15 @@ use static_cell::StaticCell;
 mod button;
 mod c_shims;
 mod config;
-pub(crate) mod identity;
-pub(crate) mod light_state;
+mod identity;
+mod light_state;
 mod mqtt;
 mod ota;
 
 use identity::DeviceIdentity;
 use light_state::{effect_params, get as light_state};
-const START_NETWORK: bool = true;
 
-// The hardware profile is a build input, independent of private device settings.
+// LED count, timing, color order and pins come from hardware.json via build.rs.
 include!(concat!(env!("OUT_DIR"), "/hardware.rs"));
 
 // Wi-Fi activity can delay RMT refills; extra RMT memory gives the LED transfer
@@ -114,10 +113,6 @@ async fn main(spawner: Spawner) -> ! {
     let rmt_frequency = Rate::from_mhz(80);
     let rmt = Rmt::new(peripherals.RMT, rmt_frequency).expect("failed to initialize RMT");
 
-    // LED data GPIO.
-    //
-    // Replace peripherals.GPIO2 with the GPIO connected to the DIN/data input
-    // of your LED strip.
     let strip = LedStrip::new_with_memsize(
         LED_TIMING,
         rmt.channel0,
@@ -127,12 +122,6 @@ async fn main(spawner: Spawner) -> ! {
     )
     .expect("failed to configure RMT LED channel");
 
-    // Optional LED strip power control GPIO.
-    //
-    // Leave this as None if your strip is always powered, which is the default
-    // M5Stack NanoC6 + RGB LED Strip setup. To control an active-high enable
-    // pin, change this to Some(peripherals.GPIOx.into()) and replace GPIOx with
-    // your board's power-enable pin.
     let led_power_pin: Option<esp_hal::gpio::AnyPin<'static>> = led_power_pin!(peripherals);
     let led_power = led_power_pin.map(|pin| {
         let level = if light_state().on {
@@ -143,11 +132,7 @@ async fn main(spawner: Spawner) -> ! {
         Output::new(pin, level, OutputConfig::default())
     });
 
-    // Optional button input GPIO.
-    //
-    // The M5Stack NanoC6 button is on GPIO9 and pulls the pin low when pressed.
-    // Leave this as None if your board has no button, or replace GPIO9 with
-    // your board's active-low button pin.
+    // Buttons are active-low.
     let button_pin: Option<esp_hal::gpio::AnyPin<'static>> = button_pin!(peripherals);
     if let Some(pin) = button_pin {
         let button = Input::new(
@@ -158,7 +143,7 @@ async fn main(spawner: Spawner) -> ! {
     }
 
     let mut network = None;
-    if let Some(settings) = device_config.filter(|_| START_NETWORK) {
+    if let Some(settings) = device_config {
         let authentication = match settings.wifi_auth {
             esp32_led_mqtt::device_config::WifiAuth::Open => wifi::AuthenticationMethodConfig::Open,
             esp32_led_mqtt::device_config::WifiAuth::Wpa2Personal => {
@@ -214,7 +199,6 @@ async fn main(spawner: Spawner) -> ! {
 async fn run_led_loop(mut strip: LedStrip<'static>, mut led_power: Option<Output<'static>>) -> ! {
     let mut effect_runtime =
         EffectRuntime::<LED_COUNT>::new(effect_params(EffectId::Rainbow, light_state()));
-    let mut output = [RGB8 { r: 0, g: 0, b: 0 }; LED_COUNT];
     let mut led_power_on = light_state().on;
     let mut ticker = Ticker::every(LED_FRAME_INTERVAL);
 
@@ -230,16 +214,14 @@ async fn run_led_loop(mut strip: LedStrip<'static>, mut led_power: Option<Output
             led_power_on = true;
         }
 
-        if light_on {
-            if let Some(effect_id) = state.effect {
+        let output = match (light_on, state.effect) {
+            (false, _) => [RGB8 { r: 0, g: 0, b: 0 }; LED_COUNT],
+            (true, Some(effect_id)) => {
                 effect_runtime.set_effect(effect_params(effect_id, state));
-                output = corrected(effect_runtime.render(now_ms as u32), state.brightness);
-            } else {
-                output = corrected(&[state.color; LED_COUNT], state.brightness);
+                corrected(effect_runtime.render(now_ms as u32), state.brightness)
             }
-        } else {
-            output.fill(RGB8 { r: 0, g: 0, b: 0 });
-        }
+            (true, None) => corrected(&[state.color; LED_COUNT], state.brightness),
+        };
 
         write_frame(&mut strip, &output);
         if !light_on && led_power_on {
@@ -253,12 +235,9 @@ async fn run_led_loop(mut strip: LedStrip<'static>, mut led_power: Option<Output
 
 fn write_frame(strip: &mut LedStrip<'_>, output: &[RGB8; LED_COUNT]) {
     // Keep the short RMT refill window from being preempted by radio work.
-    let result = critical_section::with(|_| strip.write(*output));
-    if result.is_ok() {
-        ota::LED_READY.store(true, core::sync::atomic::Ordering::Relaxed);
-    }
-    if let Err(err) = result {
-        error!("LED write failed: {:?}", err);
+    match critical_section::with(|_| strip.write(*output)) {
+        Ok(()) => ota::LED_READY.store(true, core::sync::atomic::Ordering::Relaxed),
+        Err(err) => error!("LED write failed: {:?}", err),
     }
 }
 

@@ -5,7 +5,6 @@ pub const DEVICE_MODEL: &str = "ESP32-C6";
 
 pub struct DeviceIdentity {
     pub slug: heapless::String<32>,
-    pub client_id: heapless::String<32>,
     pub discovery_topic: heapless::String<80>,
     pub speed_discovery_topic: heapless::String<80>,
     pub command_topic: heapless::String<64>,
@@ -25,7 +24,6 @@ impl DeviceIdentity {
                 .expect("device identity suffix capacity too small");
         let slug: heapless::String<32> = heapless::format!("esp32_led_mqtt_{}", suffix)
             .expect("device identity slug capacity too small");
-        let client_id = slug.clone();
 
         Self {
             discovery_topic: heapless::format!("homeassistant/light/{}/config", slug)
@@ -47,7 +45,6 @@ impl DeviceIdentity {
                 .expect("device availability topic capacity too small"),
             ota_command_topic: heapless::format!("{}/ota/set", slug).expect("OTA topic capacity"),
             ota_status_topic: heapless::format!("{}/ota/status", slug).expect("OTA topic capacity"),
-            client_id,
             slug,
         }
     }
