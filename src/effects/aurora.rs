@@ -8,7 +8,7 @@ pub(super) fn render<const N: usize>(runtime: &mut EffectRuntime<N>, now_ms: u32
     let phase_c = ((now_ms.saturating_mul(speed) / 89) & 0xff) as u8;
     let shimmer_gain = runtime.params.intensity.max(32);
 
-    for (index, pixel) in runtime.frame.as_mut_slice().iter_mut().enumerate() {
+    for (index, pixel) in runtime.frame.iter_mut().enumerate() {
         let pos = ((index * 256) / N.max(1)) as u8;
         let curtain = half_sin8(pos.wrapping_add(phase_a));
         let fold = half_sin8(pos.wrapping_mul(3).wrapping_sub(phase_b));

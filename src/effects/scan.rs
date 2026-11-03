@@ -18,11 +18,11 @@ pub(super) fn render<const N: usize>(runtime: &mut EffectRuntime<N>, now_ms: u32
         }
     }
 
-    runtime.frame.set_all(RGB8 { r: 0, g: 0, b: 0 });
+    runtime.frame.fill(RGB8 { r: 0, g: 0, b: 0 });
     for offset in 0..scan_width(N) {
         let index = runtime.scan_position.saturating_add(offset);
         if index < N {
-            runtime.frame.as_mut_slice()[index] = runtime.params.primary;
+            runtime.frame[index] = runtime.params.primary;
         }
     }
 }

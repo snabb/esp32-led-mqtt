@@ -6,7 +6,7 @@ pub(super) fn render<const N: usize>(runtime: &mut EffectRuntime<N>, now_ms: u32
     let phase_a = ((now_ms.saturating_mul(speed) / 128) & 0xff) as u8;
     let phase_b = ((now_ms.saturating_mul(speed) / 197) & 0xff) as u8;
 
-    for (index, pixel) in runtime.frame.as_mut_slice().iter_mut().enumerate() {
+    for (index, pixel) in runtime.frame.iter_mut().enumerate() {
         let pos = ((index * 256) / N.max(1)) as u8;
         let wave_a = half_sin8(pos.wrapping_add(phase_a));
         let wave_b = half_sin8(pos.wrapping_mul(2).wrapping_sub(phase_b));

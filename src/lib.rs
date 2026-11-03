@@ -9,10 +9,7 @@ pub mod ota_protocol;
 pub mod provisioning;
 pub mod random_color;
 
-use smart_leds::{
-    RGB8,
-    hsv::{Hsv, hsv2rgb},
-};
+use smart_leds::RGB8;
 
 pub const DEFAULT_BRIGHTNESS: u8 = 8;
 /// Home Assistant name for "no effect", which shows the solid color.
@@ -40,47 +37,6 @@ pub const EFFECTS: [(EffectId, &str); 20] = [
     (EffectId::StaticNoise, "Static Noise"),
     (EffectId::PoliceCar, "Police Car"),
 ];
-
-#[derive(Clone, Copy)]
-pub struct RgbFrame<const N: usize> {
-    pixels: [RGB8; N],
-}
-
-impl<const N: usize> RgbFrame<N> {
-    pub const fn new() -> Self {
-        Self {
-            pixels: [RGB8 { r: 0, g: 0, b: 0 }; N],
-        }
-    }
-
-    pub fn as_slice(&self) -> &[RGB8] {
-        &self.pixels
-    }
-
-    pub fn as_mut_slice(&mut self) -> &mut [RGB8] {
-        &mut self.pixels
-    }
-
-    pub fn set_all(&mut self, color: RGB8) {
-        self.pixels.fill(color);
-    }
-
-    pub fn fill_wheel(&mut self, base_hue: u8) {
-        fill_wheel(&mut self.pixels, base_hue);
-    }
-
-    pub fn corrected(&self, brightness: u8) -> [RGB8; N] {
-        let mut corrected = [RGB8 { r: 0, g: 0, b: 0 }; N];
-        apply_brightness_gamma(&self.pixels, &mut corrected, brightness);
-        corrected
-    }
-}
-
-impl<const N: usize> Default for RgbFrame<N> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum EffectId {
@@ -149,7 +105,7 @@ impl Default for EffectParams {
 }
 
 pub struct EffectRuntime<const N: usize> {
-    frame: RgbFrame<N>,
+    frame: [RGB8; N],
     params: EffectParams,
     last_step_ms: u32,
     phase: u16,
@@ -164,7 +120,7 @@ pub struct EffectRuntime<const N: usize> {
 impl<const N: usize> EffectRuntime<N> {
     pub const fn new(params: EffectParams) -> Self {
         Self {
-            frame: RgbFrame::new(),
+            frame: [RGB8 { r: 0, g: 0, b: 0 }; N],
             params,
             last_step_ms: 0,
             phase: 0,
@@ -184,7 +140,7 @@ impl<const N: usize> EffectRuntime<N> {
         self.params = params;
     }
 
-    pub fn render(&mut self, now_ms: u32) -> &RgbFrame<N> {
+    pub fn render(&mut self, now_ms: u32) -> &[RGB8; N] {
         effects::render(self, now_ms);
         &self.frame
     }
@@ -197,7 +153,7 @@ impl<const N: usize> EffectRuntime<N> {
         self.scan_forward = true;
         self.effect_data.fill(0);
         self.twinkle_color.fill(RGB8 { r: 0, g: 0, b: 0 });
-        self.frame.set_all(RGB8 { r: 0, g: 0, b: 0 });
+        self.frame.fill(RGB8 { r: 0, g: 0, b: 0 });
     }
 
     fn elapsed(&mut self, now_ms: u32, interval_ms: u32) -> bool {
@@ -215,31 +171,13 @@ impl<const N: usize> EffectRuntime<N> {
     }
 }
 
-pub fn fill_solid(frame: &mut [RGB8], color: RGB8) {
-    frame.fill(color);
-}
-
-pub fn fill_wheel(frame: &mut [RGB8], base_hue: u8) {
-    let count = frame.len().max(1);
-
-    for (index, pixel) in frame.iter_mut().enumerate() {
-        let hue = base_hue.wrapping_add(((index * 256) / count) as u8);
-        *pixel = hsv2rgb(Hsv {
-            hue,
-            sat: 255,
-            val: 255,
-        });
-    }
-}
-
-pub fn apply_brightness_gamma(input: &[RGB8], output: &mut [RGB8], brightness: u8) {
-    for (source, target) in input.iter().zip(output.iter_mut()) {
-        *target = RGB8 {
-            r: scale8(gamma_correct(source.r), brightness),
-            g: scale8(gamma_correct(source.g), brightness),
-            b: scale8(gamma_correct(source.b), brightness),
-        };
-    }
+/// Gamma-correct and scale a frame for output.
+pub fn corrected<const N: usize>(frame: &[RGB8; N], brightness: u8) -> [RGB8; N] {
+    frame.map(|pixel| RGB8 {
+        r: scale8(gamma_correct(pixel.r), brightness),
+        g: scale8(gamma_correct(pixel.g), brightness),
+        b: scale8(gamma_correct(pixel.b), brightness),
+    })
 }
 
 pub fn hsv_rainbow(hue: u8, sat: u8, val: u8) -> RGB8 {
@@ -329,25 +267,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn solid_sets_every_pixel() {
-        let mut frame = RgbFrame::<4>::new();
-        let color = RGB8 { r: 1, g: 2, b: 3 };
-
-        frame.set_all(color);
-
-        assert_eq!(frame.as_slice(), &[color; 4]);
-    }
-
-    #[test]
     fn brightness_gamma_never_increases_channels() {
         let input = [RGB8 {
             r: 128,
             g: 200,
             b: 255,
         }];
-        let mut output = [RGB8 { r: 0, g: 0, b: 0 }];
-
-        apply_brightness_gamma(&input, &mut output, 128);
+        let output = corrected(&input, 128);
 
         assert!(output[0].r <= input[0].r);
         assert!(output[0].g <= input[0].g);
@@ -357,8 +283,8 @@ mod tests {
     #[test]
     fn rainbow_effect_changes_over_time() {
         let mut runtime = EffectRuntime::<8>::new(EffectParams::default());
-        let first = runtime.render(0).as_slice().to_vec();
-        let second = runtime.render(100).as_slice().to_vec();
+        let first = runtime.render(0).to_vec();
+        let second = runtime.render(100).to_vec();
 
         assert_ne!(first, second);
     }
@@ -416,8 +342,8 @@ mod tests {
                 intensity: 255,
                 ..EffectParams::default()
             });
-            let first = runtime.render(1).as_slice().to_vec();
-            let second = runtime.render(240).as_slice().to_vec();
+            let first = runtime.render(1).to_vec();
+            let second = runtime.render(240).to_vec();
 
             assert_ne!(first, second, "{effect:?} should animate");
         }

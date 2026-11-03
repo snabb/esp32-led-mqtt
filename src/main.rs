@@ -23,7 +23,7 @@ use esp_hal::{
 use esp_radio::wifi::{
     self, Config, ControllerConfig, Interface, WifiController, sta::StationConfig,
 };
-use esp32_led_mqtt::{EffectId, EffectRuntime, RgbFrame};
+use esp32_led_mqtt::{EffectId, EffectRuntime, corrected};
 use log::{error, info, warn};
 use smart_leds::{RGB8, SmartLedsWrite};
 use static_cell::StaticCell;
@@ -214,7 +214,6 @@ async fn main(spawner: Spawner) -> ! {
 async fn run_led_loop(mut strip: LedStrip<'static>, mut led_power: Option<Output<'static>>) -> ! {
     let mut effect_runtime =
         EffectRuntime::<LED_COUNT>::new(effect_params(EffectId::Rainbow, light_state()));
-    let mut solid_frame = RgbFrame::<LED_COUNT>::new();
     let mut output = [RGB8 { r: 0, g: 0, b: 0 }; LED_COUNT];
     let mut led_power_on = light_state().on;
     let mut ticker = Ticker::every(LED_FRAME_INTERVAL);
@@ -234,12 +233,9 @@ async fn run_led_loop(mut strip: LedStrip<'static>, mut led_power: Option<Output
         if light_on {
             if let Some(effect_id) = state.effect {
                 effect_runtime.set_effect(effect_params(effect_id, state));
-                output = effect_runtime
-                    .render(now_ms as u32)
-                    .corrected(state.brightness);
+                output = corrected(effect_runtime.render(now_ms as u32), state.brightness);
             } else {
-                solid_frame.set_all(state.color);
-                output = solid_frame.corrected(state.brightness);
+                output = corrected(&[state.color; LED_COUNT], state.brightness);
             }
         } else {
             output.fill(RGB8 { r: 0, g: 0, b: 0 });

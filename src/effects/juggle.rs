@@ -3,7 +3,7 @@ use crate::{EffectRuntime, fade_to_black, hsv_rainbow};
 use smart_leds::RGB8;
 
 pub(super) fn render<const N: usize>(runtime: &mut EffectRuntime<N>, now_ms: u32) {
-    for pixel in runtime.frame.as_mut_slice() {
+    for pixel in &mut runtime.frame {
         *pixel = fade_to_black(*pixel, 48);
     }
 
@@ -20,8 +20,8 @@ pub(super) fn render<const N: usize>(runtime: &mut EffectRuntime<N>, now_ms: u32
                 .wrapping_mul(32)
                 .wrapping_add(runtime.phase as u8);
             let color = hsv_rainbow(hue, 220, 255);
-            let blended = add_rgb(runtime.frame.as_slice()[position], color);
-            runtime.frame.as_mut_slice()[position] = blended;
+            let blended = add_rgb(runtime.frame[position], color);
+            runtime.frame[position] = blended;
         }
     }
     runtime.phase = runtime.phase.wrapping_add(1);

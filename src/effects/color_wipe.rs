@@ -6,7 +6,7 @@ pub(super) fn render<const N: usize>(runtime: &mut EffectRuntime<N>, now_ms: u32
         runtime.wipe_index = (runtime.wipe_index + 1) % (N + 1);
     }
 
-    for (index, pixel) in runtime.frame.as_mut_slice().iter_mut().enumerate() {
+    for (index, pixel) in runtime.frame.iter_mut().enumerate() {
         *pixel = if index < runtime.wipe_index {
             runtime.params.primary
         } else {

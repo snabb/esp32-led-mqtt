@@ -8,7 +8,7 @@ pub(super) fn render<const N: usize>(runtime: &mut EffectRuntime<N>, now_ms: u32
     let step = (now_ms / speed_interval(120, runtime.params.speed)) as usize;
     let marquee_on = (step & 1) == 0;
 
-    for (index, pixel) in runtime.frame.as_mut_slice().iter_mut().enumerate() {
+    for (index, pixel) in runtime.frame.iter_mut().enumerate() {
         let moving = index + step;
         let position = moving % group_width;
 

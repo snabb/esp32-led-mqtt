@@ -6,7 +6,7 @@ pub(super) fn render<const N: usize>(runtime: &mut EffectRuntime<N>, now_ms: u32
     let width = 50_u16.max(N as u16);
     let hue_delta = u16::MAX / width;
 
-    for (index, pixel) in runtime.frame.as_mut_slice().iter_mut().enumerate() {
+    for (index, pixel) in runtime.frame.iter_mut().enumerate() {
         let hue = runtime
             .phase
             .wrapping_add((index as u16).wrapping_mul(hue_delta));

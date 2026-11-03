@@ -6,7 +6,7 @@ pub(super) fn render<const N: usize>(runtime: &mut EffectRuntime<N>, now_ms: u32
         runtime.phase = (runtime.phase + 1) % 3;
     }
 
-    for (index, pixel) in runtime.frame.as_mut_slice().iter_mut().enumerate() {
+    for (index, pixel) in runtime.frame.iter_mut().enumerate() {
         *pixel = if (index + usize::from(runtime.phase)) % 3 == 0 {
             runtime.params.primary
         } else {

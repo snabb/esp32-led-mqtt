@@ -26,6 +26,6 @@ pub(super) fn render_with_color_mode<const N: usize>(
 
     for index in 0..N {
         let level = half_sin8(runtime.effect_data[index]);
-        runtime.frame.as_mut_slice()[index] = scale_rgb(runtime.twinkle_color[index], level);
+        runtime.frame[index] = scale_rgb(runtime.twinkle_color[index], level);
     }
 }

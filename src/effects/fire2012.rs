@@ -27,7 +27,7 @@ pub(super) fn render<const N: usize>(runtime: &mut EffectRuntime<N>, now_ms: u32
     }
 
     for index in 0..N {
-        runtime.frame.as_mut_slice()[index] = heat_color(runtime.effect_data[index]);
+        runtime.frame[index] = heat_color(runtime.effect_data[index]);
     }
 }
 

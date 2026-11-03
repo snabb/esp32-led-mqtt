@@ -9,7 +9,7 @@ pub(super) fn render<const N: usize>(runtime: &mut EffectRuntime<N>, now_ms: u32
     let white_strobe = matches!(flash, 5 | 11);
     let center = N / 2;
 
-    for (index, pixel) in runtime.frame.as_mut_slice().iter_mut().enumerate() {
+    for (index, pixel) in runtime.frame.iter_mut().enumerate() {
         let side_on = if index < center { left_on } else { right_on };
         let base = if index < center {
             RGB8 { r: 255, g: 0, b: 0 }

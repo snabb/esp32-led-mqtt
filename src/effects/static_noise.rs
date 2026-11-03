@@ -8,7 +8,7 @@ pub(super) fn render<const N: usize>(runtime: &mut EffectRuntime<N>, now_ms: u32
 
     let color_chance = 8 + runtime.params.intensity / 12;
 
-    for pixel in runtime.frame.as_mut_slice() {
+    for pixel in &mut runtime.frame {
         let level = if runtime.rng.next_u8() & 1 == 0 {
             runtime.rng.next_u8() >> 2
         } else {
