@@ -119,12 +119,12 @@ pub async fn start(
 }
 
 /// Downloads, verifies and activates `request`, rebooting into it on success.
-pub async fn update(client: &Client, flash: &mut FlashStorage<'static>, request: Request) {
+pub async fn update(client: &Client, flash: &mut FlashStorage<'static>, request: &Request) {
     status("downloading", "", 0);
     let result = match Ota::new(FlashAccess(flash)) {
         Ok(mut ota) => with_timeout(
             UPDATE_TIMEOUT,
-            download(client.tls, client.stack, &mut ota, &request),
+            download(client.tls, client.stack, &mut ota, request),
         )
         .await
         .unwrap_or(Err("timeout")),

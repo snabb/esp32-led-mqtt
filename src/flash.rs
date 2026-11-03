@@ -104,7 +104,7 @@ pub async fn task(
                 if let Some(client) = &client {
                     // Backs up ota::UPDATE_TIMEOUT across synchronous flash operations.
                     arm_watchdog(&mut wdt, 190);
-                    ota::update(client, &mut flash, request).await;
+                    ota::update(client, &mut flash, &request).await;
                     wdt.disable();
                 }
             }
