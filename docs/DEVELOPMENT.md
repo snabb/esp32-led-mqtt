@@ -34,9 +34,9 @@ including 64 KiB of reclaimed startup RAM. Trust-root subject names and public k
 The verification callback selects a key directly from flash, without parsing
 a complete root store into heap memory.
 
-On 2026-11-03, a NanoC6 completed HTTPS OTA in both slot directions while
-connected to a Let’s Encrypt-authenticated MQTTS broker. The callback build
-recorded peaks of 133,024 and 140,432 bytes, leaving at least 27,504 bytes free
+On 2026-11-04, a NanoC6 with hardware crypto completed HTTPS OTA in both slot
+directions while connected to a Let’s Encrypt-authenticated MQTTS broker. It
+recorded peaks of 142,292 and 140,440 bytes, leaving at least 25,644 bytes free
 in those runs. These are observations for those certificate chains and traffic,
 not worst-case bounds. The earlier 100 KiB heap failed concurrent OTA with
 `tls_roots`.
@@ -70,6 +70,9 @@ AES is enabled without a measured benefit: adding it changed handshakes from 733
 to 732 ms (p = 0.34) and downloads from 122 to 129 kB/s (p = 0.20). Those
 throughputs may be limited by the network, so they don't show the CPU cost of
 either AES path. The cause of the download LED stall wasn't identified.
+
+The RSA path is unconfirmed on hardware. Counters showed no RSA operation against
+the Google chain, and the Let's Encrypt chain tested uses ECDSA certificates.
 
 ## Code layout
 
