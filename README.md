@@ -4,7 +4,7 @@ Bare-metal Rust firmware ([Embassy](https://embassy.dev/) + esp-hal) that
 runs an addressable RGB LED strip from an ESP32-C6 and connects it to
 Home Assistant over MQTT.
 
-- 24 animated effects plus a solid color, with brightness and effect-speed control
+- 33 animated effects plus a solid color, with brightness and effect-speed control
 - Home Assistant MQTT discovery: a light entity plus an effect-speed slider
 - Optional push button: next effect, random color, power on/off
 - Wi-Fi and MQTT settings are written over USB and kept in flash, so one
@@ -123,8 +123,18 @@ The device has four entities:
 - **Firmware Version** (diagnostic sensor): the running build ID.
 
 Effects: Rainbow, Color Wipe, Scan, Twinkle, Random Twinkle, Fireworks, Flicker,
-Breathe, Theater Chase, Confetti, Sinelon, Juggle, BPM, Fire 2012, Pacifica,
-Aurora, Plasma Flow, Circus, Static Noise, Police Car.
+Breathe, Theater Chase, Confetti, Sinelon, Juggle, Fire 2012, Pacifica, Aurora,
+Plasma Flow, Static Noise, Police Car.
+
+Finland effects use fixed palettes:
+
+- Flag: Finland Flag Wave (row along the flag, 5:3:10), Finland Cross Wave (row
+  drifting through the whole flag), Finland Flag Parade.
+- Blue and white: Finland Snow, Finland Blue White Twinkle, Finland Snowfall,
+  Finland Ribbon, Finland Frost, Finland Mosaic, Finland Snowdrift (flakes pile
+  up at the last LED).
+- Scenes: Finland Candles (two in each window, as on Independence Day), Finland
+  Revontulet, Finland Kaamos, Finland Sauna, Finland Lakeland.
 
 After a reboot the strip stays dark until the device reaches the MQTT broker,
 then restores the light state and effect speed it last published there. If the
@@ -200,7 +210,3 @@ aren't all working within two minutes. See [OTA updates](docs/OTA.md).
 ## License
 
 [MIT](LICENSE)
-
-### Finland effects
-
-Finland Snow, Finland Blue White Twinkle, Finland Snowfall and Finland Ribbon use fixed blue and white palettes. Brightness and effect speed remain adjustable.

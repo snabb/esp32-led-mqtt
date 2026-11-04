@@ -4,9 +4,7 @@ use smart_leds::RGB8;
 // To add an effect: create a file in this directory, add it below, dispatch it
 // in render(), then add its EffectId variant and EFFECTS entry in lib.rs.
 mod aurora;
-mod bpm;
 mod breathe;
-mod circus;
 mod color_wipe;
 mod confetti;
 mod finland;
@@ -38,28 +36,32 @@ pub(crate) fn render<const N: usize>(runtime: &mut EffectRuntime<N>) {
         EffectId::Confetti => confetti::render(runtime),
         EffectId::Sinelon => sinelon::render(runtime),
         EffectId::Juggle => juggle::render(runtime),
-        EffectId::Bpm => bpm::render(runtime),
         EffectId::Fire2012 => fire2012::render(runtime),
         EffectId::Pacifica => pacifica::render(runtime),
         EffectId::Aurora => aurora::render(runtime),
         EffectId::PlasmaFlow => plasma_flow::render(runtime),
-        EffectId::Circus => circus::render(runtime),
         EffectId::StaticNoise => static_noise::render(runtime),
         EffectId::PoliceCar => police_car::render(runtime),
         EffectId::FinlandSnow => finland::render(runtime, 2),
         EffectId::FinlandBlueWhiteTwinkle => finland::render(runtime, 3),
         EffectId::FinlandSnowfall => finland::render(runtime, 5),
         EffectId::FinlandRibbon => finland::render(runtime, 6),
+        EffectId::FinlandFlagWave => finland::flag::wave(runtime),
+        EffectId::FinlandCrossWave => finland::flag::cross(runtime),
+        EffectId::FinlandFlagParade => finland::flag::parade(runtime),
+        EffectId::FinlandFrost => finland::frost::render(runtime),
+        EffectId::FinlandMosaic => finland::mosaic::render(runtime),
+        EffectId::FinlandSnowdrift => finland::snowdrift::render(runtime),
+        EffectId::FinlandCandles => finland::candles::render(runtime),
+        EffectId::FinlandRevontulet => finland::revontulet::render(runtime),
+        EffectId::FinlandKaamos => finland::kaamos::render(runtime),
+        EffectId::FinlandSauna => finland::sauna::render(runtime),
+        EffectId::FinlandLakeland => finland::lakeland::render(runtime),
     }
 }
 
 /// Caps the simulation work of one frame after a stall or at high speed.
 const MAX_TICKS_PER_FRAME: u64 = 64;
-
-/// `index` scaled to 0..=255 across the strip.
-fn strip_position<const N: usize>(index: usize) -> u8 {
-    ((index * 256) / N) as u8
-}
 
 /// `index` scaled to 0..=u16::MAX across the strip.
 fn strip_position16<const N: usize>(index: usize) -> u16 {

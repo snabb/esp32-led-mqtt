@@ -1,5 +1,15 @@
+pub(super) mod candles;
+pub(super) mod flag;
+pub(super) mod frost;
+pub(super) mod kaamos;
+pub(super) mod lakeland;
+pub(super) mod mosaic;
+pub(super) mod revontulet;
+pub(super) mod sauna;
+pub(super) mod snowdrift;
+
 use super::{MAX_TICKS_PER_FRAME, strip_position16};
-use crate::{EffectRuntime, blend_rgb, half_sin8, half_sin16, scale_rgb};
+use crate::{EffectRuntime, blend_rgb, ease_wave16, half_sin8, half_sin16, scale_rgb};
 use smart_leds::RGB8;
 
 const BLUE: RGB8 = RGB8 {
@@ -12,6 +22,44 @@ const WHITE: RGB8 = RGB8 {
     g: 255,
     b: 255,
 };
+
+/// Murmur3 finalizer: stateless randomness keeps effects pure functions of the clock.
+fn hash(value: u32) -> u32 {
+    let mut h = value;
+    h ^= h >> 16;
+    h = h.wrapping_mul(0x85eb_ca6b);
+    h ^= h >> 13;
+    h = h.wrapping_mul(0xc2b2_ae35);
+    h ^ (h >> 16)
+}
+
+/// Smooth 1D noise in `0..=255`; one random value per 256 units of `position`.
+fn value_noise(seed: u32, position: u32) -> u8 {
+    let sample = |cell: u32| hash(seed.wrapping_add(cell.wrapping_mul(0x9e37_79b1))) as u8;
+    let cell = position >> 8;
+    let weight = (ease_wave16(((position & 0xff) as u16) << 7) >> 8) as u8;
+    let (a, b) = (sample(cell), sample(cell.wrapping_add(1)));
+    (i32::from(a) + (i32::from(b) - i32::from(a)) * i32::from(weight) / 255) as u8
+}
+
+/// `value_noise` position advancing one cell per `cell_ms` of effect time.
+fn noise_time(clock_us: u64, cell_ms: u32) -> u32 {
+    (clock_us * 256 / (u64::from(cell_ms) * 1000)) as u32
+}
+
+/// Sine-like wave in `-32768..=32767`, lowest at phase 0.
+fn signed_wave(phase: u16) -> i32 {
+    i32::from(ease_wave16(phase)) - 32768
+}
+
+/// Coverage in `0..=255` of `x` by the band `start..end`, with edges ramped over
+/// `soft` so bands move between LEDs without hopping.
+fn band(x: i32, start: i32, end: i32, soft: i32) -> u8 {
+    let soft = soft.max(1);
+    let rise = (x - start) * 255 / soft + 128;
+    let fall = (end - x) * 255 / soft + 128;
+    rise.min(fall).clamp(0, 255) as u8
+}
 
 pub(super) fn render<const N: usize>(runtime: &mut EffectRuntime<N>, kind: u8) {
     if kind == 2 || kind == 3 {
@@ -59,21 +107,39 @@ pub(super) fn render<const N: usize>(runtime: &mut EffectRuntime<N>, kind: u8) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{EFFECTS, EffectId, EffectParams};
+    use crate::{EffectId, EffectParams};
+
+    const FRAME_US: u32 = 16_667;
+    const BLUE_WHITE: [EffectId; 10] = [
+        EffectId::FinlandSnow,
+        EffectId::FinlandBlueWhiteTwinkle,
+        EffectId::FinlandSnowfall,
+        EffectId::FinlandRibbon,
+        EffectId::FinlandFlagWave,
+        EffectId::FinlandCrossWave,
+        EffectId::FinlandFlagParade,
+        EffectId::FinlandFrost,
+        EffectId::FinlandMosaic,
+        EffectId::FinlandSnowdrift,
+    ];
+
+    fn runtime(id: EffectId) -> EffectRuntime<60> {
+        EffectRuntime::new(EffectParams {
+            id,
+            ..EffectParams::default()
+        })
+    }
 
     #[test]
     fn finland_palette_and_small_strips() {
         fn check<const N: usize>() {
-            for (id, _) in EFFECTS {
-                if (id as usize) < EffectId::FinlandSnow as usize {
-                    continue;
-                }
+            for id in BLUE_WHITE {
                 let mut runtime = EffectRuntime::<N>::new(EffectParams {
                     id,
                     ..EffectParams::default()
                 });
                 for frame in 0..1200 {
-                    for p in runtime.render(frame * 16667) {
+                    for p in runtime.render(frame * FRAME_US) {
                         assert!(p.r <= p.g && p.g <= p.b);
                         if id == EffectId::FinlandSnow || id == EffectId::FinlandBlueWhiteTwinkle {
                             assert!(p.b > 0);
@@ -86,5 +152,35 @@ mod tests {
         check::<2>();
         check::<60>();
         check::<512>();
+    }
+
+    #[test]
+    fn flag_wave_keeps_the_bar_at_its_proportional_place() {
+        let mut runtime = runtime(EffectId::FinlandFlagWave);
+        let mut whiteness = [0_u32; 60];
+        for frame in 0..1200 {
+            for (sum, p) in whiteness.iter_mut().zip(runtime.render(frame * FRAME_US)) {
+                *sum += u32::from(p.r);
+            }
+        }
+        // 5:3:10 on 60 LEDs puts the bar on LEDs 17..27.
+        assert!(whiteness[21] < whiteness[8] / 4);
+        assert!(whiteness[21] < whiteness[45] / 4);
+    }
+
+    #[test]
+    fn candles_burn_in_six_warm_flames() {
+        let mut runtime = runtime(EffectId::FinlandCandles);
+        let mut frame = [RGB8::default(); 60];
+        for index in 0..1200 {
+            frame = *runtime.render(index * FRAME_US);
+        }
+        let flames = (1..59)
+            .filter(|&i| {
+                let is_peak = frame[i].r >= frame[i - 1].r && frame[i].r > frame[i + 1].r;
+                is_peak && frame[i].r > 100 && frame[i].r > frame[i].b
+            })
+            .count();
+        assert_eq!(flames, 6);
     }
 }

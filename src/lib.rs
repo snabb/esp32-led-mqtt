@@ -14,7 +14,7 @@ use smart_leds::RGB8;
 /// Home Assistant name for "no effect", which shows the solid color.
 pub const EFFECT_DISABLED_NAME: &str = "None";
 /// Display names in `EffectId` declaration order; also the button cycle order.
-pub const EFFECTS: [(EffectId, &str); 24] = [
+pub const EFFECTS: [(EffectId, &str); 33] = [
     (EffectId::Rainbow, "Rainbow"),
     (EffectId::ColorWipe, "Color Wipe"),
     (EffectId::Scan, "Scan"),
@@ -27,12 +27,10 @@ pub const EFFECTS: [(EffectId, &str); 24] = [
     (EffectId::Confetti, "Confetti"),
     (EffectId::Sinelon, "Sinelon"),
     (EffectId::Juggle, "Juggle"),
-    (EffectId::Bpm, "BPM"),
     (EffectId::Fire2012, "Fire 2012"),
     (EffectId::Pacifica, "Pacifica"),
     (EffectId::Aurora, "Aurora"),
     (EffectId::PlasmaFlow, "Plasma Flow"),
-    (EffectId::Circus, "Circus"),
     (EffectId::StaticNoise, "Static Noise"),
     (EffectId::PoliceCar, "Police Car"),
     (EffectId::FinlandSnow, "Finland Snow"),
@@ -42,6 +40,17 @@ pub const EFFECTS: [(EffectId, &str); 24] = [
     ),
     (EffectId::FinlandSnowfall, "Finland Snowfall"),
     (EffectId::FinlandRibbon, "Finland Ribbon"),
+    (EffectId::FinlandFlagWave, "Finland Flag Wave"),
+    (EffectId::FinlandCrossWave, "Finland Cross Wave"),
+    (EffectId::FinlandFlagParade, "Finland Flag Parade"),
+    (EffectId::FinlandFrost, "Finland Frost"),
+    (EffectId::FinlandMosaic, "Finland Mosaic"),
+    (EffectId::FinlandSnowdrift, "Finland Snowdrift"),
+    (EffectId::FinlandCandles, "Finland Candles"),
+    (EffectId::FinlandRevontulet, "Finland Revontulet"),
+    (EffectId::FinlandKaamos, "Finland Kaamos"),
+    (EffectId::FinlandSauna, "Finland Sauna"),
+    (EffectId::FinlandLakeland, "Finland Lakeland"),
 ];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -58,18 +67,27 @@ pub enum EffectId {
     Confetti,
     Sinelon,
     Juggle,
-    Bpm,
     Fire2012,
     Pacifica,
     Aurora,
     PlasmaFlow,
-    Circus,
     StaticNoise,
     PoliceCar,
     FinlandSnow,
     FinlandBlueWhiteTwinkle,
     FinlandSnowfall,
     FinlandRibbon,
+    FinlandFlagWave,
+    FinlandCrossWave,
+    FinlandFlagParade,
+    FinlandFrost,
+    FinlandMosaic,
+    FinlandSnowdrift,
+    FinlandCandles,
+    FinlandRevontulet,
+    FinlandKaamos,
+    FinlandSauna,
+    FinlandLakeland,
 }
 
 impl EffectId {
@@ -456,7 +474,6 @@ mod tests {
             EffectId::from_name("random twinkle"),
             Some(EffectId::RandomTwinkle)
         );
-        assert_eq!(EffectId::from_name("bpm"), Some(EffectId::Bpm));
         assert_eq!(EffectId::from_name("fire 2012"), Some(EffectId::Fire2012));
         assert_eq!(EffectId::from_name("missing"), None);
     }
@@ -548,11 +565,7 @@ mod tests {
         // A full-scale change spread over at least ~7 frames; the shortest
         // crossfades (Scan, Color Wipe) set the bound.
         const MAX_CHANGE: u8 = 40;
-        // Circus deliberately hops: crossfading its moving panels muddies their colors.
-        for (id, name) in EFFECTS
-            .into_iter()
-            .filter(|&(id, _)| id != EffectId::Circus)
-        {
+        for (id, name) in EFFECTS {
             let mut runtime = runtime::<60>(id, 1);
             let mut previous = *runtime.render(0);
             // One minute of frames.
