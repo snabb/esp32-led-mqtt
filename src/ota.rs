@@ -233,7 +233,7 @@ async fn download(
             tls_context,
             crate::tls::Socket(socket),
             &request.host,
-            Some(KEY_EXCHANGE_GROUPS),
+            KEY_EXCHANGE_GROUPS,
         )
         .await?;
         transfer(&mut stream, ota, request).await

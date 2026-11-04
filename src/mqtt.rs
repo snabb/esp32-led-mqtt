@@ -5,6 +5,7 @@ use embassy_net::{IpEndpoint, Stack, tcp::TcpSocket};
 use embassy_time::{Duration, Instant, Ticker, Timer, with_deadline, with_timeout};
 use esp32_led_mqtt::{EFFECT_DISABLED_NAME, EFFECTS, EffectId};
 use log::{info, warn};
+use mbedtls_rs::TlsGroup;
 use minimq::{
     Buffers, ConfigBuilder, ConnectEvent, Connection, InboundPublish, Publication, Session,
     TopicFilter, Will,
@@ -21,6 +22,23 @@ const TEMPERATURE_INTERVAL: Duration = Duration::from_secs(60);
 /// Retained messages follow the SUBACK at once, so this only bounds the wait
 /// when the broker has none.
 const RESTORE_WAIT: Duration = Duration::from_secs(2);
+/// MbedTLS's compiled default groups with P-256 moved first, because only it reaches
+/// the ECC accelerator. The broker is user-chosen, so the others stay as fallback.
+const KEY_EXCHANGE_GROUPS: &[TlsGroup] = &[
+    TlsGroup::Secp256r1,
+    TlsGroup::X25519,
+    TlsGroup::Secp384r1,
+    TlsGroup::X448,
+    TlsGroup::Secp521r1,
+    TlsGroup::BrainpoolP256r1,
+    TlsGroup::BrainpoolP384r1,
+    TlsGroup::BrainpoolP512r1,
+    TlsGroup::Ffdhe2048,
+    TlsGroup::Ffdhe3072,
+    TlsGroup::Ffdhe4096,
+    TlsGroup::Ffdhe6144,
+    TlsGroup::Ffdhe8192,
+];
 
 #[embassy_executor::task]
 pub async fn task(
@@ -73,12 +91,11 @@ async fn run_session(
     .map_err(|_| MqttRunError::ConnectTimeout)?
     .map_err(MqttRunError::TcpConnect)?;
     if let Some(context) = tls {
-        // Default groups: the broker is user-chosen and may not accept P-256.
         let mut tls = crate::tls::connect(
             context,
             crate::tls::Socket(socket),
             &settings.mqtt_broker,
-            None,
+            KEY_EXCHANGE_GROUPS,
         )
         .await
         .map_err(MqttRunError::Tls)?;

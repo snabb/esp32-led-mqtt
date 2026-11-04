@@ -69,12 +69,11 @@ pub fn initialize(accel: EspAccel<'static>) -> Context {
     Ok(CONTEXT.init(tls))
 }
 
-/// `key_exchange_groups` overrides the MbedTLS default order when set.
 pub async fn connect<'a>(
     context: &'a Tls<'static>,
     socket: Socket<'a>,
     host: &str,
-    key_exchange_groups: Option<&'a [TlsGroup]>,
+    key_exchange_groups: &'a [TlsGroup],
 ) -> Result<Session<'a, Socket<'a>>, &'static str> {
     let mut hostname = heapless::String::<129>::try_from(host).map_err(|_| "tls_host")?;
     hostname.push('\0').map_err(|_| "tls_host")?;
@@ -86,7 +85,7 @@ pub async fn connect<'a>(
         // a renewed certificate's FUTURE flag; every other failure is rejected
         // below, before sending any application data.
         auth_mode: AuthMode::Optional,
-        key_exchange_groups,
+        key_exchange_groups: Some(key_exchange_groups),
         ..Default::default()
     });
     let mut tls = Session::new(context.reference(), socket, &config).map_err(|_| "tls_session")?;

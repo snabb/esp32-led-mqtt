@@ -47,8 +47,12 @@ not worst-case bounds. The earlier 100 KiB heap failed concurrent OTA with
 OTA digest uses the SHA peripheral. SHA-384/512, AES-192, X25519 and P-384 stay
 in software.
 
-OTA offers only P-256 for key exchange. MQTTS keeps the MbedTLS default groups,
-because the broker is user-chosen.
+OTA offers only P-256 for key exchange. MQTTS offers P-256 first and keeps the
+other MbedTLS default groups as fallback, because the broker is user-chosen.
+Against a Mosquitto broker with OpenSSL, P-256 first took the handshake from a
+median of 1450 to 1233 ms (5 boots each, run in sequence, ranges not overlapping).
+A broker that prefers X25519 can answer with a HelloRetryRequest instead, as the
+OTA host does.
 
 Measured on a NanoC6 against `storage.googleapis.com` in two runs with balanced
 arm order, 4 boots per arm, 40 handshakes and 12 full image downloads per arm,
