@@ -14,7 +14,7 @@ use smart_leds::RGB8;
 /// Home Assistant name for "no effect", which shows the solid color.
 pub const EFFECT_DISABLED_NAME: &str = "None";
 /// Display names in `EffectId` declaration order; also the button cycle order.
-pub const EFFECTS: [(EffectId, &str); 20] = [
+pub const EFFECTS: [(EffectId, &str); 24] = [
     (EffectId::Rainbow, "Rainbow"),
     (EffectId::ColorWipe, "Color Wipe"),
     (EffectId::Scan, "Scan"),
@@ -35,6 +35,13 @@ pub const EFFECTS: [(EffectId, &str); 20] = [
     (EffectId::Circus, "Circus"),
     (EffectId::StaticNoise, "Static Noise"),
     (EffectId::PoliceCar, "Police Car"),
+    (EffectId::FinlandSnow, "Finland Snow"),
+    (
+        EffectId::FinlandBlueWhiteTwinkle,
+        "Finland Blue White Twinkle",
+    ),
+    (EffectId::FinlandSnowfall, "Finland Snowfall"),
+    (EffectId::FinlandRibbon, "Finland Ribbon"),
 ];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -59,6 +66,10 @@ pub enum EffectId {
     Circus,
     StaticNoise,
     PoliceCar,
+    FinlandSnow,
+    FinlandBlueWhiteTwinkle,
+    FinlandSnowfall,
+    FinlandRibbon,
 }
 
 impl EffectId {

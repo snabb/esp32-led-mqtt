@@ -9,6 +9,7 @@ mod breathe;
 mod circus;
 mod color_wipe;
 mod confetti;
+mod finland;
 mod fire2012;
 mod fireworks;
 mod flicker;
@@ -45,6 +46,10 @@ pub(crate) fn render<const N: usize>(runtime: &mut EffectRuntime<N>) {
         EffectId::Circus => circus::render(runtime),
         EffectId::StaticNoise => static_noise::render(runtime),
         EffectId::PoliceCar => police_car::render(runtime),
+        EffectId::FinlandSnow => finland::render(runtime, 2),
+        EffectId::FinlandBlueWhiteTwinkle => finland::render(runtime, 3),
+        EffectId::FinlandSnowfall => finland::render(runtime, 5),
+        EffectId::FinlandRibbon => finland::render(runtime, 6),
     }
 }
 
