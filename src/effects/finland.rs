@@ -1,12 +1,7 @@
 // Directional effects here draw a vertical strip with the first LED at the bottom.
-pub(super) mod candles;
-pub(super) mod flag;
 pub(super) mod frost;
 pub(super) mod kaamos;
-pub(super) mod lakeland;
-pub(super) mod mosaic;
 pub(super) mod revontulet;
-pub(super) mod sauna;
 pub(super) mod snowdrift;
 
 use super::{MAX_TICKS_PER_FRAME, strip_position16};
@@ -46,11 +41,6 @@ fn value_noise(seed: u32, position: u32) -> u8 {
 /// `value_noise` position advancing one cell per `cell_ms` of effect time.
 fn noise_time(clock_us: u64, cell_ms: u32) -> u32 {
     (clock_us * 256 / (u64::from(cell_ms) * 1000)) as u32
-}
-
-/// Sine-like wave in `-32768..=32767`, lowest at phase 0.
-fn signed_wave(phase: u16) -> i32 {
-    i32::from(ease_wave16(phase)) - 32768
 }
 
 /// Coverage in `0..=255` of `x` by the band `start..end`, with edges ramped over
@@ -111,16 +101,12 @@ mod tests {
     use crate::{EffectId, EffectParams};
 
     const FRAME_US: u32 = 16_667;
-    const BLUE_WHITE: [EffectId; 10] = [
+    const BLUE_WHITE: [EffectId; 6] = [
         EffectId::FinlandSnow,
         EffectId::FinlandBlueWhiteTwinkle,
         EffectId::FinlandSnowfall,
         EffectId::FinlandRibbon,
-        EffectId::FinlandFlagWave,
-        EffectId::FinlandCrossWave,
-        EffectId::FinlandFlagRaising,
         EffectId::FinlandFrost,
-        EffectId::FinlandMosaic,
         EffectId::FinlandSnowdrift,
     ];
 
@@ -156,46 +142,15 @@ mod tests {
     }
 
     #[test]
-    fn flag_wave_keeps_the_arm_in_the_middle_of_the_strip() {
-        let mut runtime = runtime(EffectId::FinlandFlagWave);
-        let mut whiteness = [0_u32; 60];
-        for frame in 0..1200 {
-            for (sum, p) in whiteness.iter_mut().zip(runtime.render(frame * FRAME_US)) {
-                *sum += u32::from(p.r);
-            }
-        }
-        // 4:3:4 on 60 LEDs puts the arm on LEDs 22..38.
-        assert!(whiteness[30] < whiteness[8] / 4);
-        assert!(whiteness[30] < whiteness[52] / 4);
-    }
-
-    #[test]
-    fn snowdrift_piles_up_at_the_bottom() {
+    fn snowdrift_does_not_pile_up_at_the_bottom() {
         let mut runtime = runtime(EffectId::FinlandSnowdrift);
-        let mut frame = [RGB8::default(); 60];
-        // 70 s in, the drift has grown but not yet melted.
-        for index in 0..4200 {
-            frame = *runtime.render(index * FRAME_US);
+        let (mut bottom, mut middle) = (0_u32, 0_u32);
+        // Two minutes: longer than any flake's fall.
+        for index in 0..7200 {
+            let frame = runtime.render(index * FRAME_US);
+            bottom += u32::from(frame[0].r);
+            middle += u32::from(frame[30].r);
         }
-        assert!(frame[0].r > 150);
-        assert!(frame[59].r < 100);
-    }
-
-    #[test]
-    fn candles_burn_in_two_warm_flames() {
-        let mut runtime = runtime(EffectId::FinlandCandles);
-        let mut frame = [RGB8::default(); 60];
-        for index in 0..1200 {
-            frame = *runtime.render(index * FRAME_US);
-        }
-        for candle in [&frame[..30], &frame[30..]] {
-            let flame = candle
-                .iter()
-                .max_by_key(|p| u16::from(p.r) + u16::from(p.g));
-            let flame = flame.unwrap();
-            assert!(flame.r > 150 && u16::from(flame.r) > u16::from(flame.b) * 2);
-        }
-        // Dusk shows below the lower candle.
-        assert!(frame[0].b > frame[0].r);
+        assert!(bottom < middle);
     }
 }

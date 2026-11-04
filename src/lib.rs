@@ -14,7 +14,7 @@ use smart_leds::RGB8;
 /// Home Assistant name for "no effect", which shows the solid color.
 pub const EFFECT_DISABLED_NAME: &str = "None";
 /// Display names in `EffectId` declaration order; also the button cycle order.
-pub const EFFECTS: [(EffectId, &str); 33] = [
+pub const EFFECTS: [(EffectId, &str); 25] = [
     (EffectId::Rainbow, "Rainbow"),
     (EffectId::ColorWipe, "Color Wipe"),
     (EffectId::Scan, "Scan"),
@@ -32,7 +32,6 @@ pub const EFFECTS: [(EffectId, &str); 33] = [
     (EffectId::Aurora, "Aurora"),
     (EffectId::PlasmaFlow, "Plasma Flow"),
     (EffectId::StaticNoise, "Static Noise"),
-    (EffectId::PoliceCar, "Police Car"),
     (EffectId::FinlandSnow, "Finland Snow"),
     (
         EffectId::FinlandBlueWhiteTwinkle,
@@ -40,17 +39,10 @@ pub const EFFECTS: [(EffectId, &str); 33] = [
     ),
     (EffectId::FinlandSnowfall, "Finland Snowfall"),
     (EffectId::FinlandRibbon, "Finland Ribbon"),
-    (EffectId::FinlandFlagWave, "Finland Flag Wave"),
-    (EffectId::FinlandCrossWave, "Finland Cross Wave"),
-    (EffectId::FinlandFlagRaising, "Finland Flag Raising"),
     (EffectId::FinlandFrost, "Finland Frost"),
-    (EffectId::FinlandMosaic, "Finland Mosaic"),
     (EffectId::FinlandSnowdrift, "Finland Snowdrift"),
-    (EffectId::FinlandCandles, "Finland Candles"),
     (EffectId::FinlandRevontulet, "Finland Revontulet"),
     (EffectId::FinlandKaamos, "Finland Kaamos"),
-    (EffectId::FinlandSauna, "Finland Sauna"),
-    (EffectId::FinlandLakeland, "Finland Lakeland"),
 ];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -72,22 +64,14 @@ pub enum EffectId {
     Aurora,
     PlasmaFlow,
     StaticNoise,
-    PoliceCar,
     FinlandSnow,
     FinlandBlueWhiteTwinkle,
     FinlandSnowfall,
     FinlandRibbon,
-    FinlandFlagWave,
-    FinlandCrossWave,
-    FinlandFlagRaising,
     FinlandFrost,
-    FinlandMosaic,
     FinlandSnowdrift,
-    FinlandCandles,
     FinlandRevontulet,
     FinlandKaamos,
-    FinlandSauna,
-    FinlandLakeland,
 }
 
 impl EffectId {

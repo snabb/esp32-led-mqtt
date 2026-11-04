@@ -14,7 +14,6 @@ mod flicker;
 mod juggle;
 mod pacifica;
 mod plasma_flow;
-mod police_car;
 mod rainbow;
 mod scan;
 mod sinelon;
@@ -41,22 +40,14 @@ pub(crate) fn render<const N: usize>(runtime: &mut EffectRuntime<N>) {
         EffectId::Aurora => aurora::render(runtime),
         EffectId::PlasmaFlow => plasma_flow::render(runtime),
         EffectId::StaticNoise => static_noise::render(runtime),
-        EffectId::PoliceCar => police_car::render(runtime),
         EffectId::FinlandSnow => finland::render(runtime, 2),
         EffectId::FinlandBlueWhiteTwinkle => finland::render(runtime, 3),
         EffectId::FinlandSnowfall => finland::render(runtime, 5),
         EffectId::FinlandRibbon => finland::render(runtime, 6),
-        EffectId::FinlandFlagWave => finland::flag::wave(runtime),
-        EffectId::FinlandCrossWave => finland::flag::cross(runtime),
-        EffectId::FinlandFlagRaising => finland::flag::raising(runtime),
         EffectId::FinlandFrost => finland::frost::render(runtime),
-        EffectId::FinlandMosaic => finland::mosaic::render(runtime),
         EffectId::FinlandSnowdrift => finland::snowdrift::render(runtime),
-        EffectId::FinlandCandles => finland::candles::render(runtime),
         EffectId::FinlandRevontulet => finland::revontulet::render(runtime),
         EffectId::FinlandKaamos => finland::kaamos::render(runtime),
-        EffectId::FinlandSauna => finland::sauna::render(runtime),
-        EffectId::FinlandLakeland => finland::lakeland::render(runtime),
     }
 }
 
