@@ -45,7 +45,7 @@ pub(crate) fn render<const N: usize>(runtime: &mut EffectRuntime<N>) {
         EffectId::FinlandSnowfall => finland::render(runtime, 5),
         EffectId::FinlandRibbon => finland::render(runtime, 6),
         EffectId::FinlandFrost => finland::frost::render(runtime),
-        EffectId::FinlandSnowdrift => finland::snowdrift::render(runtime),
+        EffectId::FinlandSnowflakes => finland::snowflakes::render(runtime),
         EffectId::FinlandRevontulet => finland::revontulet::render(runtime),
         EffectId::FinlandKaamos => finland::kaamos::render(runtime),
     }

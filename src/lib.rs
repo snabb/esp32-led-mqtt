@@ -40,7 +40,7 @@ pub const EFFECTS: [(EffectId, &str); 25] = [
     (EffectId::FinlandSnowfall, "Finland Snowfall"),
     (EffectId::FinlandRibbon, "Finland Ribbon"),
     (EffectId::FinlandFrost, "Finland Frost"),
-    (EffectId::FinlandSnowdrift, "Finland Snowdrift"),
+    (EffectId::FinlandSnowflakes, "Finland Snowflakes"),
     (EffectId::FinlandRevontulet, "Finland Revontulet"),
     (EffectId::FinlandKaamos, "Finland Kaamos"),
 ];
@@ -69,7 +69,7 @@ pub enum EffectId {
     FinlandSnowfall,
     FinlandRibbon,
     FinlandFrost,
-    FinlandSnowdrift,
+    FinlandSnowflakes,
     FinlandRevontulet,
     FinlandKaamos,
 }

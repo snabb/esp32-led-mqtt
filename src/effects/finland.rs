@@ -2,7 +2,7 @@
 pub(super) mod frost;
 pub(super) mod kaamos;
 pub(super) mod revontulet;
-pub(super) mod snowdrift;
+pub(super) mod snowflakes;
 
 use super::{MAX_TICKS_PER_FRAME, strip_position16};
 use crate::{EffectRuntime, blend_rgb, ease_wave16, half_sin8, half_sin16, scale_rgb};
@@ -107,7 +107,7 @@ mod tests {
         EffectId::FinlandSnowfall,
         EffectId::FinlandRibbon,
         EffectId::FinlandFrost,
-        EffectId::FinlandSnowdrift,
+        EffectId::FinlandSnowflakes,
     ];
 
     fn runtime(id: EffectId) -> EffectRuntime<60> {
@@ -142,8 +142,8 @@ mod tests {
     }
 
     #[test]
-    fn snowdrift_does_not_pile_up_at_the_bottom() {
-        let mut runtime = runtime(EffectId::FinlandSnowdrift);
+    fn snowflakes_do_not_pile_up_at_the_bottom() {
+        let mut runtime = runtime(EffectId::FinlandSnowflakes);
         let (mut bottom, mut middle) = (0_u32, 0_u32);
         // Two minutes: longer than any flake's fall.
         for index in 0..7200 {

@@ -131,7 +131,7 @@ first LED at the bottom (`reverse_direction` in `hardware.json` flips a strip
 mounted the other way up):
 
 - Blue and white: Finland Snow, Finland Blue White Twinkle, Finland Snowfall,
-  Finland Ribbon, Finland Frost, Finland Snowdrift.
+  Finland Ribbon, Finland Frost, Finland Snowflakes.
 - Scenes: Finland Revontulet, Finland Kaamos.
 
 After a reboot the strip stays dark until the device reaches the MQTT broker,
