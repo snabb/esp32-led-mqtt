@@ -73,10 +73,15 @@ async fn run_session(
     .map_err(|_| MqttRunError::ConnectTimeout)?
     .map_err(MqttRunError::TcpConnect)?;
     if let Some(context) = tls {
-        let mut tls =
-            crate::tls::connect(context, crate::tls::Socket(socket), &settings.mqtt_broker)
-                .await
-                .map_err(MqttRunError::Tls)?;
+        // Default groups: the broker is user-chosen and may not accept P-256.
+        let mut tls = crate::tls::connect(
+            context,
+            crate::tls::Socket(socket),
+            &settings.mqtt_broker,
+            None,
+        )
+        .await
+        .map_err(MqttRunError::Tls)?;
         return bridge::run(&mut tls, identity, settings, chip_temp).await;
     }
     run_connected(socket, identity, settings, chip_temp).await

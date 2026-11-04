@@ -11,6 +11,7 @@ use esp_storage::FlashStorage;
 use esp32_led_mqtt::ota_protocol::{self, Request, Verifier};
 use heapless::String;
 use log::{info, warn};
+use mbedtls_rs::TlsGroup;
 
 use crate::flash::{self, Job};
 
@@ -20,6 +21,10 @@ pub static STATUS: Signal<CriticalSectionRawMutex, String<192>> = Signal::new();
 static AVAILABLE: AtomicBool = AtomicBool::new(false);
 const READ_TIMEOUT: Duration = Duration::from_secs(15);
 const UPDATE_TIMEOUT: Duration = Duration::from_secs(180);
+/// Only P-256 reaches the ECC accelerator, and it must be offered alone: with X25519
+/// also listed, Google's servers pick X25519 even when P-256 comes first. TLS 1.3
+/// requires servers to support P-256, so there is no fallback.
+const KEY_EXCHANGE_GROUPS: &[TlsGroup] = &[TlsGroup::Secp256r1];
 pub struct FlashAccess<'a>(&'a mut FlashStorage<'static>);
 impl embedded_storage::ReadStorage for FlashAccess<'_> {
     type Error = esp_storage::FlashStorageError;
@@ -224,8 +229,13 @@ async fn download(
     .map_err(|_| "connect_timeout")?
     .map_err(|_| "connect")?;
     if request.tls {
-        let mut stream =
-            crate::tls::connect(tls_context, crate::tls::Socket(socket), &request.host).await?;
+        let mut stream = crate::tls::connect(
+            tls_context,
+            crate::tls::Socket(socket),
+            &request.host,
+            Some(KEY_EXCHANGE_GROUPS),
+        )
+        .await?;
         transfer(&mut stream, ota, request).await
     } else {
         transfer(&mut socket, ota, request).await

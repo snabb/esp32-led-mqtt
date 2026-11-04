@@ -47,26 +47,29 @@ not worst-case bounds. The earlier 100 KiB heap failed concurrent OTA with
 OTA digest uses the SHA peripheral. SHA-384/512, AES-192, X25519 and P-384 stay
 in software.
 
-Measured on a NanoC6 against `storage.googleapis.com`, 4 boots per arm, 40
-handshakes and 12 full image downloads per arm, 0 failures. Medians, with exact
-Mann-Whitney p over boot medians (0.029 is the minimum for 4 against 4):
+OTA offers only P-256 for key exchange. MQTTS keeps the MbedTLS default groups,
+because the broker is user-chosen.
 
-| Metric | Software | SHA, RSA, ECC | + AES |
-|---|---|---|---|
-| TLS handshake | 965 ms | 700 ms (p = 0.029) | not measured with default groups |
-| Download | 121 kB/s | 128 kB/s (p = 0.69) | no significant change |
-| Longest LED stall, handshake | 119 ms | 120 ms (p = 0.34) | no significant change |
-| Longest LED stall, download | 832 ms | 570 ms (p = 0.029) | no significant change |
+Measured on a NanoC6 against `storage.googleapis.com` in two runs with balanced
+arm order, 4 boots per arm, 40 handshakes and 12 full image downloads per arm,
+0 failures. Medians, with exact Mann-Whitney p over boot medians (0.029 is the
+minimum for 4 against 4). Compare values only within a run.
 
-The AES comparison used arms offering P-256 first: 733 against 732 ms handshake
-(p = 0.34) and 122 against 129 kB/s (p = 0.20). Those throughputs may be limited
-by the network, so they don't show the CPU cost of either AES path. The cause of
-the download LED stall wasn't identified. No RSA operation ran: this chain ends
-at an ECDSA root.
+| Metric | Run 1: software | Run 1: SHA, RSA, ECC | Run 2: all hooks, default groups | Run 2: all hooks, P-256 only |
+|---|---|---|---|---|
+| TLS handshake | 965 ms | 700 ms (p = 0.029) | 714 ms | 500 ms (p = 0.029) |
+| Download | 121 kB/s | 128 kB/s (p = 0.69) | 118 kB/s | 120 kB/s (p = 0.69) |
+| Longest LED stall, handshake | 119 ms | 120 ms (p = 0.34) | 121 ms | 21 ms (p = 0.029) |
+| Longest LED stall, download | 832 ms | 570 ms (p = 0.029) | 580 ms | 476 ms (p = 0.029) |
 
-The key-exchange groups stay at the MbedTLS default even though only P-256 is
-accelerated. That server answers a P-256 key share with a HelloRetryRequest for
-X25519, which raised the handshake from 700 to 733 ms (p = 0.029).
+Offering P-256 ahead of X25519 is slower than the default order against this
+server (733 against 700 ms, p = 0.029): it answers with a HelloRetryRequest and
+still selects X25519.
+
+AES is enabled without a measured benefit: adding it changed handshakes from 733
+to 732 ms (p = 0.34) and downloads from 122 to 129 kB/s (p = 0.20). Those
+throughputs may be limited by the network, so they don't show the CPU cost of
+either AES path. The cause of the download LED stall wasn't identified.
 
 ## Code layout
 

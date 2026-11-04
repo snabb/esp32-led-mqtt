@@ -120,7 +120,7 @@ transitions can be skipped:
 | `busy` | An update or USB settings write is already running |
 | `retained_command` | The command was retained. Clear it with `mosquitto_pub -h BROKER -t PREFIX/ota/set -r -n`. |
 | `dns`, `dns_timeout`, `connect`, `connect_timeout` | The device can't reach the host. Only IPv4 (DNS A records) is supported. |
-| `tls_handshake`, `tls_certificate`, other `tls_*` | The certificate chain isn't covered by the bundled roots, the host name doesn't match, or the certificate expired before the build date. Retry once: a one-off handshake failure has been seen. |
+| `tls_handshake`, `tls_certificate`, other `tls_*` | The certificate chain isn't covered by the bundled roots, the host name doesn't match, the certificate expired before the build date, or the server doesn't accept P-256. Retry once: a one-off handshake failure has been seen. |
 | `http_framing` | Not a `200` response, missing or wrong `Content-Length`, chunked or compressed body, or a redirect |
 | `headers_too_large` | The response headers are over 2 KiB |
 | `image_identity` | Not an ESP32-C6 app image, a `build` that doesn't match the image, or a different `hardware.json` |
@@ -163,6 +163,9 @@ so that the device boots `ota_0`, and leaves the device settings alone.
   Root R1/R3/R4 (Google Trust Services), Amazon Root CA 1 and DigiCert Global
   Root G2. Private CAs and other providers need their root added to
   `src/roots.pem`, followed by a rebuild.
+- The server must accept P-256 (secp256r1) for key exchange, the only group the
+  device offers for updates. TLS 1.3 requires this support, but a server can
+  still be configured without it.
 
 ### Certificate dates
 
