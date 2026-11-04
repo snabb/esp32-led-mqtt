@@ -9,7 +9,7 @@ Configuration comes in two layers:
 
 ## Hardware profile
 
-`build.rs` reads [`hardware.json`](../hardware.json). Every field is required.
+`build.rs` reads [`hardware.json`](../hardware.json). Every field is required except `reverse_direction`.
 
 | Field | Values | Default |
 |---|---|---|
@@ -22,6 +22,7 @@ Configuration comes in two layers:
 | `power_gpio` | GPIO that switches the LED power on and off, or `null` | `null` |
 | `power_active_high` | `true` or `false`. Required even when `power_gpio` is `null`. | `true` |
 | `frame_interval_us` | 1000–1000000 | `16667` (about 60 fps) |
+| `reverse_direction` | Optional. `true` sends frames last LED first, for a strip whose data input is at the far end of how effects run. Effects treat the first LED as the bottom of a vertical strip. | absent (`false`) |
 
 Example for the NanoC6's built-in RGB LED:
 

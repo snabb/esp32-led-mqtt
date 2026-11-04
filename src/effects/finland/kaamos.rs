@@ -1,4 +1,4 @@
-use super::{hash, noise_time, value_noise};
+use super::{band, hash, noise_time, value_noise};
 use crate::effects::{add_rgb, strip_position16};
 use crate::{EffectRuntime, blend_rgb, ease_wave16, scale8};
 use smart_leds::RGB8;
@@ -6,8 +6,14 @@ use smart_leds::RGB8;
 const DAY_MS: u32 = 80_000;
 /// Starts in the morning twilight rather than in the dark.
 const DAY_START: u16 = 0x3000;
-/// How far the glow reaches from the hidden sun, as `u16` strip position.
-const GLOW_REACH: u32 = 42_000;
+/// Height of the glow above the horizon at night and at noon, as `u16` strip position.
+const GLOW_LOW: u32 = 14_000;
+const GLOW_HIGH: u32 = 56_000;
+/// Top of the dark treeline: two to three LEDs of 60.
+const TREELINE: i32 = 65536 / 24;
+/// Stars only show above this height, clear of the glow.
+const STARS_FROM: u16 = 16_384;
+const FOREST: RGB8 = RGB8 { r: 0, g: 3, b: 8 };
 const NIGHT: RGB8 = RGB8 { r: 2, g: 6, b: 36 };
 const BLUE_HOUR: RGB8 = RGB8 {
     r: 14,
@@ -25,19 +31,19 @@ const PEACH: RGB8 = RGB8 {
     b: 62,
 };
 
-/// A polar night day: the sun passes unseen below the horizon, giving only a rose
-/// and peach glow in the blue hour before the stars come back.
+/// A polar night day: the sun stays below the horizon, so a peach and rose glow
+/// only climbs into the blue hour above the treeline and sinks again before the
+/// stars come back.
 pub(in crate::effects) fn render<const N: usize>(runtime: &mut EffectRuntime<N>) {
     let day = runtime.phase(DAY_MS).wrapping_add(DAY_START);
     let light = (ease_wave16(day) >> 8) as u8;
-    // Crosses the strip around noon, from well off one end to well off the other.
-    let sun = i64::from(day) * 2 - 32768;
+    let reach = GLOW_LOW + (GLOW_HIGH - GLOW_LOW) * u32::from(light) / 255;
     let clock_us = runtime.clock_us;
+    let soft = 65536 / N as i32;
 
     for (index, pixel) in runtime.frame.iter_mut().enumerate() {
-        let pos = strip_position16::<N>(index);
-        let distance = (i64::from(pos) - sun).unsigned_abs() as u32;
-        let near = (GLOW_REACH.saturating_sub(distance) * 255 / GLOW_REACH) as u8;
+        let y = strip_position16::<N>(index);
+        let near = (reach.saturating_sub(u32::from(y)) * 255 / reach) as u8;
         let rose = scale8(scale8(near, light), 235);
         let peach = scale8(
             near.saturating_sub(120).saturating_mul(2),
@@ -47,13 +53,13 @@ pub(in crate::effects) fn render<const N: usize>(runtime: &mut EffectRuntime<N>)
         let sky = blend_rgb(blend_rgb(NIGHT, BLUE_HOUR, light), ROSE, rose);
         let glow = blend_rgb(sky, PEACH, peach);
 
-        let star = if hash(index as u32 ^ 0xcafe).is_multiple_of(7) {
+        let star = if y > STARS_FROM && hash(index as u32 ^ 0xcafe).is_multiple_of(7) {
             let twinkle = value_noise(index as u32, noise_time(clock_us, 700));
             scale8(twinkle, 150_u8.saturating_sub(light.saturating_mul(3)))
         } else {
             0
         };
-        *pixel = add_rgb(
+        let lit = add_rgb(
             glow,
             RGB8 {
                 r: star,
@@ -61,5 +67,7 @@ pub(in crate::effects) fn render<const N: usize>(runtime: &mut EffectRuntime<N>)
                 b: star,
             },
         );
+        let trees = band(i32::from(y) + soft / 2, -soft, TREELINE, soft);
+        *pixel = blend_rgb(lit, FOREST, trees);
     }
 }

@@ -28,21 +28,19 @@ fn drift_height(clock_ms: u64) -> u64 {
     }
 }
 
-/// Flakes fall along the strip at their own speeds and pile up in a drift at the
-/// last LED, which grows until it melts away. Faster flakes are nearer, so brighter.
+/// Flakes fall at their own speeds and pile up in a drift on the ground, which
+/// grows until it melts away. Faster flakes are nearer, so brighter.
 pub(in crate::effects) fn render<const N: usize>(runtime: &mut EffectRuntime<N>) {
     let clock_us = runtime.clock_us;
     let clock_ms = clock_us / 1000;
-    let height = drift_height(clock_ms) as i32;
-    let surface = 65536 - height;
+    let surface = drift_height(clock_ms) as i32;
     let soft = 65536 / N as i32;
 
     for (index, pixel) in runtime.frame.iter_mut().enumerate() {
-        let pos = i32::from(strip_position16::<N>(index));
-        let depth = pos - surface;
-        let snow = band(pos, surface, 65536 + soft, soft);
+        let y = i32::from(strip_position16::<N>(index)) + soft / 2;
+        let snow = band(y, -soft, surface, soft);
         // Bluish at the fresh surface, packed white further down, with a little glitter.
-        let packing = (depth.max(0) / 16).min(255) as u8;
+        let packing = ((surface - y).max(0) / 16).min(255) as u8;
         let glitter = value_noise(index as u32, noise_time(clock_us, 240)) / 4;
         let drift = scale_rgb(
             blend_rgb(scale_rgb(BLUE, 180), WHITE, packing.saturating_add(90)),
@@ -52,18 +50,22 @@ pub(in crate::effects) fn render<const N: usize>(runtime: &mut EffectRuntime<N>)
     }
 
     let newest = clock_ms / SPAWN_MS;
+    let fall_depth = 65535 - surface as u64;
     for flake in newest.saturating_sub(FLAKE_SLOTS)..=newest {
-        let random = hash(flake as u32);
-        let span = u64::from(random % 256);
+        let span = u64::from(hash(flake as u32) % 256);
         let fall_ms = MAX_FALL_MS - (MAX_FALL_MS - MIN_FALL_MS) * span / 255;
         let age_ms = clock_ms.saturating_sub(flake * SPAWN_MS);
-        let at = age_ms * 65535 / fall_ms;
-        let room = (surface as u64).saturating_sub(at).min(at);
-        if room > 0 && at <= 65535 {
+        let fallen = age_ms * 65535 / fall_ms;
+        let room = fall_depth.saturating_sub(fallen).min(fallen);
+        if room > 0 {
             // Fades at both ends: flakes must not pop in at the sky or out at the drift.
             let fade = (room * 255 / FLAKE_FADE).min(255) as u8;
             let level = scale8(90 + (span * 165 / 255) as u8, fade);
-            add_smooth_dot(&mut runtime.frame, at as u16, scale_rgb(WHITE, level));
+            add_smooth_dot(
+                &mut runtime.frame,
+                (65535 - fallen) as u16,
+                scale_rgb(WHITE, level),
+            );
         }
     }
 }

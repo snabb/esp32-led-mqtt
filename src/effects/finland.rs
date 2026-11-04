@@ -1,3 +1,4 @@
+// Directional effects here draw a vertical strip with the first LED at the bottom.
 pub(super) mod candles;
 pub(super) mod flag;
 pub(super) mod frost;
@@ -117,7 +118,7 @@ mod tests {
         EffectId::FinlandRibbon,
         EffectId::FinlandFlagWave,
         EffectId::FinlandCrossWave,
-        EffectId::FinlandFlagParade,
+        EffectId::FinlandFlagRaising,
         EffectId::FinlandFrost,
         EffectId::FinlandMosaic,
         EffectId::FinlandSnowdrift,
@@ -155,7 +156,7 @@ mod tests {
     }
 
     #[test]
-    fn flag_wave_keeps_the_bar_at_its_proportional_place() {
+    fn flag_wave_keeps_the_arm_in_the_middle_of_the_strip() {
         let mut runtime = runtime(EffectId::FinlandFlagWave);
         let mut whiteness = [0_u32; 60];
         for frame in 0..1200 {
@@ -163,24 +164,38 @@ mod tests {
                 *sum += u32::from(p.r);
             }
         }
-        // 5:3:10 on 60 LEDs puts the bar on LEDs 17..27.
-        assert!(whiteness[21] < whiteness[8] / 4);
-        assert!(whiteness[21] < whiteness[45] / 4);
+        // 4:3:4 on 60 LEDs puts the arm on LEDs 22..38.
+        assert!(whiteness[30] < whiteness[8] / 4);
+        assert!(whiteness[30] < whiteness[52] / 4);
     }
 
     #[test]
-    fn candles_burn_in_six_warm_flames() {
+    fn snowdrift_piles_up_at_the_bottom() {
+        let mut runtime = runtime(EffectId::FinlandSnowdrift);
+        let mut frame = [RGB8::default(); 60];
+        // 70 s in, the drift has grown but not yet melted.
+        for index in 0..4200 {
+            frame = *runtime.render(index * FRAME_US);
+        }
+        assert!(frame[0].r > 150);
+        assert!(frame[59].r < 100);
+    }
+
+    #[test]
+    fn candles_burn_in_two_warm_flames() {
         let mut runtime = runtime(EffectId::FinlandCandles);
         let mut frame = [RGB8::default(); 60];
         for index in 0..1200 {
             frame = *runtime.render(index * FRAME_US);
         }
-        let flames = (1..59)
-            .filter(|&i| {
-                let is_peak = frame[i].r >= frame[i - 1].r && frame[i].r > frame[i + 1].r;
-                is_peak && frame[i].r > 100 && frame[i].r > frame[i].b
-            })
-            .count();
-        assert_eq!(flames, 6);
+        for candle in [&frame[..30], &frame[30..]] {
+            let flame = candle
+                .iter()
+                .max_by_key(|p| u16::from(p.r) + u16::from(p.g));
+            let flame = flame.unwrap();
+            assert!(flame.r > 150 && u16::from(flame.r) > u16::from(flame.b) * 2);
+        }
+        // Dusk shows below the lower candle.
+        assert!(frame[0].b > frame[0].r);
     }
 }

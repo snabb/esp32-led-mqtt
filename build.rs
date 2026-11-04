@@ -156,17 +156,26 @@ fn emit_hardware() {
         .as_bool()
         .expect("power_active_high");
     let level = if active_high { "High" } else { "Low" };
+    // Optional: the OTA identity hashes this file's exact bytes, so requiring the
+    // field would make every installed device reject its next update.
+    let reversed = match &profile["reverse_direction"] {
+        serde_json::Value::Null => false,
+        value => value
+            .as_bool()
+            .expect("reverse_direction must be a boolean"),
+    };
     let frame = number("frame_interval_us");
     assert!((1_000..=1_000_000).contains(&frame));
     let id = format!(
-        "{board}-{}-{}-{count}led-d{data}-b{button_id}-p{power_id}{}",
+        "{board}-{}-{}-{count}led-d{data}-b{button_id}-p{power_id}{}{}",
         text("timing"),
         text("color_order"),
         if !active_high && power_id != "none" {
             "low"
         } else {
             ""
-        }
+        },
+        if reversed { "-rev" } else { "" }
     );
     let digest = Sha256::digest(&bytes);
     let hash: String = digest[..6]
@@ -178,6 +187,7 @@ fn emit_hardware() {
     let generated = format!(
         r#"
 const LED_COUNT: usize = {count};
+const LED_REVERSED: bool = {reversed};
 const LED_POWER_ACTIVE_LEVEL: esp_hal::gpio::Level = esp_hal::gpio::Level::{level};
 const LED_FRAME_INTERVAL: embassy_time::Duration = embassy_time::Duration::from_micros({frame});
 const LED_TIMING: esp_hal_smartled::Timing = esp_hal_smartled::{timing};

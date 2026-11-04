@@ -241,7 +241,7 @@ async fn run_led_loop(mut strip: LedStrip<'static>, mut led_power: Option<Output
             led_power_on = true;
         }
 
-        let output = match (light_on, state.effect) {
+        let mut output = match (light_on, state.effect) {
             (false, _) => [RGB8 { r: 0, g: 0, b: 0 }; LED_COUNT],
             (true, Some(effect_id)) => {
                 effect_runtime.set_effect(effect_params(effect_id, state));
@@ -250,6 +250,9 @@ async fn run_led_loop(mut strip: LedStrip<'static>, mut led_power: Option<Output
             (true, None) => corrected(&[state.color; LED_COUNT], state.brightness),
         };
 
+        if LED_REVERSED {
+            output.reverse();
+        }
         write_frame(&mut strip, &output);
         if !light_on && led_power_on {
             if let Some(power) = led_power.as_mut() {

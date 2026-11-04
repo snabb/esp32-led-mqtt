@@ -126,14 +126,16 @@ Effects: Rainbow, Color Wipe, Scan, Twinkle, Random Twinkle, Fireworks, Flicker,
 Breathe, Theater Chase, Confetti, Sinelon, Juggle, Fire 2012, Pacifica, Aurora,
 Plasma Flow, Static Noise, Police Car.
 
-Finland effects use fixed palettes:
+Finland effects use fixed palettes and are drawn for a vertical strip with the
+first LED at the bottom (`reverse_direction` in `hardware.json` flips a strip
+mounted the other way up):
 
-- Flag: Finland Flag Wave (row along the flag, 5:3:10), Finland Cross Wave (row
-  drifting through the whole flag), Finland Flag Parade.
+- Flag: Finland Flag Wave (column through the flag, 4:3:4), Finland Cross Wave
+  (column drifting across the whole flag), Finland Flag Raising (the strip is the
+  flagpole).
 - Blue and white: Finland Snow, Finland Blue White Twinkle, Finland Snowfall,
-  Finland Ribbon, Finland Frost, Finland Mosaic, Finland Snowdrift (flakes pile
-  up at the last LED).
-- Scenes: Finland Candles (two in each window, as on Independence Day), Finland
+  Finland Ribbon, Finland Frost, Finland Mosaic, Finland Snowdrift.
+- Scenes: Finland Candles (two, as in windows on Independence Day), Finland
   Revontulet, Finland Kaamos, Finland Sauna, Finland Lakeland.
 
 After a reboot the strip stays dark until the device reaches the MQTT broker,
