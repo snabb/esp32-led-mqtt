@@ -104,7 +104,7 @@ The device saves the settings and reboots. For every field, see
 espflash monitor --chip esp32c6 --port $PORT
 ```
 
-Look for `Device identity esp32_led_mqtt_XXXXXX` (its MQTT topic prefix, made
+Look for `Device identity esp32-led-XXXXXX` (its MQTT topic prefix, made
 from the last six hex digits of the MAC address), then `Network ready with IP`
 and `MQTT connected`. Home Assistant should now list a new **ESP32 LED MQTT**
 device. Close the monitor before using `provision.py` again, because both use
@@ -154,10 +154,10 @@ active-low and uses the internal pull-up.
 
 ### MQTT without Home Assistant
 
-Send JSON commands to `esp32_led_mqtt_XXXXXX/light/set`:
+Send JSON commands to `esp32-led-XXXXXX/light/set`:
 
 ```sh
-mosquitto_pub -h BROKER -t esp32_led_mqtt_XXXXXX/light/set \
+mosquitto_pub -h BROKER -t esp32-led-XXXXXX/light/set \
   -m '{"state":"ON","effect":"Fire 2012","brightness":64}'
 ```
 

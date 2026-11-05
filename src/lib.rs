@@ -12,6 +12,13 @@ pub mod random_color;
 
 use smart_leds::RGB8;
 
+/// The one name a device goes by everywhere: mDNS host, MQTT client ID and topic prefix,
+/// and Home Assistant IDs. Hyphenated because DNS host names can't contain underscores.
+pub fn device_slug(mac_suffix: [u8; 3]) -> heapless::String<16> {
+    let [a, b, c] = mac_suffix;
+    heapless::format!("esp32-led-{a:02x}{b:02x}{c:02x}").expect("fixed-length device slug")
+}
+
 /// Home Assistant name for "no effect", which shows the solid color.
 pub const EFFECT_DISABLED_NAME: &str = "None";
 /// Display names in `EffectId` declaration order; also the button cycle order.
@@ -419,6 +426,12 @@ impl XorShift32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn device_slug_is_a_valid_host_name_label() {
+        assert_eq!(device_slug([0x3e, 0xf8, 0xd0]).as_str(), "esp32-led-3ef8d0");
+        assert_eq!(device_slug([0, 1, 2]).as_str(), "esp32-led-000102");
+    }
 
     #[test]
     fn brightness_gamma_never_increases_channels() {

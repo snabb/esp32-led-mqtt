@@ -330,7 +330,7 @@ async fn publish_speed_discovery<IO: minimq::Io>(
     let mut payload: heapless::String<700> = heapless::String::new();
     write!(
         payload,
-        r#"{{"name":"Effect Speed","unique_id":"{}_effect_speed","command_topic":"{}","state_topic":"{}","availability_topic":"{}","payload_available":"online","payload_not_available":"offline","min":1,"max":{},"step":1,"mode":"slider","device":{{"identifiers":["{}"],"name":"{}","manufacturer":"esp32-led-mqtt","model":"{}"}}}}"#,
+        r#"{{"name":"Effect Speed","unique_id":"{}-effect-speed","command_topic":"{}","state_topic":"{}","availability_topic":"{}","payload_available":"online","payload_not_available":"offline","min":1,"max":{},"step":1,"mode":"slider","device":{{"identifiers":["{}"],"name":"{}","manufacturer":"esp32-led-mqtt","model":"{}"}}}}"#,
         identity.slug,
         identity.speed_command_topic,
         identity.speed_state_topic,
@@ -359,7 +359,7 @@ async fn publish_temperature_discovery<IO: minimq::Io>(
     let mut payload: heapless::String<700> = heapless::String::new();
     write!(
         payload,
-        r#"{{"name":"Chip Temperature","unique_id":"{}_temperature","state_topic":"{}","availability_topic":"{}","payload_available":"online","payload_not_available":"offline","device_class":"temperature","unit_of_measurement":"°C","state_class":"measurement","entity_category":"diagnostic","suggested_display_precision":1,"device":{{"identifiers":["{}"],"name":"{}","manufacturer":"esp32-led-mqtt","model":"{}"}}}}"#,
+        r#"{{"name":"Chip Temperature","unique_id":"{}-temperature","state_topic":"{}","availability_topic":"{}","payload_available":"online","payload_not_available":"offline","device_class":"temperature","unit_of_measurement":"°C","state_class":"measurement","entity_category":"diagnostic","suggested_display_precision":1,"device":{{"identifiers":["{}"],"name":"{}","manufacturer":"esp32-led-mqtt","model":"{}"}}}}"#,
         identity.slug,
         identity.temperature_state_topic,
         identity.availability_topic,
@@ -378,7 +378,7 @@ async fn publish_firmware_version<IO: minimq::Io>(
     let mut payload: heapless::String<700> = heapless::String::new();
     write!(
         payload,
-        r#"{{"name":"Firmware Version","unique_id":"{}_firmware","state_topic":"{}","availability_topic":"{}","payload_available":"online","payload_not_available":"offline","entity_category":"diagnostic","device":{{"identifiers":["{}"],"name":"{}","manufacturer":"esp32-led-mqtt","model":"{}"}}}}"#,
+        r#"{{"name":"Firmware Version","unique_id":"{}-firmware","state_topic":"{}","availability_topic":"{}","payload_available":"online","payload_not_available":"offline","entity_category":"diagnostic","device":{{"identifiers":["{}"],"name":"{}","manufacturer":"esp32-led-mqtt","model":"{}"}}}}"#,
         identity.slug,
         identity.firmware_state_topic,
         identity.availability_topic,

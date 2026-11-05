@@ -83,8 +83,8 @@ appears in every OTA status message.
    `-u USER -P PASSWORD` if your broker needs them:
 
    ```sh
-   mosquitto_sub -h BROKER -t esp32_led_mqtt_XXXXXX/ota/status -v &
-   mosquitto_pub -h BROKER -t esp32_led_mqtt_XXXXXX/ota/set -f command.json
+   mosquitto_sub -h BROKER -t esp32-led-XXXXXX/ota/status -v &
+   mosquitto_pub -h BROKER -t esp32-led-XXXXXX/ota/set -f command.json
    ```
 
 A successful update reports `downloading` (in 10 % steps), `verifying`,

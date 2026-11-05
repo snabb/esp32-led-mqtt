@@ -10,7 +10,7 @@ pub const DEVICE_MODEL: &str = "ESP32-C6";
     allow(dead_code, reason = "the topics are only read by MQTT")
 )]
 pub struct DeviceIdentity {
-    pub slug: heapless::String<32>,
+    pub slug: heapless::String<16>,
     pub discovery_topic: heapless::String<80>,
     pub speed_discovery_topic: heapless::String<80>,
     pub command_topic: heapless::String<64>,
@@ -29,17 +29,13 @@ pub struct DeviceIdentity {
 impl DeviceIdentity {
     pub fn from_base_mac(mac: efuse::MacAddress) -> Self {
         let mac = mac.as_bytes();
-        let suffix: heapless::String<6> =
-            heapless::format!("{:02x}{:02x}{:02x}", mac[3], mac[4], mac[5])
-                .expect("device identity suffix capacity too small");
-        let slug: heapless::String<32> = heapless::format!("esp32_led_mqtt_{}", suffix)
-            .expect("device identity slug capacity too small");
+        let slug = esp32_led_mqtt::device_slug([mac[3], mac[4], mac[5]]);
 
         Self {
             discovery_topic: heapless::format!("homeassistant/light/{}/config", slug)
                 .expect("device discovery topic capacity too small"),
             speed_discovery_topic: heapless::format!(
-                "homeassistant/number/{}_effect_speed/config",
+                "homeassistant/number/{}-effect-speed/config",
                 slug
             )
             .expect("device speed discovery topic capacity too small"),
@@ -54,14 +50,14 @@ impl DeviceIdentity {
             availability_topic: heapless::format!("{}/status", slug)
                 .expect("device availability topic capacity too small"),
             temperature_discovery_topic: heapless::format!(
-                "homeassistant/sensor/{}_temperature/config",
+                "homeassistant/sensor/{}-temperature/config",
                 slug
             )
             .expect("device temperature discovery topic capacity too small"),
             temperature_state_topic: heapless::format!("{}/temperature/state", slug)
                 .expect("device temperature state topic capacity too small"),
             firmware_discovery_topic: heapless::format!(
-                "homeassistant/sensor/{}_firmware/config",
+                "homeassistant/sensor/{}-firmware/config",
                 slug
             )
             .expect("device firmware discovery topic capacity too small"),
