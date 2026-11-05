@@ -58,9 +58,12 @@ controlled comparison. These are from instrumented builds that log long gaps bet
 | Whole request from `coap.py`, including its handshake | about 0.59 s | about 0.24 s |
 
 - Uploading 1.49 MB took 45–56 s, about 30 kB/s, with one run of 107 s. CoAP Block1 sends one
-  block per round trip. LED gaps were about 64 ms per flash chunk and 541 ms for the final read-back.
+  block per round trip. For comparison, an HTTPS download from Oracle ran at about 39 kB/s, and a
+  whole update of the same image took 46 s including its reboot and trial. LED gaps were about 64 ms per flash chunk and 541 ms for the final read-back.
 - Peak main stack was 31.7 KB of 127 KB, reached during boot.
 - Lowest free heap was 111.7 KB running idle and 67.8 KB during an HTTPS download.
+- One boot of the `mqtt`-only build, out of five, didn't reach Home Assistant within 60 s. There
+  is no serial log of it, and four more boots reported within 5 s, so the cause is unknown.
 
 Host tests cover the library crate (`src/lib.rs` and its modules): effects, OTA
 command, HTTP and image validation, the TLS flag policy, settings validation,
@@ -241,13 +244,12 @@ Tested on an M5Stack NanoC6 (4 MiB):
 - Firmware upload in both slot directions, interrupted, and with a wrong digest
 - A trial confirmed by CoAP during a broker outage
 - A trial failure that rolls back, followed by more updates and another rollback
-- `coap` without other features. Without any features: boot, Wi-Fi and USB provisioning
+- HTTPS OTA started over MQTT, from the build workflow through to trial confirmation
+- `coap` alone, `mqtt` alone, and the defaults. Without any features: boot, Wi-Fi and USB
+  provisioning
 
 Not yet tested on hardware:
 
-- Since moving to `ImageWriter`, an HTTPS update that activates. Downloads have passed TLS and
-  the digest check, stopping at activation with a deliberately wrong CRC
-- `mqtt` without `coap`, under the code on this branch
 - Power loss during an OTA or settings write
 - `busy` replies during an update
 - TLS failures (bad chain, host name or date)
