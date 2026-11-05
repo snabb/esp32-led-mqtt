@@ -41,11 +41,11 @@ the 2.03 MB slot, BSS includes the 164 KiB heap, and stack is what remains for i
 | none | 679,034 | 166,032 | 211,936 |
 | `mqtt` | 1,233,488 | 184,040 | 191,368 |
 | `mqtt`, `mdns` | 1,264,260 | 190,920 | 184,280 |
-| `coap` | 1,391,698 | 225,016 | 149,864 |
-| `coap`, `mdns` | 1,420,958 | 231,896 | 142,752 |
-| `mqtt`, `mdns`, `coap` | 1,492,804 | 247,584 | 126,824 |
+| `coap` | 1,393,292 | 226,184 | 148,696 |
+| `coap`, `mdns` | 1,422,634 | 233,064 | 141,584 |
+| `mqtt`, `mdns`, `coap` | 1,494,716 | 248,752 | 125,656 |
 
-Of the CoAP cost, the server task is about 47 KB of BSS and the log ring 8 KB.
+Of the CoAP cost, the server task is about 48 KB of BSS and the log ring 8 KB.
 
 ### CoAP measurements
 
