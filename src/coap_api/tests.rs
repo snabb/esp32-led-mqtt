@@ -680,7 +680,7 @@ fn client_keys_are_added_and_removed_through_the_flash_job() {
         let path = format!("/coap/clients?fp={}", fingerprint(&second));
         assert_eq!(clients(Code::DELETE, &path, b"").await.0, Code::DELETED);
         let saved = device.saved_clients.borrow().clone().unwrap();
-        assert_eq!(saved.as_slice(), [first.clone()]);
+        assert_eq!(saved.as_slice(), core::slice::from_ref(&first));
         assert_eq!(keys.load(&saved), 0);
 
         let path = format!("/coap/clients?fp={}", fingerprint(&first));
@@ -943,7 +943,7 @@ fn a_retransmitted_block_is_stored_once() {
                 .peer(DEVICE)
                 .request(Code::PUT, "/firmware/image")
                 .unwrap()
-                .uint_option(OptionNumber::BLOCK1, block.into())
+                .uint_option(OptionNumber::BLOCK1, block)
                 .unwrap()
                 .payload(&image[..1024])
                 .unwrap()
