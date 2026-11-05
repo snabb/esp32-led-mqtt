@@ -1,4 +1,7 @@
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::{
+    borrow::BorrowMut,
+    sync::atomic::{AtomicBool, Ordering},
+};
 
 use embassy_net::Stack;
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, watch::Watch};
@@ -13,7 +16,7 @@ use log::{info, warn};
 mod download;
 
 #[cfg(feature = "_control")]
-pub use download::{client, pull_enabled, submit, update};
+pub use download::{client, pull_enabled, rollback_enabled, submit, update};
 
 /// What `flash::task` needs to start OTA downloads, if this build can do them.
 #[cfg(feature = "_control")]
@@ -29,23 +32,45 @@ pub static COAP_AUTHENTICATED: AtomicBool = AtomicBool::new(false);
 /// Latest OTA status; each control plane holds one receiver.
 pub static STATUS: Watch<CriticalSectionRawMutex, String<192>, 2> = Watch::new();
 
-pub struct FlashAccess<'a>(&'a mut FlashStorage<'static>);
-impl embedded_storage::ReadStorage for FlashAccess<'_> {
+pub struct FlashAccess<S>(pub S);
+impl<S: BorrowMut<FlashStorage<'static>>> embedded_storage::ReadStorage for FlashAccess<S> {
     type Error = esp_storage::FlashStorageError;
     fn read(&mut self, offset: u32, bytes: &mut [u8]) -> Result<(), Self::Error> {
-        self.0.read(offset, bytes)
+        self.0.borrow_mut().read(offset, bytes)
     }
     fn capacity(&self) -> usize {
-        self.0.capacity()
+        self.0.borrow().capacity()
     }
 }
-impl embedded_storage::Storage for FlashAccess<'_> {
+impl<S: BorrowMut<FlashStorage<'static>>> embedded_storage::Storage for FlashAccess<S> {
     fn write(&mut self, offset: u32, bytes: &[u8]) -> Result<(), Self::Error> {
-        self.0.write(offset, bytes)
+        self.0.borrow_mut().write(offset, bytes)
     }
 }
 
-fn status(state: &str, detail: &str, percent: u8) {
+/// The flash of the slot this image isn't running from.
+#[cfg(feature = "_control")]
+pub struct UpdateSlot<S: BorrowMut<FlashStorage<'static>>>(pub Ota<FlashAccess<S>>);
+
+#[cfg(feature = "_control")]
+impl<S: BorrowMut<FlashStorage<'static>>> ota_protocol::ImageTarget for UpdateSlot<S> {
+    fn begin(&mut self, size: u32, crc32: u32) -> Result<(), ota_protocol::TargetError> {
+        self.0
+            .begin(size, crc32)
+            .map_err(|_| ota_protocol::TargetError)
+    }
+    fn write(&mut self, bytes: &[u8]) -> Result<(), ota_protocol::TargetError> {
+        self.0
+            .write(bytes)
+            .map(|_| ())
+            .map_err(|_| ota_protocol::TargetError)
+    }
+    fn activate(&mut self) -> Result<(), ota_protocol::TargetError> {
+        self.0.finish(true).map_err(|_| ota_protocol::TargetError)
+    }
+}
+
+pub fn status(state: &str, detail: &str, percent: u8) {
     crate::memory::report(state);
     let value = heapless::format!(
         "{{\"state\":\"{}\",\"detail\":\"{}\",\"progress\":{},\"running_build\":\"{}\"}}",

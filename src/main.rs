@@ -235,7 +235,11 @@ async fn main(spawner: Spawner) -> ! {
         );
 
         #[cfg(feature = "_control")]
-        if settings.mqtt_tls || ota::pull_enabled() {
+        // This also starts the SHA work queue, which image hashing needs even without TLS.
+        if settings.mqtt_tls
+            || ota::pull_enabled()
+            || (cfg!(feature = "coap") && ota::rollback_enabled())
+        {
             download_context = tls::initialize(
                 mbedtls_rs::sys::hook::backend::esp::EspAccel::new()
                     .with_sha(peripherals.SHA)

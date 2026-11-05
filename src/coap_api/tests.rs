@@ -21,7 +21,11 @@ use rand_core::{TryCryptoRng, TryRng};
 use smart_leds::RGB8;
 
 use super::*;
-use crate::{EffectId, log_buffer::LogRing};
+use crate::{
+    EffectId,
+    log_buffer::LogRing,
+    ota_protocol::{IMAGE_PREFIX_SIZE, PROJECT, TargetError},
+};
 
 const DEVICE_KEY: &str = "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20";
 const CLIENT_KEY: [u8; 32] = [9; 32];
@@ -64,6 +68,75 @@ struct FakeDevice {
     written_config: RefCell<Option<DeviceConfig>>,
     saved_clients: RefCell<Option<ClientList>>,
     reboots: Cell<u32>,
+    upload_enabled: Cell<bool>,
+    flash: FakeFlash,
+}
+
+/// What a firmware upload did to the flash.
+#[derive(Default)]
+struct FlashLog {
+    begun: Cell<u32>,
+    bytes: RefCell<StdVec<u8>>,
+    activated: Cell<bool>,
+    finished: RefCell<StdVec<bool>>,
+    statuses: RefCell<StdVec<(std::string::String, std::string::String)>>,
+    held_by_upload: Cell<bool>,
+    held_by_other: Cell<bool>,
+    progress: Cell<u32>,
+}
+
+type FakeFlash = std::rc::Rc<FlashLog>;
+
+struct FakeTarget(FakeFlash);
+
+impl Drop for FakeTarget {
+    fn drop(&mut self) {
+        self.0.held_by_upload.set(false);
+    }
+}
+
+impl ImageTarget for FakeTarget {
+    fn begin(&mut self, _: u32, _: u32) -> Result<(), TargetError> {
+        self.0.begun.set(self.0.begun.get() + 1);
+        self.0.bytes.borrow_mut().clear();
+        Ok(())
+    }
+    fn write(&mut self, bytes: &[u8]) -> Result<(), TargetError> {
+        self.0.bytes.borrow_mut().extend_from_slice(bytes);
+        Ok(())
+    }
+    fn activate(&mut self) -> Result<(), TargetError> {
+        self.0.activated.set(true);
+        Ok(())
+    }
+}
+
+struct FakeAccess(FakeFlash);
+
+impl UploadAccess for FakeAccess {
+    type Target = FakeTarget;
+    type Hash = sha2::Sha256;
+    fn acquire(&mut self) -> Option<FakeTarget> {
+        if self.0.held_by_other.get() || self.0.held_by_upload.get() {
+            return None;
+        }
+        self.0.held_by_upload.set(true);
+        Some(FakeTarget(self.0.clone()))
+    }
+    fn status(&mut self, state: &str, detail: &str, _: u8) {
+        self.0
+            .statuses
+            .borrow_mut()
+            .push((state.into(), detail.into()));
+    }
+    fn progress(&mut self) {
+        self.0.progress.set(self.0.progress.get() + 1);
+    }
+    fn finished(&mut self, activated: bool) {
+        // The flash must be free before the job slot is.
+        assert!(!self.0.held_by_upload.get());
+        self.0.finished.borrow_mut().push(activated);
+    }
 }
 
 const SETTINGS: &[u8] = br#"{"wifi_ssid":"home","wifi_password":"wifi-secret","mqtt_broker":"mqtt.example","mqtt_username":"me","mqtt_password":"mqtt-secret"}"#;
@@ -92,6 +165,8 @@ impl FakeDevice {
             written_config: RefCell::new(None),
             saved_clients: RefCell::new(None),
             reboots: Cell::new(0),
+            upload_enabled: Cell::new(true),
+            flash: FakeFlash::default(),
         }
     }
 }
@@ -158,6 +233,9 @@ impl Device for FakeDevice {
         self.reboots.set(self.reboots.get() + 1);
         Ok(())
     }
+    fn upload_enabled(&self) -> bool {
+        self.upload_enabled.get()
+    }
     fn authenticated(&self) {
         self.authenticated.set(true);
     }
@@ -196,7 +274,9 @@ fn session_with_notifier<F: AsyncFnOnce(Client<'_>, SocketAddr, Notifier<'_>)>(
         let protection = Edhoc::with_store(crypto(2), device_identity, keys).unwrap();
         let shared = ApiShared::new();
         let mut endpoint = ApiEndpoint::new(&shared, protection).unwrap();
-        let mut resources = Resources::new(device, keys);
+        let manifest = PendingManifest::new();
+        let mut resources =
+            Resources::new(device, keys, &manifest, FakeAccess(device.flash.clone()));
         let mut router = ApiRouter::new(&POLICY);
         resources.register(&mut router).unwrap();
         let mut application = Authenticated { device, router };
@@ -669,6 +749,278 @@ fn reboot_is_queued_unless_flash_is_busy() {
     assert_eq!(device.reboots.get(), 1);
 }
 
+const BUILD: &str = "test-1";
+
+fn test_image(size: usize) -> StdVec<u8> {
+    let mut image: StdVec<u8> = (0..size).map(|i| (i % 251) as u8).collect();
+    image[..IMAGE_PREFIX_SIZE].fill(0);
+    image[0] = 0xe9;
+    image[1] = 3;
+    image[12] = 13;
+    image[28..32].copy_from_slice(&256_u32.to_le_bytes());
+    image[32..36].copy_from_slice(&0xabcd5432_u32.to_le_bytes());
+    image[48..48 + BUILD.len()].copy_from_slice(BUILD.as_bytes());
+    image[80..80 + PROJECT.len()].copy_from_slice(PROJECT.as_bytes());
+    image
+}
+
+fn manifest_json(image: &[u8]) -> std::string::String {
+    let digest: [u8; 32] = sha2::Sha256::digest(image).into();
+    format!(
+        r#"{{"size":{},"crc32":7,"sha256":"{}","target":"esp32c6","build":"{BUILD}"}}"#,
+        image.len(),
+        hex(&digest)
+    )
+}
+
+async fn upload_image(
+    client: Client<'_>,
+    server: SocketAddr,
+    image: &[u8],
+) -> Result<Code, mai_coap::Error> {
+    let reply = client
+        .client(server)
+        .peer(DEVICE)
+        .upload(
+            Code::PUT,
+            "/firmware/image",
+            ContentFormat::OCTET_STREAM,
+            image,
+            6,
+        )
+        .await?;
+    Ok(reply.message()?.code())
+}
+
+#[test]
+fn firmware_upload_writes_checks_and_activates_the_image() {
+    let device = FakeDevice::new();
+    let keys = trusted_keys();
+    let image = test_image(10_000);
+    session(&device, CLIENT_KEY, &keys, async |client, server| {
+        let manifest = manifest_json(&image);
+        assert_eq!(
+            put(client, server, "/firmware/manifest", manifest.as_bytes()).await,
+            Code::CHANGED
+        );
+        assert_eq!(
+            upload_image(client, server, &image).await,
+            Ok(Code::CHANGED)
+        );
+    });
+    let flash = &device.flash;
+    assert_eq!(*flash.bytes.borrow(), image);
+    assert_eq!(flash.begun.get(), 1);
+    assert!(flash.activated.get());
+    assert_eq!(*flash.finished.borrow(), [true]);
+    assert!(!flash.held_by_upload.get());
+    assert!(flash.progress.get() >= 10);
+    let statuses = flash.statuses.borrow();
+    assert_eq!(statuses.first().unwrap().0, "uploading");
+    assert_eq!(statuses.last().unwrap().0, "rebooting");
+}
+
+#[test]
+fn firmware_upload_needs_a_manifest_for_each_image() {
+    let device = FakeDevice::new();
+    let keys = trusted_keys();
+    let image = test_image(5000);
+    session(&device, CLIENT_KEY, &keys, async |client, server| {
+        let refused = upload_image(client, server, &image).await;
+        assert_eq!(
+            refused,
+            Err(mai_coap::Error::Response(Code::PRECONDITION_FAILED))
+        );
+        assert!(!device.flash.held_by_upload.get());
+    });
+    assert_eq!(device.flash.begun.get(), 0);
+    assert!(!device.flash.activated.get());
+}
+
+#[test]
+fn firmware_with_the_wrong_digest_is_never_activated_and_frees_the_flash() {
+    let device = FakeDevice::new();
+    let keys = trusted_keys();
+    let image = test_image(10_000);
+    let mut corrupted = image.clone();
+    *corrupted.last_mut().unwrap() ^= 1;
+    session(&device, CLIENT_KEY, &keys, async |client, server| {
+        let manifest = manifest_json(&image);
+        put(client, server, "/firmware/manifest", manifest.as_bytes()).await;
+        assert_eq!(
+            upload_image(client, server, &corrupted).await,
+            Err(mai_coap::Error::Response(Code::BAD_REQUEST))
+        );
+        assert!(!device.flash.activated.get());
+        assert!(!device.flash.held_by_upload.get());
+        assert_eq!(*device.flash.finished.borrow(), [false]);
+        assert_eq!(
+            device.flash.statuses.borrow().last().unwrap(),
+            &("failed".into(), "sha256".into())
+        );
+
+        // The flash is free, so a good retry works.
+        put(client, server, "/firmware/manifest", manifest.as_bytes()).await;
+        assert_eq!(
+            upload_image(client, server, &image).await,
+            Ok(Code::CHANGED)
+        );
+    });
+    assert!(device.flash.activated.get());
+    assert_eq!(*device.flash.bytes.borrow(), image);
+}
+
+#[test]
+fn firmware_with_the_wrong_identity_never_reaches_flash() {
+    let device = FakeDevice::new();
+    let keys = trusted_keys();
+    let mut image = test_image(5000);
+    image[0] = 0;
+    session(&device, CLIENT_KEY, &keys, async |client, server| {
+        put(
+            client,
+            server,
+            "/firmware/manifest",
+            manifest_json(&image).as_bytes(),
+        )
+        .await;
+        assert_eq!(
+            upload_image(client, server, &image).await,
+            Err(mai_coap::Error::Response(Code::BAD_REQUEST))
+        );
+    });
+    assert_eq!(device.flash.begun.get(), 0);
+    assert!(device.flash.bytes.borrow().is_empty());
+    assert_eq!(*device.flash.finished.borrow(), [false]);
+}
+
+#[test]
+fn firmware_upload_waits_for_busy_flash_and_keeps_its_manifest() {
+    let device = FakeDevice::new();
+    let keys = trusted_keys();
+    let image = test_image(5000);
+    session(&device, CLIENT_KEY, &keys, async |client, server| {
+        put(
+            client,
+            server,
+            "/firmware/manifest",
+            manifest_json(&image).as_bytes(),
+        )
+        .await;
+        device.flash.held_by_other.set(true);
+        assert_eq!(
+            upload_image(client, server, &image).await,
+            Err(mai_coap::Error::Response(Code::UNAVAILABLE))
+        );
+        device.flash.held_by_other.set(false);
+        assert_eq!(
+            upload_image(client, server, &image).await,
+            Ok(Code::CHANGED)
+        );
+    });
+    assert!(device.flash.activated.get());
+}
+
+#[test]
+fn a_retransmitted_block_is_stored_once() {
+    use mai_coap::block::Block;
+
+    let device = FakeDevice::new();
+    let keys = trusted_keys();
+    let image = test_image(5000);
+    session(&device, CLIENT_KEY, &keys, async |client, server| {
+        put(
+            client,
+            server,
+            "/firmware/manifest",
+            manifest_json(&image).as_bytes(),
+        )
+        .await;
+        let block = Block::new(0, true, 6).unwrap().encode().unwrap();
+        for _ in 0..2 {
+            let reply = client
+                .client(server)
+                .peer(DEVICE)
+                .request(Code::PUT, "/firmware/image")
+                .unwrap()
+                .uint_option(OptionNumber::BLOCK1, block.into())
+                .unwrap()
+                .payload(&image[..1024])
+                .unwrap()
+                .send()
+                .unwrap()
+                .await
+                .unwrap();
+            assert_eq!(reply.message().unwrap().code(), Code::CONTINUE);
+        }
+    });
+    assert_eq!(
+        device.flash.begun.get(),
+        0,
+        "nothing flushed before 4096 bytes"
+    );
+    assert_eq!(device.flash.progress.get(), 1);
+}
+
+#[test]
+fn an_abandoned_upload_frees_the_flash_without_activating() {
+    let flash = FakeFlash::default();
+    let manifest = PendingManifest::new();
+    let image = test_image(5000);
+    manifest.set(Some(
+        Manifest::parse(manifest_json(&image).as_bytes()).unwrap(),
+    ));
+    let mut sink = FirmwareUpload {
+        access: FakeAccess(flash.clone()),
+        manifest: &manifest,
+        upload: None,
+    };
+    let key = BodyKey::from_request(
+        "192.0.2.1:5683".parse().unwrap(),
+        0,
+        None,
+        mai_coap::codec::MessageView::parse(&[0x40, 0x03, 0, 1]).unwrap(),
+    )
+    .unwrap();
+    sink.begin(&key, Some(image.len() as u64)).unwrap();
+    assert!(flash.held_by_upload.get());
+    sink.write(0, &image[..1024]).unwrap();
+
+    sink.abort();
+    assert!(!flash.held_by_upload.get());
+    assert!(!flash.activated.get());
+    assert_eq!(*flash.finished.borrow(), [false]);
+
+    // A second abort, or one with nothing running, has nothing to report.
+    sink.abort();
+    assert_eq!(*flash.finished.borrow(), [false]);
+}
+
+#[test]
+fn manifests_are_checked_up_front() {
+    let device = FakeDevice::new();
+    let keys = trusted_keys();
+    let image = test_image(5000);
+    session(&device, CLIENT_KEY, &keys, async |client, server| {
+        let path = "/firmware/manifest";
+        let manifest = manifest_json(&image);
+        assert_eq!(
+            send(client, server, Code::PUT, path, b"{").await,
+            (Code::BAD_REQUEST, b"invalid_command".to_vec())
+        );
+        let running = manifest.replace(BUILD, env!("FIRMWARE_BUILD_ID"));
+        assert_eq!(
+            send(client, server, Code::PUT, path, running.as_bytes()).await,
+            (Code::BAD_REQUEST, b"already_running".to_vec())
+        );
+        device.upload_enabled.set(false);
+        assert_eq!(
+            send(client, server, Code::PUT, path, manifest.as_bytes()).await,
+            (Code::UNAVAILABLE, b"unavailable".to_vec())
+        );
+    });
+}
+
 #[test]
 fn an_unknown_client_key_gets_nothing() {
     let device = FakeDevice::new();
@@ -718,6 +1070,8 @@ fn without_authentication_only_discovery_answers() {
             (Code::DELETE, "/coap/clients"),
             (Code::POST, "/firmware/update"),
             (Code::POST, "/reboot"),
+            (Code::PUT, "/firmware/manifest"),
+            (Code::PUT, "/firmware/image"),
         ] {
             let reply = unprotected
                 .request(method, path)
@@ -744,6 +1098,7 @@ fn without_authentication_only_discovery_answers() {
     assert!(device.saved_clients.borrow().is_none());
     assert!(device.ota_commands.borrow().is_empty());
     assert_eq!(device.reboots.get(), 0);
+    assert_eq!(device.flash.begun.get(), 0);
 }
 
 #[test]

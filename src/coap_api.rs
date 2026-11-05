@@ -7,9 +7,11 @@
 use core::{cell::RefCell, fmt::Write, net::Ipv4Addr};
 
 use critical_section::Mutex;
+use digest::Digest;
 use heapless::{String, Vec};
 use mai_coap::{
     Error,
+    block::{BodyKey, UploadSink},
     codec::{Code, ContentFormat, OptionNumber},
     crypto::SoftwareCrypto,
     delegate_application,
@@ -26,12 +28,13 @@ use crate::{
     device_config::{self, CoapCredential, DeviceConfig},
     light_command::{LightState, LightUpdate, light_state_json, parse_light_command, parse_speed},
     log_buffer::LogRead,
+    ota_protocol::{ImageTarget, ImageWriter, Manifest, SLOT_SIZE},
 };
 
 pub const PORT: u16 = 5683;
 /// Leaves room for a 1024-byte block plus OSCORE's option and tag.
 pub const DATAGRAM_BYTES: usize = 1152;
-const ROUTES: usize = 11;
+const ROUTES: usize = 13;
 const UPLOADS: usize = 2;
 const UPLOAD_BYTES: usize = 2048;
 /// Keep one context per client, plus one while it runs EDHOC again.
@@ -49,6 +52,8 @@ const SEND_QUEUE: usize = 4;
 const COMMANDS: usize = 0;
 /// A protected Block1 upload holds its security context, so each upload needs a lease.
 const BODY_CONTEXTS: usize = UPLOADS;
+/// An upload stalled this long ends, so that the flash becomes available again.
+const UPLOAD_TIMEOUT_MS: u64 = 30_000;
 /// Replies are shared between the send queue and the reply cache.
 const PACKETS: usize = 8;
 
@@ -233,8 +238,149 @@ pub trait Device {
     fn save_clients(&self, clients: ClientList) -> Result<(), Busy>;
     /// Queues a reboot, after any reply has had time to leave.
     fn reboot(&self) -> Result<(), Busy>;
+    /// Whether an uploaded image could be activated: a rollback bootloader must be there
+    /// to catch one that doesn't work.
+    fn upload_enabled(&self) -> bool;
     /// A request passed authentication, which an OTA trial counts as proof of health.
     fn authenticated(&self);
+}
+
+/// What a firmware upload needs from the firmware.
+pub trait UploadAccess {
+    type Target: ImageTarget;
+    /// SHA-256, called from the endpoint driver.
+    type Hash: Digest;
+    /// Exclusive use of the flash, or `None` if something else is using it.
+    fn acquire(&mut self) -> Option<Self::Target>;
+    /// Publishes an OTA status.
+    fn status(&mut self, state: &str, detail: &str, percent: u8);
+    /// A block was stored, so the upload hasn't hung.
+    fn progress(&mut self);
+    /// The upload ended and any `Target` has been dropped. `activated` means a reboot into
+    /// the new image is due.
+    fn finished(&mut self, activated: bool);
+}
+
+/// The manifest of the upload that comes next.
+pub struct PendingManifest(Mutex<RefCell<Option<Manifest>>>);
+
+impl PendingManifest {
+    pub const fn new() -> Self {
+        Self(Mutex::new(RefCell::new(None)))
+    }
+    fn set(&self, manifest: Option<Manifest>) {
+        critical_section::with(|cs| *self.0.borrow_ref_mut(cs) = manifest);
+    }
+    fn take(&self) -> Option<Manifest> {
+        critical_section::with(|cs| self.0.borrow_ref_mut(cs).take())
+    }
+}
+
+impl Default for PendingManifest {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+struct Upload<T, H> {
+    writer: ImageWriter<H>,
+    target: T,
+    last_percent: u8,
+}
+
+/// `/firmware/image`. Runs on the endpoint driver, but flash calls would stall everything
+/// sharing the executor wherever they ran, and this keeps replies piggybacked.
+struct FirmwareUpload<'d, A: UploadAccess> {
+    access: A,
+    manifest: &'d PendingManifest,
+    upload: Option<Upload<A::Target, A::Hash>>,
+}
+
+impl<A: UploadAccess> FirmwareUpload<'_, A> {
+    fn end(&mut self, failure: Option<&str>) {
+        if let Some(upload) = self.upload.take() {
+            // The flash must be free before the job slot is.
+            drop(upload);
+            if let Some(reason) = failure {
+                self.access.status("failed", reason, 0);
+            }
+            self.access.finished(false);
+        }
+    }
+}
+
+/// The client caused this, so it's told; the status says exactly what happened.
+fn rejected_image() -> Error {
+    Error::Response(Code::BAD_REQUEST)
+}
+
+impl<A: UploadAccess> UploadSink for FirmwareUpload<'_, A> {
+    fn begin(&mut self, _: &BodyKey, size: Option<u64>) -> Result<(), Error> {
+        self.end(Some("restarted"));
+        let manifest = self
+            .manifest
+            .take()
+            .ok_or(Error::Response(Code::PRECONDITION_FAILED))?;
+        if size.is_some_and(|size| size != u64::from(manifest.size)) {
+            return Err(rejected_image());
+        }
+        let Some(target) = self.access.acquire() else {
+            // It stays valid for when the flash is free.
+            self.manifest.set(Some(manifest));
+            return Err(Error::Capacity);
+        };
+        self.upload = Some(Upload {
+            writer: ImageWriter::new(&manifest),
+            target,
+            last_percent: 0,
+        });
+        self.access.status("uploading", "", 0);
+        Ok(())
+    }
+
+    fn write(&mut self, _: usize, bytes: &[u8]) -> Result<(), Error> {
+        let upload = self.upload.as_mut().ok_or(Error::Malformed)?;
+        upload
+            .writer
+            .push(&mut upload.target, bytes)
+            .map_err(|error| {
+                self.access.status("failed", error.reason(), 0);
+                rejected_image()
+            })?;
+        let percent = upload.writer.percent();
+        if percent / 10 != upload.last_percent / 10 {
+            upload.last_percent = percent;
+            self.access.status("uploading", "", percent);
+        }
+        self.access.progress();
+        Ok(())
+    }
+
+    fn commit(&mut self) -> Result<(), Error> {
+        let Upload {
+            writer, mut target, ..
+        } = self.upload.take().ok_or(Error::Malformed)?;
+        self.access.status("verifying", "flash_readback", 100);
+        let result = writer.finish(&mut target);
+        drop(target);
+        match result {
+            Ok(()) => {
+                self.access.status("rebooting", "verified", 100);
+                self.access.finished(true);
+                Ok(())
+            }
+            Err(error) => {
+                self.access.status("failed", error.reason(), 0);
+                self.access.finished(false);
+                Err(rejected_image())
+            }
+        }
+    }
+
+    fn abort(&mut self) {
+        // A failed write or commit has already said why.
+        self.end(None);
+    }
 }
 
 /// Flash is taken by another job, such as an update in progress.
@@ -277,11 +423,13 @@ enum Kind {
     Config,
     Clients,
     Reboot,
+    FirmwareManifest,
 }
 
 struct Handler<'d, D> {
     device: &'d D,
     keys: &'d ClientKeys,
+    manifest: &'d PendingManifest,
     kind: Kind,
 }
 
@@ -464,6 +612,19 @@ impl<D: Device> Application<DATAGRAM_BYTES> for Handler<'_, D> {
                     reply(response, CONTENT_JSON, list.as_bytes())
                 }
             },
+            Kind::FirmwareManifest => {
+                if !self.device.upload_enabled() {
+                    return refuse(response, Code::UNAVAILABLE, "unavailable");
+                }
+                let Ok(manifest) = Manifest::parse(request.payload()) else {
+                    return refuse(response, Code::BAD_REQUEST, "invalid_command");
+                };
+                if manifest.build == env!("FIRMWARE_BUILD_ID") {
+                    return refuse(response, Code::BAD_REQUEST, "already_running");
+                }
+                self.manifest.set(Some(manifest));
+                changed(response)
+            }
             Kind::Reboot => match self.device.reboot() {
                 Ok(()) => changed(response),
                 Err(Busy) => busy(response),
@@ -527,6 +688,7 @@ const CONFIG_JSON_BYTES: usize = 1000;
 
 const READ: &[Code] = &[Code::GET];
 const WRITE: &[Code] = &[Code::POST];
+const PUT: &[Code] = &[Code::PUT];
 const CLIENTS: &[Code] = &[Code::GET, Code::POST, Code::DELETE];
 const READ_WRITE: &[Code] = &[Code::GET, Code::PUT];
 const JSON_OBSERVABLE: &[(&str, Option<&str>)] = &[("ct", Some("50")), ("obs", None)];
@@ -534,7 +696,7 @@ const TEXT_OBSERVABLE: &[(&str, Option<&str>)] = &[("ct", Some("0")), ("obs", No
 const JSON: &[(&str, Option<&str>)] = &[("ct", Some("50"))];
 
 /// Storage for the resources, which the router borrows.
-pub struct Resources<'d, D> {
+pub struct Resources<'d, D, A: UploadAccess> {
     light: Handler<'d, D>,
     speed: Handler<'d, D>,
     temperature: Handler<'d, D>,
@@ -545,12 +707,24 @@ pub struct Resources<'d, D> {
     config: Handler<'d, D>,
     clients: Handler<'d, D>,
     reboot: Handler<'d, D>,
+    firmware_manifest: Handler<'d, D>,
+    firmware_image: FirmwareUpload<'d, A>,
     effects: EffectList,
 }
 
-impl<'d, D: Device> Resources<'d, D> {
-    pub fn new(device: &'d D, keys: &'d ClientKeys) -> Self {
-        let handler = |kind| Handler { device, keys, kind };
+impl<'d, D: Device, A: UploadAccess> Resources<'d, D, A> {
+    pub fn new(
+        device: &'d D,
+        keys: &'d ClientKeys,
+        manifest: &'d PendingManifest,
+        access: A,
+    ) -> Self {
+        let handler = |kind| Handler {
+            device,
+            keys,
+            manifest,
+            kind,
+        };
         Self {
             light: handler(Kind::Light),
             speed: handler(Kind::Speed),
@@ -562,6 +736,12 @@ impl<'d, D: Device> Resources<'d, D> {
             config: handler(Kind::Config),
             clients: handler(Kind::Clients),
             reboot: handler(Kind::Reboot),
+            firmware_manifest: handler(Kind::FirmwareManifest),
+            firmware_image: FirmwareUpload {
+                access,
+                manifest,
+                upload: None,
+            },
             effects: EffectList,
         }
     }
@@ -577,6 +757,14 @@ impl<'d, D: Device> Resources<'d, D> {
         router.buffered_upload("/config", READ_WRITE, &mut self.config)?;
         router.route("/coap/clients", CLIENTS, &mut self.clients)?;
         router.route("/reboot", WRITE, &mut self.reboot)?;
+        router.route("/firmware/manifest", PUT, &mut self.firmware_manifest)?;
+        router.streaming_upload(
+            "/firmware/image",
+            PUT,
+            SLOT_SIZE as usize,
+            &mut self.firmware_image,
+        )?;
+        router.set_upload_timeout(UPLOAD_TIMEOUT_MS)?;
         router.representation("/effects", &mut self.effects)?;
 
         let notify = |id| {

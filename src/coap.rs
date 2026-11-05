@@ -8,12 +8,14 @@ use embassy_net::{
     udp::{PacketMetadata, UdpSocket},
 };
 use embassy_time::{Instant, Timer};
-use esp_hal::rng::Trng;
+use esp_hal::{rng::Trng, sha::Sha256Context};
+use esp_hal_ota::Ota;
 use esp_storage::FlashStorage;
 use esp32_led_mqtt::{
     coap_api::{
         ApiEndpoint, ApiRouter, ApiShared, Authenticated, Busy, ClientKeys, ClientList,
-        DATAGRAM_BYTES, Device, Info, POLICY, PORT, Resources, resource,
+        DATAGRAM_BYTES, Device, Info, POLICY, PORT, PendingManifest, Resources, UploadAccess,
+        resource,
     },
     coap_keys,
     device_config::{CoapCredential, DeviceConfig},
@@ -29,9 +31,11 @@ use mai_coap::{
 };
 
 use crate::{
-    flash::{self, Job},
+    flash::{self, Job, Lease, UploadEvent},
     identity::DeviceIdentity,
-    light_state, log_sink, ota, tsens,
+    light_state, log_sink,
+    ota::{self, FlashAccess, UpdateSlot},
+    tsens,
 };
 
 const SOCKET_RX_SLOTS: usize = 4;
@@ -52,6 +56,36 @@ fn queue(job: impl FnOnce() -> Job) -> Result<(), Busy> {
     }
     flash::queue(job());
     Ok(())
+}
+
+/// Hands the flash to firmware uploads.
+struct FlashUpload;
+
+impl UploadAccess for FlashUpload {
+    type Target = UpdateSlot<Lease>;
+    // `main` starts its work queue in any build where uploads are possible.
+    type Hash = Sha256Context;
+
+    fn acquire(&mut self) -> Option<Self::Target> {
+        let lease = flash::try_lease()?;
+        match Ota::new(FlashAccess(lease)) {
+            Ok(ota) => Some(UpdateSlot(ota)),
+            Err(_) => {
+                warn!("Could not read the partition table for an upload");
+                flash::UPLOAD_EVENT.signal(UploadEvent::Finished { reboot: false });
+                None
+            }
+        }
+    }
+    fn status(&mut self, state: &str, detail: &str, percent: u8) {
+        ota::status(state, detail, percent);
+    }
+    fn progress(&mut self) {
+        flash::UPLOAD_EVENT.signal(UploadEvent::Progress);
+    }
+    fn finished(&mut self, activated: bool) {
+        flash::UPLOAD_EVENT.signal(UploadEvent::Finished { reboot: activated });
+    }
 }
 
 /// Saves the client list and, if that worked, applies it to the next handshake.
@@ -115,6 +149,9 @@ impl Device for Hardware {
     }
     fn reboot(&self) -> Result<(), Busy> {
         queue(|| Job::Reboot)
+    }
+    fn upload_enabled(&self) -> bool {
+        ota::rollback_enabled()
     }
     fn authenticated(&self) {
         ota::COAP_AUTHENTICATED.store(true, Ordering::Release);
@@ -198,7 +235,8 @@ pub async fn task(
         name: &identity.slug,
         settings,
     };
-    let mut resources = Resources::new(&device, &CLIENT_KEYS);
+    let manifest = PendingManifest::new();
+    let mut resources = Resources::new(&device, &CLIENT_KEYS, &manifest, FlashUpload);
     let mut router = ApiRouter::new(&POLICY);
     resources.register(&mut router).expect("router capacity");
     let mut application = Authenticated {

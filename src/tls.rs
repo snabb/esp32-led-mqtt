@@ -52,7 +52,8 @@ impl MbedtlsWallClock for Clock {
 }
 
 /// Install the global MbedTLS hooks once, before any TLS object is created, and
-/// start the crypto work queues. The queues also serve the OTA digest.
+/// start the crypto work queues. The queues also serve the OTA digest, and keep running
+/// even if this returns an error.
 pub fn initialize(accel: EspAccel<'static>) -> Context {
     let queue = QUEUE.init(ACCEL.init(accel).start());
     // SAFETY: main installs these static hooks once before creating TLS sessions.

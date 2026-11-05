@@ -7,15 +7,15 @@ use embedded_io_async::{Read, Write};
 use esp_hal::sha::Sha256Context;
 use esp_hal_ota::Ota;
 use esp_storage::FlashStorage;
-use esp32_led_mqtt::ota_protocol::{self, Request, Verifier};
+use esp32_led_mqtt::ota_protocol::{self, ImageError, ImageWriter, Request};
 use heapless::String;
 use log::warn;
 use mbedtls_rs::TlsGroup;
 
-use super::{FlashAccess, status};
+use super::{FlashAccess, UpdateSlot, status};
 use crate::flash::{self, Job};
 
-type Updater<'a> = Ota<FlashAccess<'a>>;
+type Updater<'a> = UpdateSlot<&'a mut FlashStorage<'static>>;
 
 static AVAILABLE: AtomicBool = AtomicBool::new(false);
 const READ_TIMEOUT: Duration = Duration::from_secs(15);
@@ -47,7 +47,7 @@ pub fn submit(payload: &[u8], retained: bool) -> Result<(), &'static str> {
             option_env!("OTA_ALLOW_HTTP") == Some("1"),
         )
         .map_err(|_| "invalid_command")?;
-        if request.build == env!("FIRMWARE_BUILD_ID") {
+        if request.manifest.build == env!("FIRMWARE_BUILD_ID") {
             return Err("already_running");
         }
         if !flash::try_claim() {
@@ -63,7 +63,7 @@ pub fn submit(payload: &[u8], retained: bool) -> Result<(), &'static str> {
 }
 
 /// Whether this image was built for a bootloader that can roll back.
-fn rollback_enabled() -> bool {
+pub fn rollback_enabled() -> bool {
     option_env!("OTA_ROLLBACK_BOOTLOADER") == Some("1")
 }
 
@@ -96,9 +96,9 @@ pub fn client(stack: Option<Stack<'static>>, tls_context: crate::tls::Context) -
 pub async fn update(client: &Client, flash: &mut FlashStorage<'static>, request: &Request) {
     status("downloading", "", 0);
     let result = match Ota::new(FlashAccess(flash)) {
-        Ok(mut ota) => with_timeout(
+        Ok(ota) => with_timeout(
             UPDATE_TIMEOUT,
-            download(client.tls, client.stack, &mut ota, request),
+            download(client.tls, client.stack, &mut UpdateSlot(ota), request),
         )
         .await
         .unwrap_or(Err("timeout")),
@@ -182,36 +182,28 @@ async fn transfer<IO: Read + Write>(
             break;
         }
     }
-    ota_protocol::validate_headers(&headers[..len], request.size).map_err(|_| "http_framing")?;
-    let mut remaining = request.size as usize;
-    let mut block = [0; 4096];
-    let mut verifier = Verifier::<Sha256Context>::new(request);
-    let mut first = true;
+    let size = request.manifest.size;
+    ota_protocol::validate_headers(&headers[..len], size).map_err(|_| "http_framing")?;
+    let mut remaining = size as usize;
+    let mut block = [0; 1024];
+    let mut writer = ImageWriter::<Sha256Context>::new(&request.manifest);
     let mut last_percent = 0;
     while remaining != 0 {
         let count = remaining.min(block.len());
         read_exact(io, &mut block[..count]).await?;
-        if first {
-            ota_protocol::validate_image_prefix(&block[..count], &request.build)
-                .map_err(|_| "image_identity")?;
-            ota.begin(request.size, request.crc32)
-                .map_err(|_| "begin")?;
-            first = false;
-        }
-        verifier.update(&block[..count]).map_err(|_| "size")?;
-        ota.write(&block[..count]).map_err(|_| "flash_write")?;
+        writer
+            .push(ota, &block[..count])
+            .map_err(ImageError::reason)?;
         remaining -= count;
-        let percent = ((request.size as usize - remaining) * 100 / request.size as usize) as u8;
+        let percent = writer.percent();
         if percent / 10 != last_percent / 10 {
             status("downloading", "", percent);
             last_percent = percent;
         }
         yield_now().await;
     }
-    verifier.finish().map_err(|_| "sha256")?;
     status("verifying", "flash_readback", 100);
-    ota.finish(true).map_err(|_| "verify_or_activate")?;
-    Ok(())
+    writer.finish(ota).map_err(ImageError::reason)
 }
 
 async fn read_exact<IO: Read>(io: &mut IO, mut buffer: &mut [u8]) -> Result<(), &'static str> {
