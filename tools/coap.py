@@ -16,6 +16,7 @@ import hashlib
 import json
 import os
 import secrets
+import socket
 import sys
 import zlib
 from pathlib import Path
@@ -50,9 +51,17 @@ def keygen(path):
     print(f"Public key, for devices: {ccs_file}")
 
 
+def resolve_ipv4(host):
+    """Devices only have IPv4. Left to aiocoap, a lookup by name waits about 10 s for an
+    IPv6 mDNS answer that won't come. A device doesn't need the name in requests."""
+    name, separator, port = host.partition(":")
+    address = socket.getaddrinfo(name, None, socket.AF_INET)[0][4][0]
+    return f"{address}{separator}{port}"
+
+
 class Device:
     def __init__(self, args):
-        self.host = args.host
+        self.host = resolve_ipv4(args.host)
         host_part = args.host.removesuffix(".local")
         self.device_ccs_file = args.device_ccs or KEY_DIR / f"{host_part}.ccs"
         self.key_file = args.client_key
@@ -133,20 +142,21 @@ class LogPrinter:
         self.cursor = following
 
 
-async def read_logs_from(device, printer):
-    """Reads everything after the printer's cursor."""
-    while True:
-        from_cursor = printer.cursor or 0
-        payload = await device.get(f"/logs?from={from_cursor}")
+async def read_logs_until(device, printer, end):
+    """Reads from the printer's cursor up to the offset `end`. Stopping only when there's
+    nothing new would never end, because reading can itself make a device log."""
+    while printer.cursor is None or printer.cursor < end:
+        payload = await device.get(f"/logs?from={printer.cursor or 0}")
         start, following, text = parse_logs(payload)
         printer.show(start, following, text)
-        if following == from_cursor or not text:
+        if not text:
             return
 
 
 async def show_logs(device, follow):
     printer = LogPrinter()
-    await read_logs_from(device, printer)
+    _, end, _ = parse_logs(await device.get("/logs"))
+    await read_logs_until(device, printer, end)
     if not follow:
         return
     request = device.context.request(device.message(aiocoap.GET, "/logs", observe=0))
@@ -155,7 +165,7 @@ async def show_logs(device, follow):
         start, following, text = parse_logs(notification.payload)
         # A gap means notifications were coalesced or lost, so fetch what's missing.
         if printer.cursor is not None and printer.cursor < start <= following:
-            await read_logs_from(device, printer)
+            await read_logs_until(device, printer, following)
         else:
             printer.show(start, following, text)
 

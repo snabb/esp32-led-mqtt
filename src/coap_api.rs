@@ -294,6 +294,8 @@ struct FirmwareUpload<'d, A: UploadAccess> {
     access: A,
     manifest: &'d PendingManifest,
     upload: Option<Upload<A::Target, A::Hash>>,
+    /// A failed write has said why, which the abort following it shouldn't overwrite.
+    failure_reported: bool,
 }
 
 impl<A: UploadAccess> FirmwareUpload<'_, A> {
@@ -317,6 +319,7 @@ fn rejected_image() -> Error {
 impl<A: UploadAccess> UploadSink for FirmwareUpload<'_, A> {
     fn begin(&mut self, _: &BodyKey, size: Option<u64>) -> Result<(), Error> {
         self.end(Some("restarted"));
+        self.failure_reported = false;
         let manifest = self
             .manifest
             .take()
@@ -340,13 +343,11 @@ impl<A: UploadAccess> UploadSink for FirmwareUpload<'_, A> {
 
     fn write(&mut self, _: usize, bytes: &[u8]) -> Result<(), Error> {
         let upload = self.upload.as_mut().ok_or(Error::Malformed)?;
-        upload
-            .writer
-            .push(&mut upload.target, bytes)
-            .map_err(|error| {
-                self.access.status("failed", error.reason(), 0);
-                rejected_image()
-            })?;
+        if let Err(error) = upload.writer.push(&mut upload.target, bytes) {
+            self.access.status("failed", error.reason(), 0);
+            self.failure_reported = true;
+            return Err(rejected_image());
+        }
         let percent = upload.writer.percent();
         if percent / 10 != upload.last_percent / 10 {
             upload.last_percent = percent;
@@ -378,8 +379,8 @@ impl<A: UploadAccess> UploadSink for FirmwareUpload<'_, A> {
     }
 
     fn abort(&mut self) {
-        // A failed write or commit has already said why.
-        self.end(None);
+        let failure = (!self.failure_reported).then_some("abandoned");
+        self.end(failure);
     }
 }
 
@@ -741,6 +742,7 @@ impl<'d, D: Device, A: UploadAccess> Resources<'d, D, A> {
                 access,
                 manifest,
                 upload: None,
+                failure_reported: false,
             },
             effects: EffectList,
         }

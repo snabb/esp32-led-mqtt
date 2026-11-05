@@ -974,6 +974,7 @@ fn an_abandoned_upload_frees_the_flash_without_activating() {
         access: FakeAccess(flash.clone()),
         manifest: &manifest,
         upload: None,
+        failure_reported: false,
     };
     let key = BodyKey::from_request(
         "192.0.2.1:5683".parse().unwrap(),
@@ -990,10 +991,16 @@ fn an_abandoned_upload_frees_the_flash_without_activating() {
     assert!(!flash.held_by_upload.get());
     assert!(!flash.activated.get());
     assert_eq!(*flash.finished.borrow(), [false]);
+    assert_eq!(
+        flash.statuses.borrow().last().unwrap(),
+        &("failed".into(), "abandoned".into())
+    );
 
     // A second abort, or one with nothing running, has nothing to report.
+    let statuses = flash.statuses.borrow().len();
     sink.abort();
     assert_eq!(*flash.finished.borrow(), [false]);
+    assert_eq!(flash.statuses.borrow().len(), statuses);
 }
 
 #[test]

@@ -38,5 +38,8 @@ bootloader/idf-submodules.txt
 bootloader/SHA256SUMS
 bootloader/build.log
 
+# Python bytecode from the tools.
+__pycache__/
+
 # Private local workflow, settings, artifacts and logs.
 /local/
