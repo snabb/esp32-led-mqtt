@@ -148,3 +148,6 @@ With the `mdns` feature, a device answers as `esp32-led-XXXXXX.local` and advert
 ```sh
 avahi-browse -rt _coap._udp
 ```
+
+A client on another subnet depends on the router repeating mDNS, which may be unreliable.
+Use `--host IP --device-ccs FILE` if a name doesn't resolve.

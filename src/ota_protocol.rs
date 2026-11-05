@@ -403,6 +403,34 @@ impl<H: Digest> ImageWriter<H> {
     }
 }
 
+/// What the `otadata` partition holds for one image. Sequence 0 means the entry isn't valid.
+#[derive(Clone, Copy, Debug)]
+pub struct BootEntry {
+    pub seq: u32,
+    /// The bootloader won't boot it: it failed its trial.
+    pub rejected: bool,
+}
+
+/// Which of the two entries to erase, if any.
+///
+/// After a rollback the rejected entry has the highest sequence number. esp-hal-ota takes
+/// that for the active entry, so the next update overwrites the good one, which was the
+/// rollback target, and repeats the rejected number. The app can then read the rejected
+/// state as its own and refuse all flash jobs until reinstalled over USB. Erasing is safe
+/// because the bootloader ignores a rejected entry, and it also repairs that state.
+pub fn stale_boot_entry(entries: [BootEntry; 2]) -> Option<usize> {
+    let usable = |entry: BootEntry| entry.seq != 0 && !entry.rejected;
+    let stale =
+        |entry: BootEntry, other: BootEntry| entry.seq != 0 && entry.rejected && usable(other);
+    if stale(entries[0], entries[1]) {
+        Some(0)
+    } else if stale(entries[1], entries[0]) {
+        Some(1)
+    } else {
+        None
+    }
+}
+
 /// First-boot confirmation policy; the deadline takes priority over a late health result.
 #[derive(Debug, Eq, PartialEq)]
 pub enum TrialDecision {
@@ -662,6 +690,23 @@ mod tests {
         image[12] = 5;
         assert_eq!(validate_image_prefix(&image, "test-1"), Err(Error::Image));
         assert!(validate_image_prefix(&image[..24], "test-1").is_err());
+    }
+
+    #[test]
+    fn only_a_rejected_entry_beside_a_usable_one_is_erased() {
+        let entry = |seq, rejected| BootEntry { seq, rejected };
+        // After a rollback: the running image, and a newer one that failed its trial.
+        assert_eq!(stale_boot_entry([entry(4, false), entry(5, true)]), Some(1));
+        assert_eq!(stale_boot_entry([entry(5, true), entry(4, false)]), Some(0));
+        // The state an update after a rollback used to leave: same number twice.
+        assert_eq!(stale_boot_entry([entry(5, true), entry(5, false)]), Some(0));
+        // Ordinary states keep both entries, including the rollback target.
+        assert_eq!(stale_boot_entry([entry(4, false), entry(5, false)]), None);
+        assert_eq!(stale_boot_entry([entry(5, false), entry(0, false)]), None);
+        assert_eq!(stale_boot_entry([entry(0, false), entry(0, false)]), None);
+        // With nothing usable to fall back on, leave what's there.
+        assert_eq!(stale_boot_entry([entry(5, true), entry(4, true)]), None);
+        assert_eq!(stale_boot_entry([entry(5, true), entry(0, false)]), None);
     }
 
     #[test]

@@ -139,14 +139,20 @@ transitions can be skipped:
 ## Trial boot and rollback
 
 After rebooting into a new image, the firmware has 120 s to write a frame to
-the LEDs, get an IPv4 address and connect to MQTT. If all three succeed, it
-marks the image valid. If not, it resets, and the bootloader switches back to
-the previous image. A 125 s hardware watchdog catches a firmware that hangs.
+the LEDs, get an IPv4 address and, if a control plane is configured, connect to
+MQTT or get an authenticated CoAP request. If that all succeeds, it marks the image
+valid. If not, it resets, and the bootloader switches back to the previous image. A
+125 s hardware watchdog catches a firmware that hangs.
 
-- Wi-Fi or broker outages during the trial also cause a rollback.
+- Wi-Fi outages during the trial also cause a rollback, and so does a broker outage
+  unless a CoAP client contacts the device.
 - An image without device settings can't pass the trial.
 - The old image doesn't retry the rejected update by itself.
 - OTA commands sent during the trial are rejected with `unavailable`.
+
+After a rollback, the next boot erases the failed image's `otadata` entry. Without that,
+esp-hal-ota 0.7.2 would overwrite the good entry on the next update, and the device could end
+up refusing further updates.
 
 ## Reinstalling over USB
 

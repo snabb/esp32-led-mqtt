@@ -24,6 +24,10 @@ pub type DownloadContext = crate::tls::Context;
 #[cfg(not(feature = "_control"))]
 pub type DownloadContext = ();
 
+/// `flash::check_partition_table` has confirmed the start, and each entry has its own sector.
+const OTADATA_START: u32 = 0xd000;
+const OTADATA_ENTRY_SIZE: u32 = 0x1000;
+
 pub static LED_READY: AtomicBool = AtomicBool::new(false);
 pub static MQTT_READY: AtomicBool = AtomicBool::new(false);
 /// Set by the first authenticated CoAP request. Stays set: unlike an MQTT session it has
@@ -103,12 +107,36 @@ pub async fn confirm_boot(
     health
 }
 
+/// Erases a rejected `otadata` entry; see `ota_protocol::stale_boot_entry`.
+fn clear_stale_boot_entry(flash: &mut FlashStorage<'static>) -> Result<(), &'static str> {
+    let (first, second) = Ota::new(FlashAccess(&mut *flash))
+        .and_then(|mut ota| ota.boot_entries())
+        .map_err(|_| "partition_table")?;
+    let entry = |seq, state| ota_protocol::BootEntry {
+        seq,
+        rejected: matches!(state, OtaImgState::Invalid | OtaImgState::Aborted),
+    };
+    let entries = [
+        entry(first.seq, first.ota_state),
+        entry(second.seq, second.ota_state),
+    ];
+    if let Some(index) = ota_protocol::stale_boot_entry(entries) {
+        warn!("Erasing rejected OTA entry {} after a rollback", index);
+        let from = OTADATA_START + index as u32 * OTADATA_ENTRY_SIZE;
+        flash
+            .erase(from, from + OTADATA_ENTRY_SIZE)
+            .map_err(|_| "otadata_erase")?;
+    }
+    Ok(())
+}
+
 async fn boot_health(
     stack: Option<Stack<'static>>,
     flash: &mut FlashStorage<'static>,
     control_required: bool,
 ) -> Result<(), &'static str> {
     let start = Instant::now();
+    clear_stale_boot_entry(flash)?;
     let mut ota = Ota::new(FlashAccess(flash)).map_err(|_| "partition_table")?;
     let slot = ota.booted_partition().ok_or("unknown_running_slot")?;
     info!(
