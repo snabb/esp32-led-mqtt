@@ -37,6 +37,8 @@ mod config;
 mod flash;
 mod identity;
 mod light_state;
+#[cfg(feature = "coap")]
+mod log_sink;
 #[cfg(feature = "mdns")]
 mod mdns;
 mod memory;
@@ -79,6 +81,9 @@ macro_rules! mk_static {
 
 #[esp_rtos::main]
 async fn main(spawner: Spawner) -> ! {
+    #[cfg(feature = "coap")]
+    log_sink::init();
+    #[cfg(not(feature = "coap"))]
     esp_println::logger::init_logger_from_env();
 
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());

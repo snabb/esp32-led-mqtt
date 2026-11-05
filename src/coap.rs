@@ -2,7 +2,7 @@
 
 use core::sync::atomic::Ordering;
 
-use embassy_futures::select::{Either, select};
+use embassy_futures::select::{Either, Either4, select, select4};
 use embassy_net::{
     Stack,
     udp::{PacketMetadata, UdpSocket},
@@ -17,6 +17,7 @@ use esp32_led_mqtt::{
     coap_keys,
     device_config::DeviceConfig,
     light_command::{LightState, LightUpdate},
+    log_buffer::LogRead,
 };
 use heapless::String;
 use log::{error, info, warn};
@@ -25,7 +26,7 @@ use mai_coap::{
     transport::embassy::EmbassyTransport,
 };
 
-use crate::{identity::DeviceIdentity, light_state, ota, tsens};
+use crate::{identity::DeviceIdentity, light_state, log_sink, ota, tsens};
 
 const SOCKET_RX_SLOTS: usize = 4;
 const SOCKET_TX_SLOTS: usize = 2;
@@ -64,6 +65,9 @@ impl Device for Hardware {
             free_heap: esp_alloc::HEAP.free(),
         }
     }
+    fn read_logs(&self, from: Option<u64>, output: &mut [u8]) -> LogRead {
+        log_sink::read(from, output)
+    }
     fn authenticated(&self) {
         ota::COAP_AUTHENTICATED.store(true, Ordering::Release);
     }
@@ -79,13 +83,19 @@ async fn notify_changes(handle: mai_coap::endpoint::Handle<'_, DATAGRAM_BYTES, 0
         .dyn_receiver()
         .expect("receiver capacity");
     loop {
-        use embassy_futures::select::{Either3, select3};
-        let changed: &[u32] =
-            match select3(light.changed(), ota_status.changed(), temperature.changed()).await {
-                Either3::First(()) => &[resource::LIGHT, resource::SPEED],
-                Either3::Second(_) => &[resource::FIRMWARE],
-                Either3::Third(_) => &[resource::TEMPERATURE],
-            };
+        let changed: &[u32] = match select4(
+            light.changed(),
+            ota_status.changed(),
+            temperature.changed(),
+            log_sink::LOGGED.wait(),
+        )
+        .await
+        {
+            Either4::First(()) => &[resource::LIGHT, resource::SPEED],
+            Either4::Second(_) => &[resource::FIRMWARE],
+            Either4::Third(_) => &[resource::TEMPERATURE],
+            Either4::Fourth(()) => &[resource::LOGS],
+        };
         for &id in changed {
             // A full mailbox only happens with changes already waiting to be sent, and
             // a notification always carries the latest value.

@@ -23,12 +23,13 @@ use mai_coap::{
 use crate::{
     EFFECT_DISABLED_NAME, EFFECTS, device_config,
     light_command::{LightState, LightUpdate, light_state_json, parse_light_command, parse_speed},
+    log_buffer::LogRead,
 };
 
 pub const PORT: u16 = 5683;
 /// Leaves room for a 1024-byte block plus OSCORE's option and tag.
 pub const DATAGRAM_BYTES: usize = 1152;
-const ROUTES: usize = 6;
+const ROUTES: usize = 7;
 const UPLOADS: usize = 2;
 const UPLOAD_BYTES: usize = 2048;
 /// Keep one context per client, plus one while it runs EDHOC again.
@@ -55,6 +56,7 @@ pub mod resource {
     pub const SPEED: u32 = 2;
     pub const TEMPERATURE: u32 = 3;
     pub const FIRMWARE: u32 = 4;
+    pub const LOGS: u32 = 5;
 }
 
 pub type ApiShared = Shared<DATAGRAM_BYTES, COMMANDS>;
@@ -139,6 +141,8 @@ pub trait Device {
     /// Latest OTA status as JSON.
     fn ota_status(&self) -> Option<String<192>>;
     fn info(&self) -> Info<'_>;
+    /// See [`LogRing::read`](crate::log_buffer::LogRing::read).
+    fn read_logs(&self, from: Option<u64>, output: &mut [u8]) -> LogRead;
     /// A request passed authentication, which an OTA trial counts as proof of health.
     fn authenticated(&self);
 }
@@ -157,6 +161,7 @@ enum Kind {
     Temperature,
     Info,
     Firmware,
+    Logs,
 }
 
 struct Handler<'d, D> {
@@ -237,12 +242,44 @@ impl<D: Device> Application<DATAGRAM_BYTES> for Handler<'_, D> {
                 let status = self.device.ota_status().ok_or(Code::UNAVAILABLE)?;
                 reply(response, CONTENT_JSON, status.as_bytes())
             }
+            Kind::Logs => {
+                // Not Block2: its ETag would change as new lines arrive during a transfer.
+                let mut payload = [0; LOG_PAYLOAD_BYTES];
+                let (header, text) = payload.split_at_mut(LOG_HEADER_BYTES);
+                let read = self.device.read_logs(log_cursor(request)?, text);
+                let mut first_line: String<LOG_HEADER_BYTES> = String::new();
+                writeln!(first_line, "{} {}", read.start, read.next)
+                    .map_err(|_| Code::INTERNAL_ERROR)?;
+                let count = (read.next - read.start) as usize;
+                // Right-align the first line against the text, so neither has to move.
+                let at = LOG_HEADER_BYTES - first_line.len();
+                header[at..].copy_from_slice(first_line.as_bytes());
+                reply(
+                    response,
+                    ContentFormat::TEXT,
+                    &payload[at..LOG_HEADER_BYTES + count],
+                )
+            }
         }
     }
 
     fn recognizes(&self, _: OptionNumber) -> bool {
         false
     }
+}
+
+/// The `from=N` query of `/logs`, if any.
+fn log_cursor(request: Request<'_>) -> Result<Option<u64>, Code> {
+    let mut cursor = None;
+    for query in request.message.values(OptionNumber::URI_QUERY) {
+        let value = core::str::from_utf8(query)
+            .ok()
+            .and_then(|query| query.strip_prefix("from="))
+            .and_then(|value| value.parse().ok())
+            .ok_or(Code::BAD_REQUEST)?;
+        cursor = Some(value);
+    }
+    Ok(cursor)
 }
 
 /// `/effects`: names as `["None","Rainbow",…]`, the same list as Home Assistant's.
@@ -267,6 +304,10 @@ impl BodySource for EffectList {
     }
 }
 
+/// A first line of two `u64` offsets, and text up to the 1024 bytes a block would hold.
+const LOG_HEADER_BYTES: usize = 42;
+const LOG_PAYLOAD_BYTES: usize = 1024;
+
 const READ: &[Code] = &[Code::GET];
 const READ_WRITE: &[Code] = &[Code::GET, Code::PUT];
 const JSON_OBSERVABLE: &[(&str, Option<&str>)] = &[("ct", Some("50")), ("obs", None)];
@@ -280,6 +321,7 @@ pub struct Resources<'d, D> {
     temperature: Handler<'d, D>,
     info: Handler<'d, D>,
     firmware: Handler<'d, D>,
+    logs: Handler<'d, D>,
     effects: EffectList,
 }
 
@@ -292,6 +334,7 @@ impl<'d, D: Device> Resources<'d, D> {
             temperature: handler(Kind::Temperature),
             info: handler(Kind::Info),
             firmware: handler(Kind::Firmware),
+            logs: handler(Kind::Logs),
             effects: EffectList,
         }
     }
@@ -302,6 +345,7 @@ impl<'d, D: Device> Resources<'d, D> {
         router.route("/temperature", READ, &mut self.temperature)?;
         router.route("/info", READ, &mut self.info)?;
         router.route("/firmware", READ, &mut self.firmware)?;
+        router.route("/logs", READ, &mut self.logs)?;
         router.representation("/effects", &mut self.effects)?;
 
         let notify = |id| {
@@ -314,11 +358,14 @@ impl<'d, D: Device> Resources<'d, D> {
         router.observable("/speed", notify(resource::SPEED))?;
         router.observable("/temperature", notify(resource::TEMPERATURE))?;
         router.observable("/firmware", notify(resource::FIRMWARE))?;
+        // Each notification carries a whole block, so there's no need for more than this.
+        router.observable("/logs", notify(resource::LOGS).with_minimum_ms(1000))?;
 
         router.describe("/light", JSON_OBSERVABLE, false)?;
         router.describe("/speed", TEXT_OBSERVABLE, false)?;
         router.describe("/temperature", TEXT_OBSERVABLE, false)?;
         router.describe("/firmware", JSON_OBSERVABLE, false)?;
+        router.describe("/logs", TEXT_OBSERVABLE, false)?;
         router.describe("/info", JSON, false)?;
         router.describe("/effects", JSON, false)?;
         Ok(())

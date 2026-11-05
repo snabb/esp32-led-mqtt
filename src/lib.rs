@@ -10,6 +10,8 @@ pub mod config_store;
 pub mod device_config;
 mod effects;
 pub mod light_command;
+#[cfg(feature = "coap")]
+pub mod log_buffer;
 pub mod ota_protocol;
 pub mod provisioning;
 pub mod random_color;

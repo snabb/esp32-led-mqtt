@@ -1,6 +1,7 @@
 //! A real server and client talking EDHOC and OSCORE over loopback UDP.
 
 use core::{cell::Cell, convert::Infallible, net::SocketAddr};
+use std::format;
 use std::vec::Vec as StdVec;
 
 use futures::{
@@ -20,7 +21,7 @@ use rand_core::{TryCryptoRng, TryRng};
 use smart_leds::RGB8;
 
 use super::*;
-use crate::{EffectId, coap_keys};
+use crate::{EffectId, coap_keys, log_buffer::LogRing};
 
 const DEVICE_KEY: &str = "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20";
 const CLIENT_KEY: [u8; 32] = [9; 32];
@@ -55,6 +56,7 @@ fn crypto(seed: u64) -> SoftwareCrypto<TestRng> {
 struct FakeDevice {
     light: Cell<LightState>,
     authenticated: Cell<bool>,
+    logs: RefCell<LogRing<4096>>,
 }
 
 impl FakeDevice {
@@ -68,6 +70,7 @@ impl FakeDevice {
                 color: RGB8 { r: 1, g: 2, b: 3 },
             }),
             authenticated: Cell::new(false),
+            logs: RefCell::new(LogRing::new()),
         }
     }
 }
@@ -99,6 +102,9 @@ impl Device for FakeDevice {
             ip: Some(Ipv4Addr::new(192, 0, 2, 1)),
             free_heap: 1234,
         }
+    }
+    fn read_logs(&self, from: Option<u64>, output: &mut [u8]) -> LogRead {
+        self.logs.borrow().read(from, output)
     }
     fn authenticated(&self) {
         self.authenticated.set(true);
@@ -296,6 +302,84 @@ fn observers_are_told_about_changes() {
             notifier.notify(resource::SPEED).unwrap();
             let second = observation.next().await.unwrap().unwrap();
             assert_eq!(second.message().unwrap().payload(), b"20");
+            observation.cancel();
+        },
+    );
+}
+
+/// Splits a `/logs` reply into its offsets and text.
+fn parse_logs(body: &[u8]) -> (u64, u64, &[u8]) {
+    let split = body.iter().position(|b| *b == b'\n').unwrap();
+    let (start, next) = core::str::from_utf8(&body[..split])
+        .unwrap()
+        .split_once(' ')
+        .unwrap();
+    (
+        start.parse().unwrap(),
+        next.parse().unwrap(),
+        &body[split + 1..],
+    )
+}
+
+#[test]
+fn logs_are_read_with_a_cursor_and_nothing_is_missed() {
+    let device = FakeDevice::new();
+    let text: StdVec<u8> = (0..3000u32).map(|i| b'a' + (i % 26) as u8).collect();
+    device.logs.borrow_mut().push(&text);
+    let keys = trusted_keys();
+    session(&device, CLIENT_KEY, &keys, async |client, server| {
+        let mut collected = StdVec::new();
+        let mut cursor = 0;
+        for _ in 0..10 {
+            let path = format!("/logs?from={cursor}");
+            let (code, body) = get(client, server, &path).await;
+            assert_eq!(code, Code::CONTENT);
+            let (start, next, chunk) = parse_logs(&body);
+            assert_eq!(start, cursor);
+            assert_eq!(next - start, chunk.len() as u64);
+            if chunk.is_empty() {
+                break;
+            }
+            collected.extend_from_slice(chunk);
+            cursor = next;
+        }
+        assert_eq!(collected, text);
+
+        // Without a cursor, the newest text.
+        let (_, body) = get(client, server, "/logs").await;
+        let (start, next, chunk) = parse_logs(&body);
+        assert_eq!(next, 3000);
+        assert!(start > 0);
+        assert!(text.ends_with(chunk));
+
+        assert_eq!(
+            get(client, server, "/logs?from=x").await.0,
+            Code::BAD_REQUEST
+        );
+    });
+}
+
+#[test]
+fn log_tailing_sees_new_text_and_any_gap() {
+    let device = FakeDevice::new();
+    device.logs.borrow_mut().push(b"one\n");
+    let keys = trusted_keys();
+    session_with_notifier(
+        &device,
+        CLIENT_KEY,
+        &keys,
+        async |client, server, notifier| {
+            let mut observation = client.client(server).peer(DEVICE).observe("/logs").unwrap();
+            let first = observation.next().await.unwrap().unwrap();
+            let (start, next, chunk) = parse_logs(first.message().unwrap().payload());
+            assert_eq!((start, next, chunk), (0, 4, &b"one\n"[..]));
+
+            device.logs.borrow_mut().push(b"two\n");
+            notifier.notify(resource::LOGS).unwrap();
+            let second = observation.next().await.unwrap().unwrap();
+            let (_, next, chunk) = parse_logs(second.message().unwrap().payload());
+            assert_eq!(next, 8);
+            assert!(chunk.ends_with(b"two\n"));
             observation.cancel();
         },
     );
