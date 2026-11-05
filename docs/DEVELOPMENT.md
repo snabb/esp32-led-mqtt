@@ -38,14 +38,29 @@ the 2.03 MB slot, BSS includes the 164 KiB heap, and stack is what remains for i
 
 | Features | Image | BSS | Stack |
 |---|---|---|---|
-| none | 678,576 | 166,032 | 211,936 |
-| `mqtt` | 1,232,962 | 184,040 | 191,368 |
-| `mqtt`, `mdns` | 1,263,742 | 190,920 | 184,280 |
-| `coap` | 1,392,476 | 225,008 | 149,936 |
-| `coap`, `mdns` | 1,421,580 | 231,888 | 142,824 |
-| `mqtt`, `mdns`, `coap` | 1,493,552 | 247,576 | 126,888 |
+| none | 679,034 | 166,032 | 211,936 |
+| `mqtt` | 1,233,488 | 184,040 | 191,368 |
+| `mqtt`, `mdns` | 1,264,260 | 190,920 | 184,280 |
+| `coap` | 1,391,698 | 225,016 | 149,864 |
+| `coap`, `mdns` | 1,420,958 | 231,896 | 142,752 |
+| `mqtt`, `mdns`, `coap` | 1,492,804 | 247,584 | 126,824 |
 
 Of the CoAP cost, the server task is about 47 KB of BSS and the log ring 8 KB.
+
+### CoAP measurements
+
+On a NanoC6 with 60 LEDs on 2026-11-05, over Wi-Fi on one router hop. Single runs, not a
+controlled comparison. These are from instrumented builds that log long gaps between LED frames.
+
+| | Software P-256 | Hardware P-256 |
+|---|---|---|
+| Longest LED gaps for a new session | about 270 and 105 ms | about 45 and 35 ms |
+| Whole request from `coap.py`, including its handshake | about 0.59 s | about 0.24 s |
+
+- Uploading 1.49 MB took 45–56 s, about 30 kB/s, with one run of 107 s. CoAP Block1 sends one
+  block per round trip. LED gaps were about 64 ms per flash chunk and 541 ms for the final read-back.
+- Peak main stack was 31.7 KB of 127 KB, reached during boot.
+- Lowest free heap was 111.7 KB running idle and 67.8 KB during an HTTPS download.
 
 Host tests cover the library crate (`src/lib.rs` and its modules): effects, OTA
 command, HTTP and image validation, the TLS flag policy, settings validation,
@@ -220,17 +235,23 @@ Tested on an M5Stack NanoC6 (4 MiB):
 - HTTPS OTA in both slot directions, trial confirmation
 - Retained discovery, state and OTA status, Home Assistant control
 - Button actions
+- The device rename on one unit, with `tools/migrate-device-name.py`
+- mDNS on its own subnet. From another VLAN it depends on the router's reflection
+- CoAP over Wi-Fi: every resource, Observe, client keys, settings, logs and tailing
+- Firmware upload in both slot directions, interrupted, and with a wrong digest
+- A trial confirmed by CoAP during a broker outage
+- A trial failure that rolls back, followed by more updates and another rollback
+- `coap` without other features. Without any features: boot, Wi-Fi and USB provisioning
 
 Not yet tested on hardware:
 
-- The renamed device under Home Assistant, including `tools/migrate-device-name.py`
-- mDNS on the C6
-- Everything in `coap`, which has run only on a host against aiocoap
-
-- A forced trial failure that triggers rollback
+- Since moving to `ImageWriter`, an HTTPS update that activates. Downloads have passed TLS and
+  the digest check, stopping at activation with a deliberately wrong CRC
+- `mqtt` without `coap`, under the code on this branch
 - Power loss during an OTA or settings write
 - `busy` replies during an update
 - TLS failures (bad chain, host name or date)
+- A button press under this code
 
 Before a release, test both slot directions, an interrupted download, wrong
 digests or a wrong image, TLS failures, a trial failure and a watchdog
