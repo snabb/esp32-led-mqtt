@@ -35,6 +35,8 @@ mod config;
 mod flash;
 mod identity;
 mod light_state;
+#[cfg(feature = "mdns")]
+mod mdns;
 mod memory;
 #[cfg(feature = "mqtt")]
 mod mqtt;
@@ -231,6 +233,8 @@ async fn main(spawner: Spawner) -> ! {
         if !settings.mqtt_broker.is_empty() {
             spawner.spawn(mqtt::task(stack, identity, settings, download_context).unwrap());
         }
+        #[cfg(feature = "mdns")]
+        spawner.spawn(mdns::task(stack, identity).unwrap());
         network = Some(stack);
     }
     spawner.spawn(

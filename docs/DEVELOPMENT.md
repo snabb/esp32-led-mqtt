@@ -24,6 +24,7 @@ Run Clippy with the OTA variables set, or the OTA code paths go unchecked.
 | Feature | Default | Enables |
 |---|---|---|
 | `mqtt` | Yes | MQTT, Home Assistant discovery and OTA started over MQTT |
+| `mdns` | Yes | mDNS responder for `esp32-led-XXXXXX.local` |
 | `heap-stats` | No | Allocator high-water counters, see [heap measurements](#heap-measurements) |
 
 Without a control plane the firmware still drives the LEDs, the button and USB
@@ -102,6 +103,7 @@ the Google chain, and the Let's Encrypt chain tested uses ECDSA certificates.
 | `src/light_state.rs` | Shared light state and change signal |
 | `src/light_command.rs` | Host-tested light and effect-speed command parsing |
 | `src/mqtt.rs` | MQTT session, Home Assistant discovery, command handling |
+| `src/mdns.rs` | mDNS responder |
 | `src/button.rs` | Short, double and long press handling |
 | `src/effects/` | One file per effect |
 | `src/flash.rs` | The only owner of `FlashStorage`: partition-layout check, watchdog, one flash job at a time (OTA or settings) |

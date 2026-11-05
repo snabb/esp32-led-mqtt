@@ -11,6 +11,7 @@ Home Assistant over MQTT.
   firmware image (with no credentials in it) works for every device
 - Optional over-the-air (OTA) updates over HTTPS, started by an MQTT message, with
   a trial boot and automatic rollback
+- Found on the local network by name, as `esp32-led-XXXXXX.local`
 
 ## Supported hardware
 
