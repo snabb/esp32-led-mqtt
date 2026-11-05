@@ -82,6 +82,10 @@ not worst-case bounds. The earlier 100 KiB heap failed concurrent OTA with
 OTA digest uses the SHA peripheral. SHA-384/512, AES-192, X25519 and P-384 stay
 in software.
 
+CoAP uses `src/coap_crypto.rs`: P-256 point multiplication and streaming SHA-256 run on the
+peripherals, as does firmware upload's image hash. AES-CCM stays in software because the
+hardware has no such mode, as do HKDF and point decompression, which gain little.
+
 OTA offers only P-256 for key exchange. MQTTS offers P-256 first and keeps the
 other MbedTLS default groups as fallback, because the broker is user-chosen.
 Against a Mosquitto broker with OpenSSL, P-256 first took the handshake from a
@@ -121,7 +125,7 @@ the Google chain, and the Let's Encrypt chain tested uses ECDSA certificates.
 | `src/main.rs` | Peripheral setup, Wi-Fi connection loop, LED render loop |
 | `src/light_state.rs` | Shared light state and change signal |
 | `src/light_command.rs` | Host-tested light and effect-speed command parsing |
-| `src/coap_api.rs`, `src/coap_keys.rs`, `src/log_buffer.rs` | Host-tested CoAP resources, keys and log ring |
+| `src/coap_api.rs`, `src/coap_crypto.rs`, `src/coap_keys.rs`, `src/log_buffer.rs` | Host-tested CoAP resources, crypto provider, keys and log ring |
 | `src/coap.rs`, `src/log_sink.rs` | CoAP server task, logger with RAM copy |
 | `src/mqtt.rs` | MQTT session, Home Assistant discovery, command handling |
 | `src/mdns.rs` | mDNS responder |

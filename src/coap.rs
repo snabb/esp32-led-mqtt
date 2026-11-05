@@ -1,6 +1,6 @@
 //! The CoAP server: binds `esp32_led_mqtt::coap_api` to the hardware and the network.
 
-use core::sync::atomic::Ordering;
+use core::{mem::ManuallyDrop, sync::atomic::Ordering};
 
 use embassy_futures::select::{Either, Either4, select, select4};
 use embassy_net::{
@@ -8,7 +8,7 @@ use embassy_net::{
     udp::{PacketMetadata, UdpSocket},
 };
 use embassy_time::{Instant, Timer};
-use esp_hal::{rng::Trng, sha::Sha256Context};
+use esp_hal::{ecc::EllipticCurve, rng::Trng, sha::Sha256Context};
 use esp_hal_ota::Ota;
 use esp_storage::FlashStorage;
 use esp32_led_mqtt::{
@@ -17,6 +17,7 @@ use esp32_led_mqtt::{
         DATAGRAM_BYTES, Device, Info, POLICY, PORT, PendingManifest, Resources, UploadAccess,
         resource,
     },
+    coap_crypto::{AcceleratedCrypto, Accelerator},
     coap_keys,
     device_config::{CoapCredential, DeviceConfig},
     light_command::{LightState, LightUpdate},
@@ -26,9 +27,10 @@ use esp32_led_mqtt::{
 use heapless::String;
 use log::{error, info, warn};
 use mai_coap::{
-    crypto::SoftwareCrypto, edhoc::endpoint::Edhoc, endpoint::RunError, time::EmbassyClock,
+    Error, crypto::Sha256State, edhoc::endpoint::Edhoc, endpoint::RunError, time::EmbassyClock,
     transport::embassy::EmbassyTransport,
 };
+use zeroize::Zeroizing;
 
 use crate::{
     flash::{self, Job, Lease, UploadEvent},
@@ -43,7 +45,77 @@ const SOCKET_TX_SLOTS: usize = 2;
 
 static CLIENT_KEYS: ClientKeys = ClientKeys::new();
 
-struct Hardware {
+/// SHA-256 on the accelerator. Holds its state in place rather than through `Digest`, whose
+/// consuming `finalize` would leave a copy of the buffered input to erase.
+struct HardwareSha256(ManuallyDrop<Sha256Context>);
+
+impl Drop for HardwareSha256 {
+    fn drop(&mut self) {
+        // SAFETY: the context is valid for writes and has no destructor, which `ManuallyDrop`
+        // keeps from running on the zeroed value, and nothing can use it after this. Its
+        // handles borrowed it mutably and have all ended.
+        unsafe { zeroize::zeroize_flat_type::<Sha256Context>(&mut *self.0) };
+    }
+}
+
+impl Sha256State for HardwareSha256 {
+    fn update(&mut self, input: &[u8]) -> Result<(), Error> {
+        self.0.update(input).wait_blocking();
+        Ok(())
+    }
+    fn finalize(mut self) -> Result<[u8; 32], Error> {
+        let mut digest = [0; 32];
+        self.0.finalize(&mut digest).wait_blocking();
+        Ok(digest)
+    }
+}
+
+/// The SHA and ECC work queues. `main` starts them in every build with CoAP, because waiting
+/// for an operation with no queue running would hang.
+struct Hardware;
+
+impl Accelerator for Hardware {
+    type Sha256 = HardwareSha256;
+
+    fn sha256_start(&mut self) -> Result<HardwareSha256, Error> {
+        Ok(HardwareSha256(ManuallyDrop::new(Sha256Context::new())))
+    }
+
+    fn multiply(
+        &mut self,
+        k: &[u8; 32],
+        x: &[u8; 32],
+        y: &[u8; 32],
+    ) -> Result<([u8; 32], [u8; 32]), Error> {
+        // The peripheral is little-endian, unlike the provider interface.
+        let reversed = |value: &[u8; 32]| {
+            let mut output = *value;
+            output.reverse();
+            output
+        };
+        let scalar = Zeroizing::new(reversed(k));
+        let (px, py) = (reversed(x), reversed(y));
+        let (mut result_x, mut result_y) = ([0; 32], [0; 32]);
+        let on_curve = {
+            let mut operation = EllipticCurve::P256
+                .affine_point_verification_multiplication(&scalar[..], &px, &py)
+                .and_then(|operation| {
+                    operation.with_affine_point_result(&mut result_x, &mut result_y)
+                })
+                .map_err(|_| Error::Protection)?;
+            operation.process().wait_blocking();
+            operation.point_on_curve()
+        };
+        if !on_curve {
+            return Err(Error::Protection);
+        }
+        result_x.reverse();
+        result_y.reverse();
+        Ok((result_x, result_y))
+    }
+}
+
+struct HardwareDevice {
     stack: Stack<'static>,
     name: &'static str,
     settings: &'static DeviceConfig,
@@ -63,7 +135,7 @@ struct FlashUpload;
 
 impl UploadAccess for FlashUpload {
     type Target = UpdateSlot<Lease>;
-    // `main` starts its work queue in any build where uploads are possible.
+    // `main` starts its work queue in every build with CoAP.
     type Hash = Sha256Context;
 
     fn acquire(&mut self) -> Option<Self::Target> {
@@ -97,7 +169,7 @@ pub async fn save_clients(flash: &mut FlashStorage<'static>, clients: ClientList
     }
 }
 
-impl Device for Hardware {
+impl Device for HardwareDevice {
     fn light(&self) -> LightState {
         light_state::get()
     }
@@ -203,19 +275,12 @@ pub async fn task(
         error!("CoAP disabled: no entropy source");
         return;
     };
-    let Ok(rng_for_identity) = Trng::try_new() else {
-        error!("CoAP disabled: no entropy source");
-        return;
-    };
-    let Ok(identity_key) = coap_keys::identity(
-        &settings.coap_device_key,
-        &mut SoftwareCrypto::new(rng_for_identity),
-    ) else {
+    let mut crypto = AcceleratedCrypto::new(Hardware, rng);
+    let Ok(identity_key) = coap_keys::identity(&settings.coap_device_key, &mut crypto) else {
         error!("CoAP disabled: unusable device key");
         return;
     };
-    let Ok(protection) = Edhoc::with_store(SoftwareCrypto::new(rng), identity_key, &CLIENT_KEYS)
-    else {
+    let Ok(protection) = Edhoc::with_store(crypto, identity_key, &CLIENT_KEYS) else {
         error!("CoAP disabled: invalid security capacity");
         return;
     };
@@ -230,7 +295,7 @@ pub async fn task(
     }
     let mut transport = EmbassyTransport { socket };
 
-    let device = Hardware {
+    let device = HardwareDevice {
         stack,
         name: &identity.slug,
         settings,

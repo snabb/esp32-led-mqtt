@@ -5,6 +5,8 @@ mod c_shims;
 #[cfg(feature = "coap")]
 pub mod coap_api;
 #[cfg(feature = "coap")]
+pub mod coap_crypto;
+#[cfg(feature = "coap")]
 pub mod coap_keys;
 pub mod config_store;
 pub mod device_config;

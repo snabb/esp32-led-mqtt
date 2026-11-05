@@ -13,7 +13,6 @@ use mai_coap::{
     Error,
     block::{BodyKey, UploadSink},
     codec::{Code, ContentFormat, OptionNumber},
-    crypto::SoftwareCrypto,
     delegate_application,
     edhoc::{CredentialId, CredentialStore, TrustedPeer, endpoint::Edhoc},
     endpoint::{Application, Disposition, Endpoint, Request, ResponseWriter, Shared},
@@ -69,11 +68,10 @@ pub mod resource {
 }
 
 pub type ApiShared = Shared<DATAGRAM_BYTES, COMMANDS>;
-pub type Protection<'k, R> =
-    Edhoc<SoftwareCrypto<R>, CONTEXTS, HANDSHAKES, &'k ClientKeys, ID_CONTEXT_BYTES>;
-pub type ApiEndpoint<'a, 'k, R> = Endpoint<
+pub type Protection<'k, C> = Edhoc<C, CONTEXTS, HANDSHAKES, &'k ClientKeys, ID_CONTEXT_BYTES>;
+pub type ApiEndpoint<'a, 'k, C> = Endpoint<
     'a,
-    Protection<'k, R>,
+    Protection<'k, C>,
     DATAGRAM_BYTES,
     OUTBOUND,
     DEDUP_ENTRIES,

@@ -1,6 +1,6 @@
 //! A real server and client talking EDHOC and OSCORE over loopback UDP.
 
-use core::{cell::Cell, convert::Infallible, net::SocketAddr};
+use core::{cell::Cell, net::SocketAddr};
 use std::format;
 use std::vec::Vec as StdVec;
 
@@ -11,18 +11,22 @@ use futures::{
 };
 use mai_coap::{
     codec::Code,
+    crypto::SoftwareCrypto,
     edhoc::{CcsEncoding, Identity, TrustedPeers},
     endpoint::{DefaultEndpoint, DefaultShared, Handle},
     security::ProtectedOnly,
     time::StdClock,
     transport::linux::StdTransport,
 };
-use rand_core::{TryCryptoRng, TryRng};
 use smart_leds::RGB8;
 
 use super::*;
 use crate::{
     EffectId,
+    coap_crypto::{
+        AcceleratedCrypto,
+        tests::{FakeAccelerator, TestRng},
+    },
     log_buffer::LogRing,
     ota_protocol::{IMAGE_PREFIX_SIZE, PROJECT, TargetError},
 };
@@ -31,27 +35,6 @@ const DEVICE_KEY: &str = "0102030405060708090a0b0c0d0e0f101112131415161718191a1b
 const CLIENT_KEY: [u8; 32] = [9; 32];
 const OTHER_KEY: [u8; 32] = [10; 32];
 const DEVICE: PeerId = PeerId(1);
-
-/// Not for real use; tests only need the two sides to differ.
-struct TestRng(u64);
-impl TryRng for TestRng {
-    type Error = Infallible;
-    fn try_next_u32(&mut self) -> Result<u32, Infallible> {
-        Ok(self.try_next_u64()? as u32)
-    }
-    fn try_next_u64(&mut self) -> Result<u64, Infallible> {
-        self.0 = self.0.wrapping_mul(0x9e37_79b9_7f4a_7c15).wrapping_add(1);
-        Ok(self.0 ^ (self.0 >> 29))
-    }
-    fn try_fill_bytes(&mut self, output: &mut [u8]) -> Result<(), Infallible> {
-        for chunk in output.chunks_mut(8) {
-            let bytes = self.try_next_u64()?.to_le_bytes();
-            chunk.copy_from_slice(&bytes[..chunk.len()]);
-        }
-        Ok(())
-    }
-}
-impl TryCryptoRng for TestRng {}
 
 fn crypto(seed: u64) -> SoftwareCrypto<TestRng> {
     SoftwareCrypto::new(TestRng(seed))
@@ -269,9 +252,14 @@ fn session_with_notifier<F: AsyncFnOnce(Client<'_>, SocketAddr, Notifier<'_>)>(
         let mut client_socket = StdTransport::bind("127.0.0.1:0".parse().unwrap()).unwrap();
         let clock = StdClock::default();
 
-        let device_identity = coap_keys::identity(DEVICE_KEY, &mut crypto(1)).unwrap();
+        // The device's provider, with a stand-in for the hardware: every session here runs
+        // through the same code as on a device.
+        let accelerator = FakeAccelerator::new();
+        let accelerator_calls = accelerator.calls.clone();
+        let mut device_crypto = AcceleratedCrypto::new(accelerator, TestRng(2));
+        let device_identity = coap_keys::identity(DEVICE_KEY, &mut device_crypto).unwrap();
         let device_credential = device_identity.credential_bytes().to_vec();
-        let protection = Edhoc::with_store(crypto(2), device_identity, keys).unwrap();
+        let protection = Edhoc::with_store(device_crypto, device_identity, keys).unwrap();
         let shared = ApiShared::new();
         let mut endpoint = ApiEndpoint::new(&shared, protection).unwrap();
         let manifest = PendingManifest::new();
@@ -308,6 +296,7 @@ fn session_with_notifier<F: AsyncFnOnce(Client<'_>, SocketAddr, Notifier<'_>)>(
             Either::Left(_) => {}
             Either::Right(_) => panic!("a driver stopped"),
         }
+        assert!(accelerator_calls.multiplications.get() >= 1);
     });
 }
 
