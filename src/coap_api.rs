@@ -36,8 +36,9 @@ pub const DATAGRAM_BYTES: usize = 1152;
 const ROUTES: usize = 13;
 const UPLOADS: usize = 2;
 const UPLOAD_BYTES: usize = 2048;
-/// Keep one context per client, plus one while it runs EDHOC again.
-const CONTEXTS: usize = 2;
+/// Observations and uploads pin their contexts, and with every context pinned no new handshake
+/// is accepted, so this leaves one free when all of them are in use.
+const CONTEXTS: usize = OBSERVERS + UPLOADS + 1;
 const HANDSHAKES: usize = 2;
 /// EDHOC derives no OSCORE ID Context.
 const ID_CONTEXT_BYTES: usize = 0;

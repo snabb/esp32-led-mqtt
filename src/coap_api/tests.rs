@@ -1017,6 +1017,116 @@ fn manifests_are_checked_up_front() {
     });
 }
 
+/// Long-lived observations keep their security contexts, which must not stop a client from
+/// connecting: otherwise a couple of forgotten `logs -f` lock everyone out of the device.
+#[test]
+fn observers_leave_room_for_another_client() {
+    let device = FakeDevice::new();
+    let keys = ClientKeys::new();
+    let clients: [([u8; 32], u8); device_config::MAX_COAP_CLIENTS] =
+        core::array::from_fn(|n| ([20 + n as u8; 32], n as u8 + 1));
+    let credentials: StdVec<_> = clients
+        .iter()
+        .map(|(key, kid)| hex(client_identity(*key, &[*kid]).credential_bytes()))
+        .collect();
+    assert_eq!(keys.load(&credentials), 0);
+
+    block_on(async {
+        let mut server_socket = StdTransport::bind("127.0.0.1:0".parse().unwrap()).unwrap();
+        let server = server_socket.local_addr().unwrap();
+        let clock = StdClock::default();
+        let mut device_crypto = crypto(2);
+        let device_identity = coap_keys::identity(DEVICE_KEY, &mut device_crypto).unwrap();
+        let device_credential = device_identity.credential_bytes().to_vec();
+        let protection = Edhoc::with_store(device_crypto, device_identity, &keys).unwrap();
+        let shared = ApiShared::new();
+        let mut endpoint = ApiEndpoint::new(&shared, protection).unwrap();
+        let manifest = PendingManifest::new();
+        let mut resources =
+            Resources::new(&device, &keys, &manifest, FakeAccess(device.flash.clone()));
+        let mut router = ApiRouter::new(&POLICY);
+        resources.register(&mut router).unwrap();
+        let mut application = Authenticated {
+            device: &device,
+            router,
+        };
+        let server_driver = endpoint.run(&mut server_socket, &clock, &mut application, &POLICY);
+
+        // As many clients as can be trusted: three holding sessions, and one connecting after.
+        macro_rules! client {
+            ($index:expr, $shared:ident, $endpoint:ident, $socket:ident) => {
+                let $shared = DefaultShared::new();
+                let (key, kid) = clients[$index];
+                let mut protection = Edhoc::<_, 4, 4, TrustedPeers<1>, 0>::with_store(
+                    crypto(10 + $index as u64),
+                    client_identity(key, &[kid]),
+                    TrustedPeers::new(),
+                )
+                .unwrap();
+                protection
+                    .trust(TrustedPeer::new(DEVICE, &device_credential).unwrap())
+                    .unwrap();
+                let mut $endpoint = DefaultEndpoint::new(&$shared, protection).unwrap();
+                let mut $socket = StdTransport::bind("127.0.0.1:0".parse().unwrap()).unwrap();
+            };
+        }
+        client!(0, shared_a, endpoint_a, socket_a);
+        client!(1, shared_b, endpoint_b, socket_b);
+        client!(2, shared_c, endpoint_c, socket_c);
+        client!(3, shared_d, endpoint_d, socket_d);
+        let reject =
+            |_: Request<'_>, _: &mut ResponseWriter<'_, DATAGRAM_BYTES>| Err(Code::NOT_FOUND);
+        let (mut no_a, mut no_b, mut no_c, mut no_d) = (reject, reject, reject, reject);
+        let drivers = futures::future::join5(
+            server_driver,
+            endpoint_a.run(&mut socket_a, &clock, &mut no_a, &ProtectedOnly),
+            endpoint_b.run(&mut socket_b, &clock, &mut no_b, &ProtectedOnly),
+            endpoint_c.run(&mut socket_c, &clock, &mut no_c, &ProtectedOnly),
+            endpoint_d.run(&mut socket_d, &clock, &mut no_d, &ProtectedOnly),
+        );
+
+        let test = async {
+            let mut a = shared_a
+                .handle()
+                .client(server)
+                .peer(DEVICE)
+                .observe("/speed")
+                .unwrap();
+            a.next().await.unwrap().unwrap();
+            let mut b = shared_b
+                .handle()
+                .client(server)
+                .peer(DEVICE)
+                .observe("/light")
+                .unwrap();
+            b.next().await.unwrap().unwrap();
+            let mut c = shared_c
+                .handle()
+                .client(server)
+                .peer(DEVICE)
+                .observe("/logs")
+                .unwrap();
+            c.next().await.unwrap().unwrap();
+            let reply = shared_d
+                .handle()
+                .client(server)
+                .peer(DEVICE)
+                .get("/speed")
+                .await
+                .expect("another client can still connect");
+            assert_eq!(reply.message().unwrap().code(), Code::CONTENT);
+            a.cancel();
+            b.cancel();
+            c.cancel();
+        };
+        pin_mut!(drivers, test);
+        match select(test, drivers).await {
+            Either::Left(_) => {}
+            Either::Right(_) => panic!("a driver stopped"),
+        }
+    });
+}
+
 #[test]
 fn an_unknown_client_key_gets_nothing() {
     let device = FakeDevice::new();

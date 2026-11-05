@@ -29,6 +29,18 @@ KEY_DIR = Path(__file__).resolve().parent.parent / "local/coap"
 # Where the build ID sits in an ESP image: the app descriptor's version field.
 BUILD_ID_RANGE = (48, 80)
 TRIAL_SECONDS = 150
+# `confirm_boot` reports these as `disabled` when a boot is unhealthy. Others just mean this
+# image can't download updates.
+UNHEALTHY_BOOT = {
+    "bootloader_state",
+    "initial_metadata",
+    "partition_layout",
+    "partition_table",
+    "missing_partition",
+    "otadata_erase",
+    "unknown_image_state",
+    "unknown_running_slot",
+}
 
 
 class CoapError(Exception):
@@ -174,13 +186,22 @@ def fingerprint_of(ccs_file):
     return hashlib.sha256(ccs_file.read_bytes()).hexdigest()[:8]
 
 
+async def client_fingerprints(device):
+    # A reply only means the change was accepted, and saving it follows. Allow for that.
+    await asyncio.sleep(1)
+    return json.loads(await device.get("/coap/clients"))
+
+
 async def clients(device, args):
     if args.action == "list":
         print((await device.get("/coap/clients")).decode())
         return
     if args.action == "add":
         await device.post("/coap/clients", args.client.read_bytes().hex().encode())
-        print(f"Added {fingerprint_of(args.client)}")
+        fingerprint = fingerprint_of(args.client)
+        if fingerprint not in await client_fingerprints(device):
+            raise CoapError(f"{fingerprint} wasn't saved")
+        print(f"Added {fingerprint}")
         return
     fingerprint = args.client
     if Path(fingerprint).exists():
@@ -191,6 +212,8 @@ async def clients(device, args):
     if not response.code.is_successful():
         detail = response.payload.decode(errors="replace")
         raise CoapError(f"could not remove {fingerprint}: {response.code} {detail}")
+    if fingerprint in await client_fingerprints(device):
+        raise CoapError(f"{fingerprint} wasn't removed")
     print(f"Removed {fingerprint}")
     if args.no_reboot:
         print("Sessions it already has last until the device reboots.")
@@ -207,22 +230,30 @@ def image_build_id(image):
 
 
 async def wait_for_build(device, build):
-    """Polls until the image runs. Each authenticated request also confirms its trial."""
+    """Polls until the image has passed its trial. These requests are themselves what
+    confirms it when no broker is reachable, but its other health checks have to pass too."""
     deadline = asyncio.get_running_loop().time() + TRIAL_SECONDS
+    was_running = False
     while asyncio.get_running_loop().time() < deadline:
         await asyncio.sleep(5)
         try:
             status = json.loads(await device.get("/firmware"))
         except (aiocoap.error.Error, ValueError, CoapError):
             continue
-        if status.get("running_build") == build:
-            print(f"Running {build}: {status.get('state')}")
+        state, detail = status.get("state"), status.get("detail")
+        if status.get("running_build") != build:
+            if was_running:
+                raise CoapError(f"{build} failed its trial and rolled back")
+            if state == "failed":
+                raise CoapError(f"update failed: {detail}")
+            continue
+        was_running = True
+        if state == "disabled" and detail in UNHEALTHY_BOOT:
+            raise CoapError(f"{build} booted unhealthy: {detail}")
+        if state != "trial":
+            print(f"Running {build}: {state}")
             return
-        if status.get("state") == "failed":
-            raise CoapError(f"update failed: {status.get('detail')}")
-    raise CoapError(
-        f"{build} isn't running after {TRIAL_SECONDS} s; it may have rolled back"
-    )
+    raise CoapError(f"{build} hasn't passed its trial after {TRIAL_SECONDS} s")
 
 
 async def push(device, image_file):

@@ -34,8 +34,8 @@ pub fn device_credential() -> device_config::CoapCredential {
     critical_section::with(|cs| DEVICE_CREDENTIAL.borrow_ref(cs).clone())
 }
 
-/// Replaces the stored client list, keeping everything else. Returns whether it was saved;
-/// a failed write may still have committed, which the caller can't tell apart.
+/// Replaces the stored client list, keeping everything else. Returns whether it's known to be
+/// saved. If not, the write may still have committed.
 #[cfg(feature = "coap")]
 pub async fn save_clients(
     flash: &mut FlashStorage<'static>,

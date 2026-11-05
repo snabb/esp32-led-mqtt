@@ -1,6 +1,6 @@
 //! The CoAP server: binds `esp32_led_mqtt::coap_api` to the hardware and the network.
 
-use core::{mem::ManuallyDrop, sync::atomic::Ordering};
+use core::{mem::MaybeUninit, sync::atomic::Ordering};
 
 use embassy_futures::select::{Either, Either4, select, select4};
 use embassy_net::{
@@ -47,25 +47,35 @@ static CLIENT_KEYS: ClientKeys = ClientKeys::new();
 
 /// SHA-256 on the accelerator. Holds its state in place rather than through `Digest`, whose
 /// consuming `finalize` would leave a copy of the buffered input to erase.
-struct HardwareSha256(ManuallyDrop<Sha256Context>);
+///
+/// `MaybeUninit` because erasing leaves bytes that aren't a valid context, which has non-null
+/// pointers. It's always initialized until `drop`, and has no destructor to run.
+struct HardwareSha256(MaybeUninit<Sha256Context>);
+
+impl HardwareSha256 {
+    fn context(&mut self) -> &mut Sha256Context {
+        // SAFETY: initialized by `sha256_start`, and only `drop` overwrites it.
+        unsafe { self.0.assume_init_mut() }
+    }
+}
 
 impl Drop for HardwareSha256 {
     fn drop(&mut self) {
-        // SAFETY: the context is valid for writes and has no destructor, which `ManuallyDrop`
-        // keeps from running on the zeroed value, and nothing can use it after this. Its
-        // handles borrowed it mutably and have all ended.
-        unsafe { zeroize::zeroize_flat_type::<Sha256Context>(&mut *self.0) };
+        // SAFETY: all zeros are valid for `MaybeUninit`, and `MaybeUninit` holds no pointers
+        // this would invalidate for anyone: a handle borrows the context mutably, so none can
+        // have outlived the calls below.
+        unsafe { zeroize::zeroize_flat_type(&raw mut self.0) };
     }
 }
 
 impl Sha256State for HardwareSha256 {
     fn update(&mut self, input: &[u8]) -> Result<(), Error> {
-        self.0.update(input).wait_blocking();
+        self.context().update(input).wait_blocking();
         Ok(())
     }
     fn finalize(mut self) -> Result<[u8; 32], Error> {
         let mut digest = [0; 32];
-        self.0.finalize(&mut digest).wait_blocking();
+        self.context().finalize(&mut digest).wait_blocking();
         Ok(digest)
     }
 }
@@ -78,7 +88,7 @@ impl Accelerator for Hardware {
     type Sha256 = HardwareSha256;
 
     fn sha256_start(&mut self) -> Result<HardwareSha256, Error> {
-        Ok(HardwareSha256(ManuallyDrop::new(Sha256Context::new())))
+        Ok(HardwareSha256(MaybeUninit::new(Sha256Context::new())))
     }
 
     fn multiply(
@@ -160,12 +170,15 @@ impl UploadAccess for FlashUpload {
     }
 }
 
-/// Saves the client list and, if that worked, applies it to the next handshake.
+/// Saves the client list and applies it to the next handshake. A failed save may still have
+/// committed, so reboot to whatever is stored: a removed key must not stay usable.
 pub async fn save_clients(flash: &mut FlashStorage<'static>, clients: ClientList) {
     if crate::config::save_clients(flash, &clients).await {
         CLIENT_KEYS.load(&clients);
     } else {
-        warn!("Could not save the CoAP client keys");
+        warn!("Could not save the CoAP client keys, rebooting");
+        Timer::after_millis(250).await;
+        esp_hal::system::software_reset();
     }
 }
 

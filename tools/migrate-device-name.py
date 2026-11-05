@@ -20,8 +20,9 @@ from pathlib import Path
 
 import paho.mqtt.client as mqtt
 
-# Retained messages arrive right after SUBACK, so this only bounds the wait for absent topics.
+# Retained messages follow the SUBACK at once, so this only bounds the wait for absent topics.
 READ_SECONDS = 2.0
+ACK_SECONDS = 10.0
 STATE_TOPICS = ("light/state", "effect_speed/state")
 OTHER_TOPICS = ("status", "temperature/state", "firmware/state", "ota/status")
 
@@ -53,18 +54,38 @@ def connect(args):
 
 
 def read_retained(client, topics):
-    """Return {topic: payload} for those topics that have a retained message."""
+    """Return {topic: payload} for those topics that have a retained message.
+
+    Absent from the result means the broker has none. A refused or unanswered subscription
+    is an error, because treating it as absent would lose the state being migrated.
+    """
     found = {}
-    # paho calls on_message on its network thread, one message at a time.
+    acknowledged = threading.Event()
+    refused = []
+
+    def on_subscribe(c, userdata, mid, reasons, properties):
+        refused.extend(reason for reason in reasons if reason.is_failure)
+        acknowledged.set()
+
+    # paho calls these on its network thread, one message at a time.
+    client.on_subscribe = on_subscribe
     client.on_message = lambda c, u, message: (
         found.__setitem__(message.topic, message.payload) if message.retain else None
     )
-    for topic in topics:
-        client.subscribe(topic, qos=1)
+    result, _ = client.subscribe([(topic, 1) for topic in topics])
+    if result != mqtt.MQTT_ERR_SUCCESS:
+        raise RuntimeError(f"could not subscribe to {topics}: error {result}")
+    if not acknowledged.wait(ACK_SECONDS):
+        raise TimeoutError(
+            f"the broker didn't acknowledge the subscription to {topics}"
+        )
+    if refused:
+        raise RuntimeError(
+            f"the broker refused the subscription to {topics}: {refused}"
+        )
     time.sleep(READ_SECONDS)
-    for topic in topics:
-        client.unsubscribe(topic)
-    client.on_message = None
+    client.unsubscribe(topics)
+    client.on_subscribe = client.on_message = None
     return found
 
 

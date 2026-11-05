@@ -55,6 +55,8 @@ uv run tools/coap.py --host esp32-led-XXXXXX.local clients add other.ccs
 uv run tools/coap.py --host esp32-led-XXXXXX.local clients remove other.ccs
 ```
 
+- The reply means the change was accepted. It's saved just after, which `coap.py` checks. If
+  saving fails, the device reboots to whatever is stored.
 - The last key can't be removed, because recovering from that needs USB.
 - Two keys can't share a key ID, because a device couldn't tell them apart. `keygen` picks a
   random one.
@@ -133,8 +135,8 @@ A `next` lower than the client's own offset means the device restarted.
 2. `PUT /firmware/image` with the image, using Block1. The manifest applies to one upload.
 3. The final 2.04 means it's verified and activated. The device then reboots on
    [trial](OTA.md#trial-boot-and-rollback).
-4. Any authenticated request confirms the trial, so `push` polls `/firmware` until the new
-   build runs.
+4. Any authenticated request counts as the control plane's part of the trial, so `push` polls
+   `/firmware` until the trial has passed, or reports that it rolled back.
 
 It needs an image built with `OTA_ROLLBACK_BOOTLOADER=1`, but not `OTA_ALLOWED_HOSTS`.
 Starting an upload aborts one already in progress. One that stalls for 30 seconds is
