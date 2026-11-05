@@ -14,7 +14,11 @@ name = "esp32-led-mqtt"
 path = "./src/main.rs"
 
 [features]
+default = ["mqtt"]
 heap-stats = ["esp-alloc/internal-heap-stats"]
+mqtt = ["dep:minimq", "_control"]
+# Implied by any remote control plane: OTA downloads, TLS and the temperature sampler.
+_control = ["dep:mbedtls-rs", "dep:time"]
 
 [dependencies]
 smart-leds = "0.4.0"
@@ -24,6 +28,7 @@ serde-json-core = "0.7.0"
 digest = { version = "0.11.3", default-features = false }
 sequential-storage = "8.0.2"
 embedded-storage-async = "0.4.1"
+log = "0.4.35"
 
 [target.'cfg(target_arch = "riscv32")'.dependencies]
 critical-section = "1.2.0"
@@ -48,11 +53,10 @@ esp-storage = { version = "0.10.0", features = ["esp32c6", "embedded-storage"] }
 embedded-io-async = "0.7.0"
 embedded-storage = "0.3.2"
 embassy-embedded-hal = "0.6.0"
-mbedtls-rs = { git = "https://github.com/esp-rs/mbedtls-rs", rev = "07aeabb493ac5c71b06199414807cf49d899dec6", default-features = false, features = ["tls", "esp32c6", "hook-wall-clock", "ssl-out-content-len-2048"] }
-time = { version = "0.3.55", default-features = false }
+mbedtls-rs = { git = "https://github.com/esp-rs/mbedtls-rs", rev = "07aeabb493ac5c71b06199414807cf49d899dec6", default-features = false, features = ["tls", "esp32c6", "hook-wall-clock", "ssl-out-content-len-2048"], optional = true }
+time = { version = "0.3.55", default-features = false, optional = true }
 esp-rtos    = { version = "0.4.0", features = ["embassy", "esp-radio", "esp32c6", "log-04"] }
-log         = "0.4.35"
-minimq      = { version = "0.13.5", default-features = false }
+minimq      = { version = "0.13.5", default-features = false, optional = true }
 static_cell = "2.1.1"
 
 [dev-dependencies]

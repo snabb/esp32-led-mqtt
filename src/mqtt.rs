@@ -2,23 +2,31 @@ use core::fmt::Write;
 
 use embassy_futures::select::{Either4, select4};
 use embassy_net::{IpEndpoint, Stack, tcp::TcpSocket};
-use embassy_time::{Duration, Instant, Ticker, Timer, with_deadline, with_timeout};
-use esp32_led_mqtt::{EFFECT_DISABLED_NAME, EFFECTS, EffectId};
+use embassy_sync::watch::DynReceiver;
+use embassy_time::{Duration, Instant, Timer, with_deadline, with_timeout};
+use esp32_led_mqtt::{
+    EFFECT_DISABLED_NAME, EFFECTS, EffectId, MAX_EFFECT_SPEED,
+    light_command::{parse_light_command, parse_speed},
+};
 use log::{info, warn};
 use mbedtls_rs::TlsGroup;
 use minimq::{
     Buffers, ConfigBuilder, ConnectEvent, Connection, InboundPublish, Publication, Session,
     TopicFilter, Will,
 };
-use serde::Deserialize;
-use smart_leds::RGB8;
 
 use crate::{
     identity::{DEVICE_MODEL, DEVICE_NAME, DeviceIdentity},
-    light_state::{self, LIGHT_STATE_CHANGED, LightState, MAX_EFFECT_SPEED},
+    light_state::{self, LIGHT_STATE_CHANGED},
 };
 
-const TEMPERATURE_INTERVAL: Duration = Duration::from_secs(60);
+/// Kept across sessions, so a status raised while disconnected is published on reconnect.
+struct Events {
+    light: DynReceiver<'static, ()>,
+    ota_status: DynReceiver<'static, heapless::String<192>>,
+    temperature: DynReceiver<'static, f32>,
+}
+
 /// Retained messages follow the SUBACK at once, so this only bounds the wait
 /// when the broker has none.
 const RESTORE_WAIT: Duration = Duration::from_secs(2);
@@ -46,15 +54,25 @@ pub async fn task(
     identity: &'static DeviceIdentity,
     settings: &'static esp32_led_mqtt::device_config::DeviceConfig,
     tls_context: crate::tls::Context,
-    chip_temp: &'static crate::tsens::ChipTemp,
 ) {
+    let mut events = Events {
+        light: LIGHT_STATE_CHANGED
+            .dyn_receiver()
+            .expect("receiver capacity"),
+        ota_status: crate::ota::STATUS
+            .dyn_receiver()
+            .expect("receiver capacity"),
+        temperature: crate::tsens::TEMPERATURE
+            .dyn_receiver()
+            .expect("receiver capacity"),
+    };
     loop {
         stack.wait_config_up().await;
         if let Some(config) = stack.config_v4() {
             info!("Network ready with IP {}", config.address);
         }
 
-        let result = run_session(stack, identity, settings, tls_context, chip_temp).await;
+        let result = run_session(stack, identity, settings, tls_context, &mut events).await;
         crate::ota::MQTT_READY.store(false, core::sync::atomic::Ordering::Release);
         match result {
             Ok(()) => warn!("MQTT session ended"),
@@ -70,7 +88,7 @@ async fn run_session(
     identity: &'static DeviceIdentity,
     settings: &'static esp32_led_mqtt::device_config::DeviceConfig,
     tls_context: crate::tls::Context,
-    chip_temp: &crate::tsens::ChipTemp,
+    events: &mut Events,
 ) -> Result<(), MqttRunError> {
     let tls = if settings.mqtt_tls {
         Some(tls_context.map_err(MqttRunError::Tls)?)
@@ -99,16 +117,16 @@ async fn run_session(
         )
         .await
         .map_err(MqttRunError::Tls)?;
-        return bridge::run(&mut tls, identity, settings, chip_temp).await;
+        return bridge::run(&mut tls, identity, settings, events).await;
     }
-    run_connected(socket, identity, settings, chip_temp).await
+    run_connected(socket, identity, settings, events).await
 }
 
 async fn run_connected<IO: minimq::Io>(
     socket: IO,
     identity: &DeviceIdentity,
     settings: &esp32_led_mqtt::device_config::DeviceConfig,
-    chip_temp: &crate::tsens::ChipTemp,
+    events: &mut Events,
 ) -> Result<(), MqttRunError> {
     let mut mqtt_rx = [0_u8; 1024];
     let mut mqtt_tx = [0_u8; 4096];
@@ -147,7 +165,10 @@ async fn run_connected<IO: minimq::Io>(
     publish_speed_state(&mut session, identity).await?;
     publish_temperature_discovery(&mut session, identity).await?;
     publish_firmware_version(&mut session, identity).await?;
-    publish_temperature(&mut session, identity, chip_temp).await?;
+    // Marks the current reading as seen; a sampler not yet started publishes on its first change.
+    if let Some(celsius) = events.temperature.try_get() {
+        publish_temperature(&mut session, identity, celsius).await?;
+    }
 
     if matches!(event, ConnectEvent::Connected) {
         session
@@ -164,14 +185,12 @@ async fn run_connected<IO: minimq::Io>(
     }
 
     crate::ota::MQTT_READY.store(true, core::sync::atomic::Ordering::Release);
-    // The first tick fires one interval from now; the initial reading was published above.
-    let mut temperature_ticker = Ticker::every(TEMPERATURE_INTERVAL);
     loop {
         match select4(
             session.recv(),
-            LIGHT_STATE_CHANGED.wait(),
-            crate::ota::STATUS.wait(),
-            temperature_ticker.next(),
+            events.light.changed(),
+            events.ota_status.changed(),
+            events.temperature.changed(),
         )
         .await
         {
@@ -186,7 +205,9 @@ async fn run_connected<IO: minimq::Io>(
             Either4::Third(status) => {
                 publish(&mut session, &identity.ota_status_topic, &status).await?
             }
-            Either4::Fourth(()) => publish_temperature(&mut session, identity, chip_temp).await?,
+            Either4::Fourth(celsius) => {
+                publish_temperature(&mut session, identity, celsius).await?
+            }
         }
     }
 }
@@ -377,9 +398,8 @@ async fn publish_firmware_version<IO: minimq::Io>(
 async fn publish_temperature<IO: minimq::Io>(
     session: &mut Connection<'_, '_, IO>,
     identity: &DeviceIdentity,
-    chip_temp: &crate::tsens::ChipTemp,
+    celsius: f32,
 ) -> Result<(), MqttRunError> {
-    let celsius = chip_temp.read().await;
     let mut payload: heapless::String<12> = heapless::String::new();
     write!(payload, "{:.1}", celsius)?;
     publish(session, &identity.temperature_state_topic, &payload).await
@@ -402,91 +422,11 @@ async fn publish<IO: minimq::Io>(
     Ok(())
 }
 
-/// Parses a light command, which has the same shape as the published state.
-fn parse_light_command(payload: &[u8]) -> Option<LightUpdate> {
-    let Ok((command, _)) = serde_json_core::from_slice::<LightCommand<'_>>(payload) else {
-        warn!("Ignoring invalid light command JSON");
-        return None;
-    };
-    let on = match command.state {
-        Some(state) if state.eq_ignore_ascii_case("ON") => Some(true),
-        Some(state) if state.eq_ignore_ascii_case("OFF") => Some(false),
-        _ => None,
-    };
-    let effect = command.effect.and_then(|name| {
-        if name.eq_ignore_ascii_case(EFFECT_DISABLED_NAME) {
-            Some(None)
-        } else if let Some(id) = EffectId::from_name(name) {
-            Some(Some(id))
-        } else {
-            warn!("Ignoring unknown light effect '{}'", name);
-            None
-        }
-    });
-
-    Some(LightUpdate {
-        on,
-        brightness: command.brightness,
-        color: command.color.map(|LightColor { r, g, b }| RGB8 { r, g, b }),
-        effect,
-    })
-}
-
-struct LightUpdate {
-    on: Option<bool>,
-    brightness: Option<u8>,
-    color: Option<RGB8>,
-    effect: Option<Option<EffectId>>,
-}
-
-impl LightUpdate {
-    fn apply(&self, state: &mut LightState) {
-        if let Some(on) = self.on {
-            state.on = on;
-        }
-        if let Some(brightness) = self.brightness {
-            state.brightness = brightness;
-        }
-        if let Some(color) = self.color {
-            state.color = color;
-        }
-        if let Some(effect) = self.effect {
-            state.effect = effect;
-        }
-    }
-}
-
 fn handle_speed_command(payload: &[u8]) {
     match parse_speed(payload) {
         Some(speed) => light_state::update(|state| state.speed = speed),
         None => warn!("Ignoring invalid effect speed command"),
     }
-}
-
-fn parse_speed(payload: &[u8]) -> Option<u8> {
-    core::str::from_utf8(payload)
-        .ok()
-        .and_then(|text| text.trim().parse::<u8>().ok())
-        .filter(|speed| (1..=MAX_EFFECT_SPEED).contains(speed))
-}
-
-#[derive(Deserialize)]
-struct LightCommand<'a> {
-    #[serde(default)]
-    state: Option<&'a str>,
-    #[serde(default)]
-    brightness: Option<u8>,
-    #[serde(default)]
-    color: Option<LightColor>,
-    #[serde(default)]
-    effect: Option<&'a str>,
-}
-
-#[derive(Clone, Copy, Deserialize)]
-struct LightColor {
-    r: u8,
-    g: u8,
-    b: u8,
 }
 
 #[allow(dead_code, reason = "fields are only read by Debug when logging")]

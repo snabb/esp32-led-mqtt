@@ -1,8 +1,14 @@
 use esp_hal::efuse;
 
+#[cfg(feature = "mqtt")]
 pub const DEVICE_NAME: &str = "ESP32 LED MQTT";
+#[cfg(feature = "mqtt")]
 pub const DEVICE_MODEL: &str = "ESP32-C6";
 
+#[cfg_attr(
+    not(feature = "mqtt"),
+    allow(dead_code, reason = "the topics are only read by MQTT")
+)]
 pub struct DeviceIdentity {
     pub slug: heapless::String<32>,
     pub discovery_topic: heapless::String<80>,

@@ -29,8 +29,26 @@ jobs:
       - name: Check firmware
         run: cargo check --target riscv32imac-unknown-none-elf
 
+      - name: Check firmware without control planes
+        run: cargo check --target riscv32imac-unknown-none-elf --no-default-features
+
+      - name: Check firmware with MQTT only
+        run: cargo check --target riscv32imac-unknown-none-elf --no-default-features --features mqtt
+
       - name: Run Clippy with OTA enabled
         env:
           OTA_ALLOWED_HOSTS: updates.example.invalid
           OTA_ROLLBACK_BOOTLOADER: "1"
         run: cargo clippy --target riscv32imac-unknown-none-elf -- -D warnings
+
+      - name: Run Clippy without control planes
+        env:
+          OTA_ALLOWED_HOSTS: updates.example.invalid
+          OTA_ROLLBACK_BOOTLOADER: "1"
+        run: cargo clippy --target riscv32imac-unknown-none-elf --no-default-features -- -D warnings
+
+      - name: Run Clippy with MQTT only
+        env:
+          OTA_ALLOWED_HOSTS: updates.example.invalid
+          OTA_ROLLBACK_BOOTLOADER: "1"
+        run: cargo clippy --target riscv32imac-unknown-none-elf --no-default-features --features mqtt -- -D warnings

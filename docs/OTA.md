@@ -3,8 +3,9 @@
 An update starts with a JSON command over MQTT that gives the image's URL,
 size and digests. The device downloads the image over HTTPS and writes it to
 the slot it isn't running from. It checks the image, reboots into it on trial,
-and keeps it only if the LEDs, Wi-Fi and MQTT all work within two minutes.
-Otherwise the bootloader goes back to the previous image.
+and keeps it only if the LEDs, Wi-Fi and MQTT all work within two minutes. MQTT
+is only required when a broker is configured. Otherwise the bootloader goes back
+to the previous image.
 
 Stored Wi-Fi and MQTT settings are never touched by an update.
 See also [MQTT over TLS configuration](CONFIGURATION.md#mqtt-over-tls).

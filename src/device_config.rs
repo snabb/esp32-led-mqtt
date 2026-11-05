@@ -21,6 +21,9 @@ pub struct DeviceConfig {
     pub wifi_password: String<64>,
     #[serde(default)]
     pub wifi_auth: WifiAuth,
+    /// Empty turns MQTT off at runtime. Left out of the snapshot when empty, so every
+    /// snapshot with a broker stays readable by images that require this field.
+    #[serde(default, skip_serializing_if = "is_empty")]
     pub mqtt_broker: String<128>,
     #[serde(default = "mqtt_port")]
     pub mqtt_port: u16,
@@ -40,6 +43,9 @@ pub enum WifiAuth {
     Wpa2Personal,
 }
 
+fn is_empty<const N: usize>(value: &String<N>) -> bool {
+    value.is_empty()
+}
 const fn schema() -> u16 {
     SCHEMA
 }
@@ -92,7 +98,6 @@ impl DeviceConfig {
             WifiAuth::Open => {}
         }
         if self.mqtt_port == 0
-            || self.mqtt_broker.is_empty()
             || !self
                 .mqtt_broker
                 .bytes()
@@ -145,6 +150,21 @@ mod tests {
         ] {
             assert!(DeviceConfig::decode(bad.as_bytes()).is_err());
         }
+    }
+
+    #[test]
+    fn broker_is_optional_and_only_written_when_set() {
+        let config =
+            DeviceConfig::decode(br#"{"wifi_ssid":"private","wifi_password":"private-pass"}"#)
+                .unwrap();
+        assert!(config.mqtt_broker.is_empty());
+        let mut output = [0; MAX_BYTES];
+        let len = config.encode(&mut output).unwrap();
+        assert!(!output[..len].windows(11).any(|w| w == b"mqtt_broker"));
+
+        let with_broker = DeviceConfig::decode(VALID).unwrap();
+        let len = with_broker.encode(&mut output).unwrap();
+        assert!(output[..len].windows(11).any(|w| w == b"mqtt_broker"));
     }
 
     #[test]

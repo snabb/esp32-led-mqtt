@@ -7,8 +7,8 @@
 )]
 
 use embassy_executor::Spawner;
-use embassy_net::{IpAddress, Runner, Stack, StackResources, dns::DnsQueryType};
-use embassy_time::{Duration, Instant, Ticker, Timer, with_timeout};
+use embassy_net::{Runner, StackResources};
+use embassy_time::{Duration, Instant, Ticker, Timer};
 use esp_backtrace as _;
 use esp_hal::{
     clock::CpuClock,
@@ -29,15 +29,19 @@ use smart_leds::{RGB8, SmartLedsWrite};
 use static_cell::StaticCell;
 
 mod button;
+#[cfg(feature = "_control")]
 mod c_shims;
 mod config;
 mod flash;
 mod identity;
 mod light_state;
 mod memory;
+#[cfg(feature = "mqtt")]
 mod mqtt;
 mod ota;
+#[cfg(feature = "_control")]
 mod tls;
+#[cfg(feature = "_control")]
 mod tsens;
 
 use identity::DeviceIdentity;
@@ -153,10 +157,16 @@ async fn main(spawner: Spawner) -> ! {
         spawner.spawn(button::task(button).unwrap());
     }
 
-    let chip_temp = mk_static!(tsens::ChipTemp, tsens::ChipTemp::new(peripherals.TSENS));
+    #[cfg(feature = "_control")]
+    spawner.spawn(tsens::task(tsens::ChipTemp::new(peripherals.TSENS)).unwrap());
 
     let mut network = None;
-    let mut tls_context = Err("tls_disabled");
+    #[cfg(feature = "_control")]
+    let mut download_context: ota::DownloadContext = Err("tls_disabled");
+    #[cfg(not(feature = "_control"))]
+    let download_context: ota::DownloadContext = ();
+    let control_required = device_config
+        .is_some_and(|settings| cfg!(feature = "mqtt") && !settings.mqtt_broker.is_empty());
     if let Some(settings) = device_config {
         let authentication = match settings.wifi_auth {
             esp32_led_mqtt::device_config::WifiAuth::Open => wifi::AuthenticationMethodConfig::Open,
@@ -197,28 +207,43 @@ async fn main(spawner: Spawner) -> ! {
         let (stack, runner) = embassy_net::new(
             wifi_interface,
             net_config,
-            mk_static!(StackResources<6>, StackResources::<6>::new()),
+            // DHCP, DNS, MQTT and OTA, with room for the UDP services.
+            mk_static!(StackResources<8>, StackResources::<8>::new()),
             seed,
         );
 
-        if settings.mqtt_tls || ota::enabled() {
-            tls_context = tls::initialize(
+        #[cfg(feature = "_control")]
+        if settings.mqtt_tls || ota::pull_enabled() {
+            download_context = tls::initialize(
                 mbedtls_rs::sys::hook::backend::esp::EspAccel::new()
                     .with_sha(peripherals.SHA)
                     .with_rsa(peripherals.RSA)
                     .with_aes(peripherals.AES)
                     .with_ecc(peripherals.ECC),
             );
-            if let Err(reason) = tls_context {
+            if let Err(reason) = download_context {
                 warn!("TLS initialization failed: {}", reason);
             }
         }
         spawner.spawn(connection_task(controller).unwrap());
         spawner.spawn(net_task(runner).unwrap());
-        spawner.spawn(mqtt::task(stack, identity, settings, tls_context, chip_temp).unwrap());
+        #[cfg(feature = "mqtt")]
+        if !settings.mqtt_broker.is_empty() {
+            spawner.spawn(mqtt::task(stack, identity, settings, download_context).unwrap());
+        }
         network = Some(stack);
     }
-    spawner.spawn(flash::task(network, flash, timg0.wdt, layout, tls_context).unwrap());
+    spawner.spawn(
+        flash::task(
+            network,
+            flash,
+            timg0.wdt,
+            layout,
+            download_context,
+            control_required,
+        )
+        .unwrap(),
+    );
     memory::report("boot_ready");
     run_led_loop(strip, led_power).await
 }
@@ -294,7 +319,14 @@ async fn net_task(mut runner: Runner<'static, Interface>) {
 }
 
 /// Resolves an IPv4 literal, or else a DNS A record.
-async fn resolve_ipv4(stack: Stack<'static>, host: &str) -> Result<IpAddress, &'static str> {
+#[cfg(feature = "_control")]
+async fn resolve_ipv4(
+    stack: embassy_net::Stack<'static>,
+    host: &str,
+) -> Result<embassy_net::IpAddress, &'static str> {
+    use embassy_net::{IpAddress, dns::DnsQueryType};
+    use embassy_time::with_timeout;
+
     if let Ok(address) = host.parse() {
         return Ok(IpAddress::Ipv4(address));
     }

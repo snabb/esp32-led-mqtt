@@ -5,6 +5,7 @@ mod c_shims;
 pub mod config_store;
 pub mod device_config;
 mod effects;
+pub mod light_command;
 pub mod ota_protocol;
 pub mod provisioning;
 pub mod random_color;

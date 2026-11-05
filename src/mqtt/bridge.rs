@@ -40,7 +40,7 @@ pub(super) async fn run(
     tls: &mut mbedtls_rs::Session<'_, crate::tls::Socket<'_>>,
     identity: &DeviceIdentity,
     settings: &esp32_led_mqtt::device_config::DeviceConfig,
-    chip_temp: &crate::tsens::ChipTemp,
+    events: &mut Events,
 ) -> Result<(), MqttRunError> {
     let tx = Pipe::<NoopRawMutex, 2048>::new();
     let drained = Cell::new(0_usize);
@@ -71,7 +71,7 @@ pub(super) async fn run(
         progress: &progress,
     };
     match select(
-        super::run_connected(stream, identity, settings, chip_temp),
+        super::run_connected(stream, identity, settings, events),
         outgoing,
     )
     .await

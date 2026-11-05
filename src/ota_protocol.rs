@@ -22,7 +22,7 @@ pub enum Error {
     Incomplete,
 }
 
-/// An update request owns its strings so MQTT's receive buffer can be released.
+/// An update request owns its strings so the receive buffer can be released.
 #[derive(Clone, Debug)]
 pub struct Request {
     pub host: String<128>,
@@ -244,10 +244,12 @@ pub enum TrialDecision {
     Rollback,
 }
 
-pub fn trial_decision(elapsed_ms: u64, led: bool, mqtt: bool, network: bool) -> TrialDecision {
+/// `control` is true once a configured control plane proves it works, or from the start
+/// if none is configured.
+pub fn trial_decision(elapsed_ms: u64, led: bool, control: bool, network: bool) -> TrialDecision {
     if elapsed_ms >= 120_000 {
         TrialDecision::Rollback
-    } else if led && mqtt && network {
+    } else if led && control && network {
         TrialDecision::Confirm
     } else {
         TrialDecision::Wait

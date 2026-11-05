@@ -11,11 +11,14 @@ use esp_hal::{
     timer::timg::{MwdtStage, MwdtStageAction, Wdt},
 };
 use esp_storage::FlashStorage;
-use esp32_led_mqtt::{device_config, ota_protocol, provisioning::Command};
+#[cfg(feature = "_control")]
+use esp32_led_mqtt::ota_protocol;
+use esp32_led_mqtt::{device_config, provisioning::Command};
 
 use crate::{config, ota};
 
 pub enum Job {
+    #[cfg(feature = "_control")]
     Ota(ota_protocol::Request),
     Config(Command),
 }
@@ -49,10 +52,11 @@ pub fn check_partition_table(flash: &mut FlashStorage<'static>) -> Result<(), &'
     use esp_bootloader_esp_idf::partitions::{
         self, AppPartitionSubType as App, DataPartitionSubType as Data, PartitionType as Type,
     };
+    use esp32_led_mqtt::ota_protocol::SLOT_SIZE;
     let config = device_config::PARTITION;
     let expected = [
-        (Type::App(App::Ota0), 0x10000, ota_protocol::SLOT_SIZE),
-        (Type::App(App::Ota1), 0x200000, ota_protocol::SLOT_SIZE),
+        (Type::App(App::Ota0), 0x10000, SLOT_SIZE),
+        (Type::App(App::Ota1), 0x200000, SLOT_SIZE),
         (Type::Data(Data::Ota), 0xd000, 0x2000),
         (
             Type::Data(Data::Undefined),
@@ -90,16 +94,24 @@ pub async fn task(
     mut flash: FlashStorage<'static>,
     mut wdt: Wdt<TIMG0<'static>>,
     layout: Result<(), &'static str>,
-    tls: crate::tls::Context,
+    download: ota::DownloadContext,
+    control_required: bool,
 ) {
-    let started = ota::start(stack, &mut flash, layout, tls).await;
+    let confirmed = ota::confirm_boot(stack, &mut flash, layout, control_required).await;
     wdt.disable();
-    let Ok(client) = started else {
+    if confirmed.is_err() {
         return;
-    };
+    }
+    #[cfg(feature = "_control")]
+    let client = ota::client(stack, download);
+    #[cfg(not(feature = "_control"))]
+    let () = download;
+    // Without OTA jobs, the only job ends in a reset.
+    #[cfg_attr(not(feature = "_control"), allow(clippy::never_loop))]
     loop {
         IDLE.store(true, Ordering::Release);
         match JOB.wait().await {
+            #[cfg(feature = "_control")]
             Job::Ota(request) => {
                 // Submissions require ota::AVAILABLE, which implies a client.
                 if let Some(client) = &client {

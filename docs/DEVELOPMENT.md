@@ -14,7 +14,22 @@ OTA_ALLOWED_HOSTS=updates.example.invalid OTA_ROLLBACK_BOOTLOADER=1 \
   cargo clippy --target riscv32imac-unknown-none-elf -- -D warnings
 ```
 
+CI repeats the firmware checks with `--no-default-features` and with
+`--no-default-features --features mqtt`.
+
 Run Clippy with the OTA variables set, or the OTA code paths go unchecked.
+
+## Cargo features
+
+| Feature | Default | Enables |
+|---|---|---|
+| `mqtt` | Yes | MQTT, Home Assistant discovery and OTA started over MQTT |
+| `heap-stats` | No | Allocator high-water counters, see [heap measurements](#heap-measurements) |
+
+Without a control plane the firmware still drives the LEDs, the button and USB
+provisioning. An image built that way can only be replaced over USB. `_control` is
+internal: it is implied by a control plane and brings in OTA downloads, TLS and the
+temperature sampler.
 
 Host tests cover the library crate (`src/lib.rs` and its modules): effects, OTA
 command, HTTP and image validation, the TLS flag policy, settings validation,
@@ -85,12 +100,14 @@ the Google chain, and the Let's Encrypt chain tested uses ECDSA certificates.
 | `build.rs` | Turns `hardware.json` into `OUT_DIR/hardware.rs` (LED type, pins, timing). Sets the build ID, build time and app name. |
 | `src/main.rs` | Peripheral setup, Wi-Fi connection loop, LED render loop |
 | `src/light_state.rs` | Shared light state and change signal |
+| `src/light_command.rs` | Host-tested light and effect-speed command parsing |
 | `src/mqtt.rs` | MQTT session, Home Assistant discovery, command handling |
 | `src/button.rs` | Short, double and long press handling |
 | `src/effects/` | One file per effect |
 | `src/flash.rs` | The only owner of `FlashStorage`: partition-layout check, watchdog, one flash job at a time (OTA or settings) |
 | `src/config.rs` | USB command loop, settings load and save |
-| `src/ota.rs`, `src/tls.rs` | Download, trial confirmation, shared MbedTLS client |
+| `src/ota.rs`, `src/ota/download.rs`, `src/tls.rs` | Trial confirmation, download, shared MbedTLS client |
+| `src/tsens.rs` | Chip temperature sampling |
 | `src/ota_protocol.rs` | Host-tested OTA command, HTTP and image checks |
 | `src/device_config.rs`, `src/provisioning.rs`, `src/config_store.rs` | Host-tested settings schema, USB framing and flash store |
 | `tools/provision.py` | Host side of USB provisioning |

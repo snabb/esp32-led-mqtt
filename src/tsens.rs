@@ -1,5 +1,6 @@
 //! On-chip temperature sensor (ESP32-C6 die temperature).
 
+use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, watch::Watch};
 use embassy_time::{Duration, Timer};
 use esp_hal::{
     efuse,
@@ -7,8 +8,20 @@ use esp_hal::{
     tsens::{Config, TemperatureSensor},
 };
 
+/// Latest die temperature in °C; each control plane holds one receiver.
+pub static TEMPERATURE: Watch<CriticalSectionRawMutex, f32, 2> = Watch::new();
+const INTERVAL: Duration = Duration::from_secs(60);
 /// Time for the sensor to settle after power-up.
 const SETTLE: Duration = Duration::from_millis(20);
+
+/// The only reader of the sensor: concurrent readers would power it down under each other.
+#[embassy_executor::task]
+pub async fn task(sensor: ChipTemp) {
+    loop {
+        TEMPERATURE.sender().send(sensor.read().await);
+        Timer::after(INTERVAL).await;
+    }
+}
 
 pub struct ChipTemp(TemperatureSensor<'static>);
 
@@ -23,7 +36,7 @@ impl ChipTemp {
     }
 
     /// Die temperature in °C.
-    pub async fn read(&self) -> f32 {
+    async fn read(&self) -> f32 {
         self.0.power_up();
         Timer::after(SETTLE).await;
         let raw = self.0.get_temperature().raw_value;
