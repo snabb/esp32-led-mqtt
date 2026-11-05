@@ -13,6 +13,16 @@ import time
 from pathlib import Path
 
 
+def save_device_credential(reply):
+    """Keep the device's public CoAP key where tools/coap.py looks for it."""
+    credential, device = reply.get("coap_ccs"), reply.get("device")
+    if credential and device:
+        path = Path(__file__).resolve().parent.parent / "local/coap" / f"{device}.ccs"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(bytes.fromhex(credential))
+        print(f"Saved the device's CoAP credential to {path}")
+
+
 def usb(config, port, operation, timeout=30):
     import serial
 
@@ -52,6 +62,7 @@ def usb(config, port, operation, timeout=30):
                     f"provisioning failed: {reply.get('status', 'invalid response')}"
                 )
             print(json.dumps(reply))
+            save_device_credential(reply)
             return
     raise TimeoutError("no USB configuration response")
 
@@ -62,6 +73,13 @@ def main():
     parser.add_argument("--port", required=True)
     parser.add_argument(
         "--config", type=Path, help="Private JSON or YAML settings file"
+    )
+    parser.add_argument(
+        "--coap-client",
+        type=Path,
+        action="append",
+        default=[],
+        help="Client CoAP credential (.ccs) to trust, replacing any stored ones",
     )
     parser.add_argument("--timeout", type=float, default=30)
     args = parser.parse_args()
@@ -77,6 +95,10 @@ def main():
             raise ValueError("invalid configuration file") from None
         if not isinstance(config, dict):
             raise ValueError("configuration must be a mapping")
+        if args.coap_client:
+            config["coap_clients"] = [
+                path.read_bytes().hex() for path in args.coap_client
+            ]
     usb(
         config,
         args.port,

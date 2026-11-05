@@ -216,6 +216,34 @@ mod tests {
     }
 
     #[test]
+    fn coap_keys_survive_power_loss_with_the_rest_of_the_snapshot() {
+        block_on(async {
+            let mut initial = Flash::new();
+            let mut first = config();
+            first.coap_device_key = "ab".repeat(32).as_str().try_into().unwrap();
+            first.coap_clients.push("a108".try_into().unwrap()).unwrap();
+            save(&mut initial, 0..8192, first).await.unwrap();
+            for budget in 0..1024 {
+                let mut flash = initial.clone();
+                flash.budget = Some(budget);
+                let mut next = load(&mut flash, 0..8192).await.unwrap().unwrap();
+                next.coap_clients.push("b208".try_into().unwrap()).unwrap();
+                let _ = save(&mut flash, 0..8192, next).await;
+                flash.budget = None;
+                let result = load(&mut flash, 0..8192).await.unwrap().unwrap();
+                assert_eq!(result.coap_device_key.len(), 64);
+                assert!(
+                    matches!(
+                        (result.generation, result.coap_clients.len()),
+                        (1, 1) | (2, 2)
+                    ),
+                    "torn snapshot after budget {budget}"
+                );
+            }
+        });
+    }
+
+    #[test]
     fn interrupted_replacement_keeps_an_entire_old_or_new_snapshot() {
         block_on(async {
             let mut initial = Flash::new();

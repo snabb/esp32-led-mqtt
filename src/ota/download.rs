@@ -32,6 +32,7 @@ pub struct Client {
     tls: &'static mbedtls_rs::Tls<'static>,
 }
 
+#[cfg_attr(not(feature = "mqtt"), allow(dead_code))]
 pub fn submit(payload: &[u8], retained: bool) {
     let result = (|| {
         if retained {

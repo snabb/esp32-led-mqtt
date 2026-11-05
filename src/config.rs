@@ -13,6 +13,39 @@ use esp32_led_mqtt::{
 use crate::flash::{self, Job};
 
 static GENERATION: AtomicU32 = AtomicU32::new(0);
+/// The device's public CCS credential in hex, empty until it has a device key.
+#[cfg(feature = "coap")]
+static DEVICE_CREDENTIAL: critical_section::Mutex<
+    core::cell::RefCell<device_config::CoapCredential>,
+> = critical_section::Mutex::new(core::cell::RefCell::new(heapless::String::new()));
+
+/// Remembers the public credential, for `status` replies.
+#[cfg(feature = "coap")]
+fn set_device_credential(config: &DeviceConfig) {
+    let credential = esp32_led_mqtt::coap_keys::public_credential(&config.coap_device_key);
+    critical_section::with(|cs| {
+        *DEVICE_CREDENTIAL.borrow_ref_mut(cs) = credential.unwrap_or_default();
+    });
+}
+
+/// `,"device":…,"coap_ccs":…` once the device has a key, or nothing.
+#[cfg(feature = "coap")]
+fn device_credential_fields() -> heapless::String<320> {
+    let credential = critical_section::with(|cs| DEVICE_CREDENTIAL.borrow_ref(cs).clone());
+    if credential.is_empty() {
+        return heapless::String::new();
+    }
+    let mac = esp_hal::efuse::base_mac_address();
+    let mac = mac.as_bytes();
+    let device = esp32_led_mqtt::device_slug([mac[3], mac[4], mac[5]]);
+    heapless::format!(",\"device\":\"{device}\",\"coap_ccs\":\"{credential}\"")
+        .expect("bounded credential fields")
+}
+
+#[cfg(not(feature = "coap"))]
+fn device_credential_fields() -> &'static str {
+    ""
+}
 
 /// Requires a partition table already checked by `flash::check_partition_table`.
 pub async fn load(flash: &mut FlashStorage<'static>) -> Result<Option<DeviceConfig>, &'static str> {
@@ -24,16 +57,21 @@ pub async fn load(flash: &mut FlashStorage<'static>) -> Result<Option<DeviceConf
         result.as_ref().map_or(0, |cfg| cfg.generation),
         Ordering::Relaxed,
     );
+    #[cfg(feature = "coap")]
+    if let Some(config) = &result {
+        set_device_credential(config);
+    }
     Ok(result)
 }
 
 fn respond(id: &str, status: &str, generation: u32) {
     esp_println::println!(
-        "@CONFIG {{\"id\":\"{}\",\"status\":\"{}\",\"schema\":{},\"generation\":{}}}",
+        "@CONFIG {{\"id\":\"{}\",\"status\":\"{}\",\"schema\":{},\"generation\":{}{}}}",
         id,
         status,
         device_config::SCHEMA,
-        generation
+        generation,
+        device_credential_fields()
     );
 }
 
@@ -87,14 +125,43 @@ pub async fn usb_task(mut rx: UsbSerialJtagRx<'static, Async>) {
     }
 }
 
+/// The first time a device is given client keys, it also needs a key of its own.
+#[cfg(feature = "coap")]
+fn provide_device_key(mut config: DeviceConfig) -> Result<DeviceConfig, config_store::Error> {
+    use esp_hal::rng::Trng;
+    use esp32_led_mqtt::coap_keys;
+
+    if !config.coap_clients.is_empty() && config.coap_device_key.is_empty() {
+        let rng = Trng::try_new().map_err(|_| config_store::Error::Storage)?;
+        config.coap_device_key =
+            coap_keys::generate_device_key(rng).map_err(|_| config_store::Error::Storage)?;
+    }
+    set_device_credential(&config);
+    Ok(config)
+}
+
 /// Persists a USB write command and reports the result. The caller must reboot
 /// afterwards, even after an error.
 pub async fn handle(flash: &mut FlashStorage<'static>, command: Command) {
     let mut storage = YieldingAsync::new(BlockingAsync::new(flash));
     let range = device_config::PARTITION;
     let (id, result) = match command {
-        Command::Configure { id, config } => {
-            (id, config_store::save(&mut storage, range, config).await)
+        Command::Configure { id, mut config } => {
+            let saved = match config_store::load(&mut storage, range.clone()).await {
+                Ok(stored) => {
+                    config.keep_coap_keys(stored.as_ref());
+                    #[cfg(feature = "coap")]
+                    let config = provide_device_key(config);
+                    #[cfg(not(feature = "coap"))]
+                    let config = Ok(config);
+                    match config {
+                        Ok(config) => config_store::save(&mut storage, range, config).await,
+                        Err(error) => Err(error),
+                    }
+                }
+                Err(error) => Err(error),
+            };
+            (id, saved)
         }
         Command::Erase { id } => (
             id,

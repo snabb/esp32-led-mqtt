@@ -6,7 +6,7 @@ license      = "MIT"
 name         = "esp32-led-mqtt"
 readme       = "README.md"
 repository   = "https://github.com/snabb/esp32-led-mqtt"
-rust-version = "1.95"
+rust-version = "1.97"
 version      = "0.1.0"
 
 [[bin]]
@@ -16,6 +16,7 @@ path = "./src/main.rs"
 [features]
 default = ["mdns", "mqtt"]
 heap-stats = ["esp-alloc/internal-heap-stats"]
+coap = ["dep:mai-coap", "dep:rand_core", "embassy-net/udp", "_control"]
 mdns = [
   "dep:edge-mdns",
   "dep:edge-nal",
@@ -36,6 +37,15 @@ digest = { version = "0.11.3", default-features = false }
 sequential-storage = "8.0.2"
 embedded-storage-async = "0.4.1"
 log = "0.4.35"
+mai-coap = { git = "https://github.com/snabb/mai-coap.git", rev = "d83f3c4da63a67273a858fc96b7fd032d82676bf", default-features = false, features = [
+  "block1",
+  "discovery",
+  "edhoc",
+  "observe",
+  "server",
+  "software-crypto",
+], optional = true }
+rand_core = { version = "0.10.1", default-features = false, optional = true }
 
 [target.'cfg(target_arch = "riscv32")'.dependencies]
 critical-section = "1.2.0"
@@ -77,6 +87,7 @@ sha2 = { version = "0.11.1", default-features = false }
 [target.'cfg(not(target_arch = "riscv32"))'.dev-dependencies]
 mbedtls-rs = { git = "https://github.com/esp-rs/mbedtls-rs", rev = "07aeabb493ac5c71b06199414807cf49d899dec6" }
 critical-section = { version = "1.2.0", features = ["std"] }
+mai-coap = { git = "https://github.com/snabb/mai-coap.git", rev = "d83f3c4da63a67273a858fc96b7fd032d82676bf", default-features = false, features = ["client"] }
 
 [build-dependencies]
 x509-cert = { version = "0.3.0", default-features = false, features = ["std"] }

@@ -63,6 +63,10 @@ impl Command {
         }
         if let Self::Configure { config, .. } = &command {
             config.validate()?;
+            // Generated on the device: no copy of it should exist anywhere else.
+            if !config.coap_device_key.is_empty() {
+                return Err(Error::Coap);
+            }
         }
         Ok(command)
     }
@@ -92,5 +96,25 @@ mod tests {
         ] {
             assert!(Command::decode(bad).is_err());
         }
+    }
+
+    fn configure(extra: &str) -> std::string::String {
+        format!(
+            r#"@CONFIG {{"op":"configure","id":"abc","config":{{"wifi_ssid":"n","wifi_password":"password1"{extra}}}}}"#
+        )
+    }
+
+    #[test]
+    fn client_keys_are_accepted_but_a_device_key_is_not() {
+        let accepted = configure(r#","coap_clients":["a108"]"#);
+        assert!(matches!(
+            Command::decode(accepted.as_bytes()),
+            Ok(Command::Configure { .. })
+        ));
+        let supplied = configure(&format!(r#","coap_device_key":"{}""#, "ab".repeat(32)));
+        assert_eq!(
+            Command::decode(supplied.as_bytes()).err(),
+            Some(Error::Coap)
+        );
     }
 }

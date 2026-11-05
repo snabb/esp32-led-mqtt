@@ -1,13 +1,17 @@
 //! Portable, bounded device settings. Flash storage and USB framing use this same schema.
 
 use core::ops::Range;
-use heapless::String;
+use heapless::{String, Vec};
 use serde::{Deserialize, Serialize};
 
 pub const SCHEMA: u16 = 2;
 /// The `device_config` entry in `partitions.csv`.
 pub const PARTITION: Range<u32> = 0x3f0000..0x400000;
 pub const MAX_BYTES: usize = 4096;
+pub const MAX_COAP_CLIENTS: usize = 4;
+/// Hex of one CCS credential, up to 128 bytes. A P-256 key with both coordinates and a
+/// short key ID takes about 85.
+pub type CoapCredential = String<256>;
 
 /// Deliberately has no Debug implementation: this value contains credentials.
 #[derive(Clone, Deserialize, Serialize)]
@@ -33,6 +37,13 @@ pub struct DeviceConfig {
     pub mqtt_username: String<128>,
     #[serde(default)]
     pub mqtt_password: String<128>,
+    /// P-256 private key in hex, generated on the device and never accepted from outside.
+    /// The CoAP fields exist in every build, so images built without `coap` keep them.
+    #[serde(default, skip_serializing_if = "is_empty")]
+    pub coap_device_key: String<64>,
+    /// Client public keys allowed to connect over CoAP.
+    #[serde(default, skip_serializing_if = "no_clients")]
+    pub coap_clients: Vec<CoapCredential, MAX_COAP_CLIENTS>,
 }
 
 #[derive(Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
@@ -45,6 +56,12 @@ pub enum WifiAuth {
 
 fn is_empty<const N: usize>(value: &String<N>) -> bool {
     value.is_empty()
+}
+fn no_clients(clients: &Vec<CoapCredential, MAX_COAP_CLIENTS>) -> bool {
+    clients.is_empty()
+}
+fn is_hex(value: &str) -> bool {
+    value.len().is_multiple_of(2) && value.bytes().all(|b| b.is_ascii_hexdigit())
 }
 const fn schema() -> u16 {
     SCHEMA
@@ -60,6 +77,7 @@ pub enum Error {
     Wifi,
     Broker,
     Credentials,
+    Coap,
 }
 
 impl DeviceConfig {
@@ -108,7 +126,29 @@ impl DeviceConfig {
         if self.mqtt_username.contains('\0') || self.mqtt_password.contains('\0') {
             return Err(Error::Credentials);
         }
+        if (!self.coap_device_key.is_empty() && self.coap_device_key.len() != 64)
+            || !is_hex(&self.coap_device_key)
+            || self
+                .coap_clients
+                .iter()
+                .any(|client| client.is_empty() || !is_hex(client))
+        {
+            return Err(Error::Coap);
+        }
         Ok(())
+    }
+
+    /// Carries the CoAP keys over from the stored snapshot, so that writing settings
+    /// can't silently lock clients out: a new snapshot only replaces the client list by
+    /// naming one, and never the device key.
+    pub fn keep_coap_keys(&mut self, stored: Option<&Self>) {
+        let Some(stored) = stored else {
+            return;
+        };
+        self.coap_device_key = stored.coap_device_key.clone();
+        if self.coap_clients.is_empty() {
+            self.coap_clients = stored.coap_clients.clone();
+        }
     }
 
     /// Encode a validated snapshot. The caller owns and must protect the destination buffer.
@@ -165,6 +205,72 @@ mod tests {
         let with_broker = DeviceConfig::decode(VALID).unwrap();
         let len = with_broker.encode(&mut output).unwrap();
         assert!(output[..len].windows(11).any(|w| w == b"mqtt_broker"));
+    }
+
+    const KEY: &str = "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20";
+
+    #[test]
+    fn coap_fields_round_trip_and_are_only_written_when_set() {
+        let mut config = DeviceConfig::decode(VALID).unwrap();
+        let mut output = [0; MAX_BYTES];
+        let len = config.encode(&mut output).unwrap();
+        assert!(!output[..len].windows(4).any(|w| w == b"coap"));
+
+        config.coap_device_key = KEY.try_into().unwrap();
+        config
+            .coap_clients
+            .push("a108".try_into().unwrap())
+            .unwrap();
+        let len = config.encode(&mut output).unwrap();
+        let decoded = DeviceConfig::decode(&output[..len]).unwrap();
+        assert_eq!(decoded.coap_device_key, KEY);
+        assert_eq!(decoded.coap_clients[0], "a108");
+    }
+
+    #[test]
+    fn coap_fields_are_validated() {
+        let valid = core::str::from_utf8(VALID).unwrap();
+        let with = |field: &str| valid.replacen('{', &format!("{{{field},"), 1);
+        for bad in [
+            with(r#""coap_device_key":"abcd""#),
+            with(&format!(r#""coap_device_key":"{}""#, "z".repeat(64))),
+            with(r#""coap_clients":[""]"#),
+            with(r#""coap_clients":["abc"]"#),
+            with(r#""coap_clients":["zz"]"#),
+            with(r#""coap_clients":["aa","aa","aa","aa","aa"]"#),
+        ] {
+            assert!(DeviceConfig::decode(bad.as_bytes()).is_err(), "{bad}");
+        }
+        assert!(DeviceConfig::decode(with(r#""coap_clients":["a108"]"#).as_bytes()).is_ok());
+    }
+
+    #[test]
+    fn writing_settings_keeps_the_coap_keys() {
+        let mut stored = DeviceConfig::decode(VALID).unwrap();
+        stored.coap_device_key = KEY.try_into().unwrap();
+        stored
+            .coap_clients
+            .push("a108".try_into().unwrap())
+            .unwrap();
+
+        let mut update = DeviceConfig::decode(VALID).unwrap();
+        update.keep_coap_keys(Some(&stored));
+        assert_eq!(update.coap_device_key, KEY);
+        assert_eq!(update.coap_clients[0], "a108");
+
+        let mut replacing = DeviceConfig::decode(VALID).unwrap();
+        replacing
+            .coap_clients
+            .push("b208".try_into().unwrap())
+            .unwrap();
+        replacing.keep_coap_keys(Some(&stored));
+        assert_eq!(replacing.coap_device_key, KEY);
+        assert_eq!(replacing.coap_clients.len(), 1);
+        assert_eq!(replacing.coap_clients[0], "b208");
+
+        let mut first = DeviceConfig::decode(VALID).unwrap();
+        first.keep_coap_keys(None);
+        assert!(first.coap_device_key.is_empty());
     }
 
     #[test]

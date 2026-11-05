@@ -17,6 +17,10 @@ use esp32_led_mqtt::{device_config, provisioning::Command};
 
 use crate::{config, ota};
 
+#[allow(
+    clippy::large_enum_variant,
+    reason = "one bounded in-flight job owns its data without heap allocation"
+)]
 pub enum Job {
     #[cfg(feature = "_control")]
     Ota(ota_protocol::Request),

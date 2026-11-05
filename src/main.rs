@@ -121,6 +121,15 @@ async fn main(spawner: Spawner) -> ! {
             None
         }
     };
+    // Wi-Fi is the entropy source once configured. Before that, first-time provisioning
+    // may generate the device's key, so the ADC has to provide it.
+    #[cfg(feature = "coap")]
+    if device_config.is_none() {
+        mk_static!(
+            esp_hal::rng::TrngSource<'static>,
+            esp_hal::rng::TrngSource::new(peripherals.RNG, peripherals.ADC1)
+        );
+    }
     let identity = mk_static!(
         DeviceIdentity,
         DeviceIdentity::from_base_mac(efuse::base_mac_address())

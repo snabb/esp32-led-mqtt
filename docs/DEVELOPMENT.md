@@ -168,6 +168,11 @@ older image. So:
 - An incompatible format change must keep a record that the previous image can
   read until the new image is confirmed. Never erase the only old-format copy
   first.
+- `coap_device_key`, `coap_clients` and an empty `mqtt_broker` are only written when
+  set, so other snapshots stay byte-compatible with older images. Settings can't be
+  written during a trial boot, so a rollback from a trial is safe. An image older
+  than these fields can't read a snapshot that uses them: a deliberate downgrade
+  past that point needs USB provisioning.
 
 ### Publishing images
 
