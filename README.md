@@ -12,6 +12,8 @@ Home Assistant over MQTT.
 - Optional over-the-air (OTA) updates over HTTPS, started by an MQTT message, with
   a trial boot and automatic rollback
 - Found on the local network by name, as `esp32-led-XXXXXX.local`
+- Optional authenticated [CoAP API](docs/COAP.md): everything MQTT offers, plus remote
+  settings, firmware upload and device logs
 
 ## Supported hardware
 
@@ -168,8 +170,8 @@ All topics and payloads are listed in the [MQTT reference](docs/MQTT.md).
 
 Build a new image with the same `hardware.json` and OTA settings, upload it to
 an allowed HTTPS host, then publish an update command over MQTT. The device
-checks the image, boots it on trial, and rolls back if LEDs, Wi-Fi and MQTT
-aren't all working within two minutes. See [OTA updates](docs/OTA.md).
+checks the image, boots it on trial, and rolls back if LEDs, Wi-Fi and a control
+plane aren't all working within two minutes. See [OTA updates](docs/OTA.md).
 
 ## Documentation
 
@@ -209,3 +211,6 @@ aren't all working within two minutes. See [OTA updates](docs/OTA.md).
 ## License
 
 [MIT](LICENSE)
+
+Binaries include third-party code, some under other terms. See [licenses](licenses/) for
+the notices for the `mdns` and `coap` features.

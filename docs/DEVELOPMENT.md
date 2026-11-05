@@ -25,6 +25,7 @@ Run Clippy with the OTA variables set, or the OTA code paths go unchecked.
 |---|---|---|
 | `mqtt` | Yes | MQTT, Home Assistant discovery and OTA started over MQTT |
 | `mdns` | Yes | mDNS responder for `esp32-led-XXXXXX.local` |
+| `coap` | No, until `mai-coap` is published | [CoAP API](COAP.md) |
 | `heap-stats` | No | Allocator high-water counters, see [heap measurements](#heap-measurements) |
 
 Without a control plane the firmware still drives the LEDs, the button and USB
@@ -32,11 +33,29 @@ provisioning. An image built that way can only be replaced over USB. `_control` 
 internal: it is implied by a control plane and brings in OTA downloads, TLS and the
 temperature sampler.
 
+Sizes on 2026-11-05, in the same OTA configuration, from `size -A`. Image is what occupies
+the 2.03 MB slot, BSS includes the 164 KiB heap, and stack is what remains for it:
+
+| Features | Image | BSS | Stack |
+|---|---|---|---|
+| none | 678,576 | 166,032 | 211,936 |
+| `mqtt` | 1,232,962 | 184,040 | 191,368 |
+| `mqtt`, `mdns` | 1,263,742 | 190,920 | 184,280 |
+| `coap` | 1,392,476 | 225,008 | 149,936 |
+| `coap`, `mdns` | 1,421,580 | 231,888 | 142,824 |
+| `mqtt`, `mdns`, `coap` | 1,493,552 | 247,576 | 126,888 |
+
+Of the CoAP cost, the server task is about 47 KB of BSS and the log ring 8 KB.
+
 Host tests cover the library crate (`src/lib.rs` and its modules): effects, OTA
 command, HTTP and image validation, the TLS flag policy, settings validation,
 USB command framing, and the settings store, including simulated power loss
-at every step of a settings write. The binary-only modules (networking, flash
-ownership, USB I/O) are tested only on hardware.
+at every step of a settings write. With `--features coap` they also cover the CoAP
+resources, through real EDHOC and OSCORE sessions over loopback UDP. The binary-only
+modules (networking, flash ownership, USB I/O) are tested only on hardware.
+
+To test `tools/coap.py` without a device, run the resources on the host. The commands are at
+the top of [`examples/coap_host_server.rs`](../examples/coap_host_server.rs).
 
 ## Heap measurements
 
@@ -102,6 +121,8 @@ the Google chain, and the Let's Encrypt chain tested uses ECDSA certificates.
 | `src/main.rs` | Peripheral setup, Wi-Fi connection loop, LED render loop |
 | `src/light_state.rs` | Shared light state and change signal |
 | `src/light_command.rs` | Host-tested light and effect-speed command parsing |
+| `src/coap_api.rs`, `src/coap_keys.rs`, `src/log_buffer.rs` | Host-tested CoAP resources, keys and log ring |
+| `src/coap.rs`, `src/log_sink.rs` | CoAP server task, logger with RAM copy |
 | `src/mqtt.rs` | MQTT session, Home Assistant discovery, command handling |
 | `src/mdns.rs` | mDNS responder |
 | `src/button.rs` | Short, double and long press handling |
@@ -113,6 +134,8 @@ the Google chain, and the Let's Encrypt chain tested uses ECDSA certificates.
 | `src/ota_protocol.rs` | Host-tested OTA command, HTTP and image checks |
 | `src/device_config.rs`, `src/provisioning.rs`, `src/config_store.rs` | Host-tested settings schema, USB framing and flash store |
 | `tools/provision.py` | Host side of USB provisioning |
+| `tools/coap.py` | CoAP client |
+| `tools/migrate-device-name.py` | Broker-side upgrade from the old device name |
 | `tools/build-ota-bootloader.sh` | Rollback bootloader build. See [bootloader](../bootloader/README.md). |
 
 ## Adding an effect
@@ -152,6 +175,8 @@ Home Assistant's effect list, name parsing and the button cycle all come from
   schema and generation. Don't add credentials, raw records or digests of
   settings to logs, status, manifests or build IDs.
 - The USB receive buffer is zeroed after each command.
+- `coap_device_key` is generated on the device and never accepted from outside or returned.
+  Logs can be read over CoAP, which is one more reason to keep secrets out of them.
 - Never publish a flash dump. `device_config` holds the credentials as plain
   text. Images made from the ELF (`save-image`, with or without `--merge`)
   don't include it.
@@ -193,6 +218,10 @@ Tested on an M5Stack NanoC6 (4 MiB):
 - Button actions
 
 Not yet tested on hardware:
+
+- The renamed device under Home Assistant, including `tools/migrate-device-name.py`
+- mDNS on the C6
+- Everything in `coap`, which has run only on a host against aiocoap
 
 - A forced trial failure that triggers rollback
 - Power loss during an OTA or settings write

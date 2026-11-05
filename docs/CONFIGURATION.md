@@ -70,6 +70,7 @@ under `local/`, which Git ignores.
 | `wifi_auth` | no | `wpa2_personal` (default) or `open` |
 | `mqtt_broker` | no | Host name or IPv4 address made of letters, digits, `.` and `-`, up to 128 bytes. No scheme or port. Leave it out to turn MQTT off. |
 | `mqtt_port` | no | Default `1883`; normally `8883` with TLS |
+| `coap_clients` | no | Client public keys for [CoAP](COAP.md#keys), as hex. Up to four. Usually set with `provision.py --coap-client`. Left out, the stored ones are kept |
 | `mqtt_tls` | no | Default `false`. Enable MQTT over TLS. |
 | `mqtt_username` | no | Up to 128 bytes. The device logs in only if the username or password is non-empty. |
 | `mqtt_password` | no | Up to 128 bytes |
@@ -122,6 +123,10 @@ command and waits up to 30 s (`--timeout`) for the answer. Credentials are read
 from the file, never from the command line. Replies carry only metadata, for
 example `{"id":"…","status":"saved","schema":2,"generation":2}`. The
 `generation` count goes up by one with every save.
+
+With `--coap-client FILE`, repeatable, `provision` also gives the device
+[CoAP](COAP.md#first-setup) client keys. Replies then include the device's public key,
+which the tool saves under `local/coap/`.
 
 | Status | Meaning |
 |---|---|

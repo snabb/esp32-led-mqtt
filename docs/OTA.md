@@ -3,9 +3,14 @@
 An update starts with a JSON command over MQTT that gives the image's URL,
 size and digests. The device downloads the image over HTTPS and writes it to
 the slot it isn't running from. It checks the image, reboots into it on trial,
-and keeps it only if the LEDs, Wi-Fi and MQTT all work within two minutes. MQTT
-is only required when a broker is configured. Otherwise the bootloader goes back
-to the previous image.
+and keeps it only if the LEDs and Wi-Fi work within two minutes and a control
+plane proves it works too: an MQTT connection, or one authenticated
+[CoAP](COAP.md) request. If neither is configured, LEDs and Wi-Fi are enough.
+Otherwise the bootloader goes back to the previous image.
+
+With the `coap` feature, an image can also be
+[uploaded directly](COAP.md#firmware-upload), and the command below can be sent to
+`/firmware/update`.
 
 Stored Wi-Fi and MQTT settings are never touched by an update.
 See also [MQTT over TLS configuration](CONFIGURATION.md#mqtt-over-tls).
@@ -104,7 +109,7 @@ transitions can be skipped:
 |---|---|
 | `ready` | Ready to accept a command |
 | `disabled` | `configure_network_and_ota`: OTA isn't built in, or there are no device settings. `tls_entropy` or `tls_init`: TLS initialization failed. Other details identify a failed boot check. |
-| `trial` | `health_check`: the new image is waiting for LEDs, Wi-Fi and MQTT |
+| `trial` | `health_check`: the new image is waiting for LEDs, Wi-Fi and a control plane |
 | `downloading` | `progress` is 0–100 |
 | `verifying` | `flash_readback` |
 | `rebooting` | `verified`: the device is rebooting into the new image |
@@ -193,6 +198,9 @@ OTA is designed for a trusted network:
 - There is no anti-rollback, so an older build can be installed.
 - Flash encryption and secure boot aren't used. Anyone with physical access can
   read the settings, credentials included.
+
+With the `coap` feature, a trusted CoAP client can upload any image, without
+`OTA_ALLOWED_HOSTS` applying. See [CoAP security](COAP.md#security).
 
 ## Flash layout
 
