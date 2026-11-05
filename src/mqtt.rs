@@ -5,8 +5,8 @@ use embassy_net::{IpEndpoint, Stack, tcp::TcpSocket};
 use embassy_sync::watch::DynReceiver;
 use embassy_time::{Duration, Instant, Timer, with_deadline, with_timeout};
 use esp32_led_mqtt::{
-    EFFECT_DISABLED_NAME, EFFECTS, EffectId, MAX_EFFECT_SPEED,
-    light_command::{parse_light_command, parse_speed},
+    EFFECT_DISABLED_NAME, EFFECTS, MAX_EFFECT_SPEED,
+    light_command::{light_state_json, parse_light_command, parse_speed},
 };
 use log::{info, warn};
 use mbedtls_rs::TlsGroup;
@@ -283,18 +283,7 @@ async fn publish_light_state<IO: minimq::Io>(
     session: &mut Connection<'_, '_, IO>,
     identity: &DeviceIdentity,
 ) -> Result<(), MqttRunError> {
-    let light = light_state::get();
-    let mut payload: heapless::String<192> = heapless::String::new();
-    write!(
-        payload,
-        r#"{{"state":"{}","brightness":{},"color_mode":"rgb","color":{{"r":{},"g":{},"b":{}}},"effect":"{}"}}"#,
-        if light.on { "ON" } else { "OFF" },
-        light.brightness,
-        light.color.r,
-        light.color.g,
-        light.color.b,
-        light.effect.map_or(EFFECT_DISABLED_NAME, EffectId::name)
-    )?;
+    let payload = light_state_json(&light_state::get());
     publish(session, &identity.state_topic, &payload).await
 }
 

@@ -13,9 +13,6 @@ use rand_core::{CryptoRng, TryCryptoRng, TryRng};
 
 use crate::device_config::CoapCredential;
 
-/// Bytes in a credential that fits a `CoapCredential`.
-const MAX_CREDENTIAL_BYTES: usize = 128;
-
 fn write_hex<const N: usize>(bytes: &[u8]) -> Result<String<N>, Error> {
     let mut output = String::new();
     for byte in bytes {
@@ -77,12 +74,7 @@ impl TryCryptoRng for NoRandomness {}
 
 /// The public credential in hex for a private key in hex.
 pub fn public_credential(private_hex: &str) -> Result<CoapCredential, Error> {
-    let identity = identity(private_hex, &mut SoftwareCrypto::new(NoRandomness))?;
-    let bytes = identity.credential_bytes();
-    if bytes.len() > MAX_CREDENTIAL_BYTES {
-        return Err(Error::Capacity);
-    }
-    write_hex(bytes)
+    write_hex(identity(private_hex, &mut SoftwareCrypto::new(NoRandomness))?.credential_bytes())
 }
 
 #[cfg(test)]

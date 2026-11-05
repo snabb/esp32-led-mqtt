@@ -9,9 +9,10 @@ pub const SCHEMA: u16 = 2;
 pub const PARTITION: Range<u32> = 0x3f0000..0x400000;
 pub const MAX_BYTES: usize = 4096;
 pub const MAX_COAP_CLIENTS: usize = 4;
-/// Hex of one CCS credential, up to 128 bytes. A P-256 key with both coordinates and a
-/// short key ID takes about 85.
-pub type CoapCredential = String<256>;
+/// Hex of one CCS credential. A P-256 key with both coordinates and a short key ID takes
+/// about 85 bytes.
+pub type CoapCredential = String<{ 2 * MAX_COAP_CREDENTIAL_BYTES }>;
+pub const MAX_COAP_CREDENTIAL_BYTES: usize = 128;
 
 /// Deliberately has no Debug implementation: this value contains credentials.
 #[derive(Clone, Deserialize, Serialize)]

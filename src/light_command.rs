@@ -1,5 +1,7 @@
 //! Light and effect-speed commands, shared by every control plane.
 
+use core::fmt::Write;
+
 use log::warn;
 use serde::Deserialize;
 use smart_leds::RGB8;
@@ -13,6 +15,23 @@ pub struct LightState {
     pub effect: Option<EffectId>,
     pub speed: u8,
     pub color: RGB8,
+}
+
+/// The published state, also accepted as a command.
+pub fn light_state_json(light: &LightState) -> heapless::String<192> {
+    let mut payload = heapless::String::new();
+    write!(
+        payload,
+        r#"{{"state":"{}","brightness":{},"color_mode":"rgb","color":{{"r":{},"g":{},"b":{}}},"effect":"{}"}}"#,
+        if light.on { "ON" } else { "OFF" },
+        light.brightness,
+        light.color.r,
+        light.color.g,
+        light.color.b,
+        light.effect.map_or(EFFECT_DISABLED_NAME, EffectId::name)
+    )
+    .expect("the longest state fits");
+    payload
 }
 
 /// Parses a light command, which has the same shape as the published state.
@@ -157,6 +176,26 @@ mod tests {
     #[test]
     fn invalid_json_is_rejected() {
         assert!(parse_light_command(b"{").is_none());
+    }
+
+    #[test]
+    fn published_state_parses_back_to_the_same_light() {
+        let light = LightState {
+            on: true,
+            brightness: 255,
+            effect: Some(EffectId::FinlandBlueWhiteTwinkle),
+            speed: 64,
+            color: RGB8 {
+                r: 255,
+                g: 255,
+                b: 255,
+            },
+        };
+        let result = applied(light_state_json(&light).as_bytes());
+        assert!(result.on);
+        assert_eq!(result.brightness, 255);
+        assert_eq!(result.effect, light.effect);
+        assert_eq!(result.color, light.color);
     }
 
     #[test]

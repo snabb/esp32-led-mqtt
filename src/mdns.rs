@@ -1,7 +1,10 @@
-//! Multicast DNS responder, so a device can be found as `esp32-led-XXXXXX.local`.
+//! Multicast DNS responder, so a device can be found as `esp32-led-XXXXXX.local`, and its
+//! CoAP service with `avahi-browse _coap._udp`.
 
 use core::net::{Ipv4Addr, Ipv6Addr};
 
+#[cfg(feature = "coap")]
+use edge_mdns::host::{Service, ServiceAnswers};
 use edge_mdns::{
     HostAnswer, HostAnswers, HostAnswersMdnsHandler, MdnsError,
     buf::VecBufAccess,
@@ -86,6 +89,21 @@ impl HostAnswers for Answers<'_> {
             ipv6: Ipv6Addr::UNSPECIFIED,
             ttl: Ttl::from_secs(TTL_SECS),
         };
+        #[cfg(feature = "coap")]
+        {
+            let service = Service {
+                name: self.hostname,
+                priority: 0,
+                weight: 0,
+                service: "_coap",
+                protocol: "_udp",
+                port: esp32_led_mqtt::coap_api::PORT,
+                service_subtypes: &[],
+                txt_kvs: &[],
+            };
+            ServiceAnswers::new(&host, &service).visit(f)
+        }
+        #[cfg(not(feature = "coap"))]
         host.visit(f)
     }
 }

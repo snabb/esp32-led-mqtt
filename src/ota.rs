@@ -25,6 +25,9 @@ pub type DownloadContext = ();
 
 pub static LED_READY: AtomicBool = AtomicBool::new(false);
 pub static MQTT_READY: AtomicBool = AtomicBool::new(false);
+/// Set by the first authenticated CoAP request. Stays set: unlike an MQTT session it has
+/// no ongoing state, and the point is only that the image can be reached and controlled.
+pub static COAP_AUTHENTICATED: AtomicBool = AtomicBool::new(false);
 /// Latest OTA status; each control plane holds one receiver.
 pub static STATUS: Watch<CriticalSectionRawMutex, String<192>, 2> = Watch::new();
 
@@ -107,7 +110,9 @@ async fn boot_health(
             match ota_protocol::trial_decision(
                 (Instant::now() - start).as_millis(),
                 LED_READY.load(Ordering::Relaxed),
-                !control_required || MQTT_READY.load(Ordering::Acquire),
+                !control_required
+                    || MQTT_READY.load(Ordering::Acquire)
+                    || COAP_AUTHENTICATED.load(Ordering::Acquire),
                 stack.is_some_and(|stack| stack.is_config_up()),
             ) {
                 ota_protocol::TrialDecision::Confirm => {

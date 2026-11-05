@@ -31,6 +31,8 @@ use static_cell::StaticCell;
 mod button;
 #[cfg(feature = "_control")]
 mod c_shims;
+#[cfg(feature = "coap")]
+mod coap;
 mod config;
 mod flash;
 mod identity;
@@ -176,8 +178,12 @@ async fn main(spawner: Spawner) -> ! {
     let mut download_context: ota::DownloadContext = Err("tls_disabled");
     #[cfg(not(feature = "_control"))]
     let download_context: ota::DownloadContext = ();
-    let control_required = device_config
-        .is_some_and(|settings| cfg!(feature = "mqtt") && !settings.mqtt_broker.is_empty());
+    let control_required = device_config.is_some_and(|settings| {
+        (cfg!(feature = "mqtt") && !settings.mqtt_broker.is_empty())
+            || (cfg!(feature = "coap")
+                && !settings.coap_device_key.is_empty()
+                && !settings.coap_clients.is_empty())
+    });
     if let Some(settings) = device_config {
         let authentication = match settings.wifi_auth {
             esp32_led_mqtt::device_config::WifiAuth::Open => wifi::AuthenticationMethodConfig::Open,
@@ -241,6 +247,10 @@ async fn main(spawner: Spawner) -> ! {
         #[cfg(feature = "mqtt")]
         if !settings.mqtt_broker.is_empty() {
             spawner.spawn(mqtt::task(stack, identity, settings, download_context).unwrap());
+        }
+        #[cfg(feature = "coap")]
+        if !settings.coap_device_key.is_empty() && !settings.coap_clients.is_empty() {
+            spawner.spawn(coap::task(stack, identity, settings).unwrap());
         }
         #[cfg(feature = "mdns")]
         spawner.spawn(mdns::task(stack, identity).unwrap());
