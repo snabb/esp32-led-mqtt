@@ -253,7 +253,7 @@ Not yet tested on hardware:
 - Power loss during an OTA or settings write
 - `busy` replies during an update
 - TLS failures (bad chain, host name or date)
-- A button press under this code
+- Long and double presses of the button under this code. Short presses have been seen working
 
 Before a release, test both slot directions, an interrupted download, wrong
 digests or a wrong image, TLS failures, a trial failure and a watchdog
