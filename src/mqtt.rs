@@ -269,7 +269,8 @@ async fn restore_retained_state<IO: minimq::Io>(
 fn handle_message(identity: &DeviceIdentity, message: &InboundPublish<'_>) {
     let topic = message.topic();
     if topic == identity.ota_command_topic.as_str() {
-        crate::ota::submit(message.payload(), message.retained());
+        // A refusal is reported on the status topic.
+        let _ = crate::ota::submit(message.payload(), message.retained());
     } else if topic == identity.command_topic.as_str() {
         if let Some(command) = parse_light_command(message.payload()) {
             light_state::update(|state| command.apply(state));

@@ -28,10 +28,38 @@ fn set_device_credential(config: &DeviceConfig) {
     });
 }
 
+/// The device's public credential in hex, empty until it has a device key.
+#[cfg(feature = "coap")]
+pub fn device_credential() -> device_config::CoapCredential {
+    critical_section::with(|cs| DEVICE_CREDENTIAL.borrow_ref(cs).clone())
+}
+
+/// Replaces the stored client list, keeping everything else. Returns whether it was saved;
+/// a failed write may still have committed, which the caller can't tell apart.
+#[cfg(feature = "coap")]
+pub async fn save_clients(
+    flash: &mut FlashStorage<'static>,
+    clients: &esp32_led_mqtt::coap_api::ClientList,
+) -> bool {
+    let mut storage = YieldingAsync::new(BlockingAsync::new(flash));
+    let range = device_config::PARTITION;
+    let Ok(Some(mut config)) = config_store::load(&mut storage, range.clone()).await else {
+        return false;
+    };
+    config.coap_clients = clients.clone();
+    match config_store::save(&mut storage, range, config).await {
+        Ok(generation) => {
+            GENERATION.store(generation, Ordering::Relaxed);
+            true
+        }
+        Err(_) => false,
+    }
+}
+
 /// `,"device":…,"coap_ccs":…` once the device has a key, or nothing.
 #[cfg(feature = "coap")]
 fn device_credential_fields() -> heapless::String<320> {
-    let credential = critical_section::with(|cs| DEVICE_CREDENTIAL.borrow_ref(cs).clone());
+    let credential = device_credential();
     if credential.is_empty() {
         return heapless::String::new();
     }

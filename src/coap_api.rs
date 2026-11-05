@@ -19,9 +19,11 @@ use mai_coap::{
     security::{PeerId, PublicPaths, SecurityState},
     server::{BodyChunk, BodySource, BodyWindow, Router},
 };
+use serde::Serialize;
 
 use crate::{
-    EFFECT_DISABLED_NAME, EFFECTS, device_config,
+    EFFECT_DISABLED_NAME, EFFECTS, coap_keys,
+    device_config::{self, CoapCredential, DeviceConfig},
     light_command::{LightState, LightUpdate, light_state_json, parse_light_command, parse_speed},
     log_buffer::LogRead,
 };
@@ -29,7 +31,7 @@ use crate::{
 pub const PORT: u16 = 5683;
 /// Leaves room for a 1024-byte block plus OSCORE's option and tag.
 pub const DATAGRAM_BYTES: usize = 1152;
-const ROUTES: usize = 7;
+const ROUTES: usize = 11;
 const UPLOADS: usize = 2;
 const UPLOAD_BYTES: usize = 2048;
 /// Keep one context per client, plus one while it runs EDHOC again.
@@ -45,6 +47,8 @@ const CACHED_REPLIES: usize = 4;
 const SEND_QUEUE: usize = 4;
 /// `Handle::notify` needs no command slots, and the device starts no requests.
 const COMMANDS: usize = 0;
+/// A protected Block1 upload holds its security context, so each upload needs a lease.
+const BODY_CONTEXTS: usize = UPLOADS;
 /// Replies are shared between the send queue and the reply cache.
 const PACKETS: usize = 8;
 
@@ -73,7 +77,7 @@ pub type ApiEndpoint<'a, 'k, R> = Endpoint<
     SEND_QUEUE,
     COMMANDS,
     0,
-    0,
+    BODY_CONTEXTS,
     PACKETS,
 >;
 pub type ApiRouter<'a> = Router<'a, DATAGRAM_BYTES, ROUTES, UPLOADS, UPLOAD_BYTES>;
@@ -92,6 +96,80 @@ impl ClientKeys {
         Self {
             peers: Mutex::new(RefCell::new(Vec::new())),
         }
+    }
+
+    /// The stored form of the current list.
+    fn current(&self) -> Result<ClientList, Error> {
+        critical_section::with(|cs| {
+            let mut list = ClientList::new();
+            for peer in self.peers.borrow_ref(cs).iter() {
+                list.push(coap_keys::write_hex(peer.credential_bytes())?)
+                    .map_err(|_| Error::Capacity)?;
+            }
+            Ok(list)
+        })
+    }
+
+    /// The list with one more client, or why it can't be added. Adding a key that's already
+    /// there changes nothing.
+    fn with_added(&self, hex: &str) -> Result<ClientList, &'static str> {
+        let mut new = [0; device_config::MAX_COAP_CREDENTIAL_BYTES];
+        let new = coap_keys::read_hex(hex, &mut new).map_err(|_| "invalid_key")?;
+        TrustedPeer::new(PeerId(0), new).map_err(|_| "invalid_key")?;
+        let new_id = coap_keys::credential_key_id(new).ok_or("invalid_key")?;
+
+        let mut list = self.current().map_err(|_| "invalid_key")?;
+        for existing in &list {
+            let mut other = [0; device_config::MAX_COAP_CREDENTIAL_BYTES];
+            let other = coap_keys::read_hex(existing, &mut other).map_err(|_| "invalid_key")?;
+            if other == new {
+                return Ok(list);
+            }
+            // Such a pair can't be told apart in a handshake, locking out both.
+            if coap_keys::credential_key_id(other) == Some(new_id) {
+                return Err("duplicate_key_id");
+            }
+        }
+        let hex = hex.try_into().map_err(|_| "invalid_key")?;
+        list.push(hex).map_err(|_| "too_many_keys")?;
+        Ok(list)
+    }
+
+    /// The list without this client, or why it can't be removed. The last key stays, because
+    /// losing it could only be fixed over USB.
+    fn without(&self, fingerprint: &str) -> Result<ClientList, &'static str> {
+        let list = self.current().map_err(|_| "unknown_key")?;
+        let mut remaining = ClientList::new();
+        for hex in &list {
+            let mut ccs = [0; device_config::MAX_COAP_CREDENTIAL_BYTES];
+            let ccs = coap_keys::read_hex(hex, &mut ccs).map_err(|_| "unknown_key")?;
+            if coap_keys::fingerprint(ccs).map_err(|_| "unknown_key")? != fingerprint {
+                remaining.push(hex.clone()).map_err(|_| "unknown_key")?;
+            }
+        }
+        if remaining.len() == list.len() {
+            return Err("unknown_key");
+        }
+        if remaining.is_empty() {
+            return Err("last_key");
+        }
+        Ok(remaining)
+    }
+
+    /// `GET /coap/clients`: a JSON list of fingerprints.
+    fn fingerprints(&self) -> Result<String<64>, Error> {
+        let mut json = String::new();
+        json.push('[').map_err(|_| Error::Capacity)?;
+        critical_section::with(|cs| {
+            for (index, peer) in self.peers.borrow_ref(cs).iter().enumerate() {
+                let separator = if index == 0 { "" } else { "," };
+                let fingerprint = coap_keys::fingerprint(peer.credential_bytes())?;
+                write!(json, r#"{separator}"{fingerprint}""#).map_err(|_| Error::Capacity)?;
+            }
+            Ok::<_, Error>(())
+        })?;
+        json.push(']').map_err(|_| Error::Capacity)?;
+        Ok(json)
     }
 
     /// Replaces the clients with these hex CCS credentials, skipping any that aren't usable.
@@ -143,8 +221,41 @@ pub trait Device {
     fn info(&self) -> Info<'_>;
     /// See [`LogRing::read`](crate::log_buffer::LogRing::read).
     fn read_logs(&self, from: Option<u64>, output: &mut [u8]) -> LogRead;
+    /// Starts an HTTPS OTA update from the command JSON, or says why it won't.
+    fn submit_ota(&self, command: &[u8]) -> Result<(), &'static str>;
+    /// The settings this boot runs with.
+    fn config(&self) -> &DeviceConfig;
+    /// The device's own public credential in hex.
+    fn device_credential(&self) -> CoapCredential;
+    /// Queues a write of the settings and a reboot, after any reply has had time to leave.
+    fn write_config(&self, config: DeviceConfig) -> Result<(), Busy>;
+    /// Queues saving this client list. `ClientKeys` should only change once it's saved.
+    fn save_clients(&self, clients: ClientList) -> Result<(), Busy>;
+    /// Queues a reboot, after any reply has had time to leave.
+    fn reboot(&self) -> Result<(), Busy>;
     /// A request passed authentication, which an OTA trial counts as proof of health.
     fn authenticated(&self);
+}
+
+/// Flash is taken by another job, such as an update in progress.
+#[derive(Debug)]
+pub struct Busy;
+
+pub type ClientList = Vec<CoapCredential, { device_config::MAX_COAP_CLIENTS }>;
+
+/// The settings as `GET /config` shows them. Passwords and the device key stay out.
+#[derive(Serialize)]
+struct ConfigSummary<'a> {
+    schema: u16,
+    generation: u32,
+    wifi_ssid: &'a str,
+    has_wifi_password: bool,
+    mqtt_broker: &'a str,
+    mqtt_port: u16,
+    mqtt_tls: bool,
+    mqtt_username: &'a str,
+    has_mqtt_password: bool,
+    device_credential: &'a str,
 }
 
 pub struct Info<'a> {
@@ -162,10 +273,15 @@ enum Kind {
     Info,
     Firmware,
     Logs,
+    FirmwareUpdate,
+    Config,
+    Clients,
+    Reboot,
 }
 
 struct Handler<'d, D> {
     device: &'d D,
+    keys: &'d ClientKeys,
     kind: Kind,
 }
 
@@ -183,6 +299,23 @@ fn reply(
 fn changed(response: &mut ResponseWriter<'_, DATAGRAM_BYTES>) -> Result<Disposition, Code> {
     response.set_code(Code::CHANGED);
     Ok(Disposition::Complete)
+}
+
+/// An error with a reason for the client. Returning an `Err` would drop the payload.
+fn refuse(
+    response: &mut ResponseWriter<'_, DATAGRAM_BYTES>,
+    code: Code,
+    reason: &str,
+) -> Result<Disposition, Code> {
+    response.set_code(code);
+    response.set_uint_option(OptionNumber::CONTENT_FORMAT, ContentFormat::TEXT.0.into())?;
+    response.set_payload(reason.as_bytes())?;
+    Ok(Disposition::Complete)
+}
+
+fn busy(response: &mut ResponseWriter<'_, DATAGRAM_BYTES>) -> Result<Disposition, Code> {
+    response.set_uint_option(OptionNumber::MAX_AGE, 5)?;
+    refuse(response, Code::UNAVAILABLE, "busy")
 }
 
 impl<D: Device> Application<DATAGRAM_BYTES> for Handler<'_, D> {
@@ -260,6 +393,81 @@ impl<D: Device> Application<DATAGRAM_BYTES> for Handler<'_, D> {
                     &payload[at..LOG_HEADER_BYTES + count],
                 )
             }
+            Kind::FirmwareUpdate => match self.device.submit_ota(request.payload()) {
+                Ok(()) => changed(response),
+                Err(reason @ ("busy" | "unavailable")) => {
+                    refuse(response, Code::UNAVAILABLE, reason)
+                }
+                Err(reason) => refuse(response, Code::BAD_REQUEST, reason),
+            },
+            Kind::Config if write => {
+                let Ok(config) = DeviceConfig::decode(request.payload()) else {
+                    return refuse(response, Code::BAD_REQUEST, "invalid_settings");
+                };
+                // Client keys have their own resource, and the device key stays put.
+                if !config.coap_device_key.is_empty() || !config.coap_clients.is_empty() {
+                    return refuse(response, Code::BAD_REQUEST, "coap_fields_not_allowed");
+                }
+                match self.device.write_config(config) {
+                    Ok(()) => changed(response),
+                    Err(Busy) => busy(response),
+                }
+            }
+            Kind::Config => {
+                let config = self.device.config();
+                let credential = self.device.device_credential();
+                let summary = ConfigSummary {
+                    schema: config.schema,
+                    generation: config.generation,
+                    wifi_ssid: &config.wifi_ssid,
+                    has_wifi_password: !config.wifi_password.is_empty(),
+                    mqtt_broker: &config.mqtt_broker,
+                    mqtt_port: config.mqtt_port,
+                    mqtt_tls: config.mqtt_tls,
+                    mqtt_username: &config.mqtt_username,
+                    has_mqtt_password: !config.mqtt_password.is_empty(),
+                    device_credential: &credential,
+                };
+                let mut json = [0; CONFIG_JSON_BYTES];
+                let length = serde_json_core::to_slice(&summary, &mut json)
+                    .map_err(|_| Code::INTERNAL_ERROR)?;
+                reply(response, CONTENT_JSON, &json[..length])
+            }
+            Kind::Clients => match request.message.code() {
+                Code::POST => {
+                    let hex =
+                        core::str::from_utf8(request.payload()).map_err(|_| Code::BAD_REQUEST)?;
+                    match self.keys.with_added(hex.trim()) {
+                        Ok(clients) => match self.device.save_clients(clients) {
+                            Ok(()) => changed(response),
+                            Err(Busy) => busy(response),
+                        },
+                        Err(reason) => refuse(response, Code::BAD_REQUEST, reason),
+                    }
+                }
+                Code::DELETE => {
+                    let fingerprint = query_value(request, "fp")?.ok_or(Code::BAD_REQUEST)?;
+                    match self.keys.without(fingerprint) {
+                        Ok(clients) => match self.device.save_clients(clients) {
+                            Ok(()) => {
+                                response.set_code(Code::DELETED);
+                                Ok(Disposition::Complete)
+                            }
+                            Err(Busy) => busy(response),
+                        },
+                        Err("unknown_key") => refuse(response, Code::NOT_FOUND, "unknown_key"),
+                        Err(reason) => refuse(response, Code::BAD_REQUEST, reason),
+                    }
+                }
+                _ => {
+                    let list = self.keys.fingerprints().map_err(|_| Code::INTERNAL_ERROR)?;
+                    reply(response, CONTENT_JSON, list.as_bytes())
+                }
+            },
+            Kind::Reboot => match self.device.reboot() {
+                Ok(()) => changed(response),
+                Err(Busy) => busy(response),
+            },
         }
     }
 
@@ -268,18 +476,25 @@ impl<D: Device> Application<DATAGRAM_BYTES> for Handler<'_, D> {
     }
 }
 
-/// The `from=N` query of `/logs`, if any.
-fn log_cursor(request: Request<'_>) -> Result<Option<u64>, Code> {
-    let mut cursor = None;
+/// The value of a `name=value` query, if present. Any other query is an error, because a
+/// client that misspelled one would otherwise get something it didn't ask for.
+fn query_value<'r>(request: Request<'r>, name: &str) -> Result<Option<&'r str>, Code> {
+    let mut found = None;
     for query in request.message.values(OptionNumber::URI_QUERY) {
         let value = core::str::from_utf8(query)
             .ok()
-            .and_then(|query| query.strip_prefix("from="))
-            .and_then(|value| value.parse().ok())
+            .and_then(|query| query.strip_prefix(name)?.strip_prefix('='))
             .ok_or(Code::BAD_REQUEST)?;
-        cursor = Some(value);
+        found = Some(value);
     }
-    Ok(cursor)
+    Ok(found)
+}
+
+/// The `from=N` query of `/logs`, if any.
+fn log_cursor(request: Request<'_>) -> Result<Option<u64>, Code> {
+    query_value(request, "from")?
+        .map(|value| value.parse().map_err(|_| Code::BAD_REQUEST))
+        .transpose()
 }
 
 /// `/effects`: names as `["None","Rainbow",…]`, the same list as Home Assistant's.
@@ -308,7 +523,11 @@ impl BodySource for EffectList {
 const LOG_HEADER_BYTES: usize = 42;
 const LOG_PAYLOAD_BYTES: usize = 1024;
 
+const CONFIG_JSON_BYTES: usize = 1000;
+
 const READ: &[Code] = &[Code::GET];
+const WRITE: &[Code] = &[Code::POST];
+const CLIENTS: &[Code] = &[Code::GET, Code::POST, Code::DELETE];
 const READ_WRITE: &[Code] = &[Code::GET, Code::PUT];
 const JSON_OBSERVABLE: &[(&str, Option<&str>)] = &[("ct", Some("50")), ("obs", None)];
 const TEXT_OBSERVABLE: &[(&str, Option<&str>)] = &[("ct", Some("0")), ("obs", None)];
@@ -322,12 +541,16 @@ pub struct Resources<'d, D> {
     info: Handler<'d, D>,
     firmware: Handler<'d, D>,
     logs: Handler<'d, D>,
+    firmware_update: Handler<'d, D>,
+    config: Handler<'d, D>,
+    clients: Handler<'d, D>,
+    reboot: Handler<'d, D>,
     effects: EffectList,
 }
 
 impl<'d, D: Device> Resources<'d, D> {
-    pub fn new(device: &'d D) -> Self {
-        let handler = |kind| Handler { device, kind };
+    pub fn new(device: &'d D, keys: &'d ClientKeys) -> Self {
+        let handler = |kind| Handler { device, keys, kind };
         Self {
             light: handler(Kind::Light),
             speed: handler(Kind::Speed),
@@ -335,6 +558,10 @@ impl<'d, D: Device> Resources<'d, D> {
             info: handler(Kind::Info),
             firmware: handler(Kind::Firmware),
             logs: handler(Kind::Logs),
+            firmware_update: handler(Kind::FirmwareUpdate),
+            config: handler(Kind::Config),
+            clients: handler(Kind::Clients),
+            reboot: handler(Kind::Reboot),
             effects: EffectList,
         }
     }
@@ -346,6 +573,10 @@ impl<'d, D: Device> Resources<'d, D> {
         router.route("/info", READ, &mut self.info)?;
         router.route("/firmware", READ, &mut self.firmware)?;
         router.route("/logs", READ, &mut self.logs)?;
+        router.route("/firmware/update", WRITE, &mut self.firmware_update)?;
+        router.buffered_upload("/config", READ_WRITE, &mut self.config)?;
+        router.route("/coap/clients", CLIENTS, &mut self.clients)?;
+        router.route("/reboot", WRITE, &mut self.reboot)?;
         router.representation("/effects", &mut self.effects)?;
 
         let notify = |id| {
@@ -367,6 +598,8 @@ impl<'d, D: Device> Resources<'d, D> {
         router.describe("/firmware", JSON_OBSERVABLE, false)?;
         router.describe("/logs", TEXT_OBSERVABLE, false)?;
         router.describe("/info", JSON, false)?;
+        router.describe("/config", JSON, false)?;
+        router.describe("/coap/clients", JSON, false)?;
         router.describe("/effects", JSON, false)?;
         Ok(())
     }

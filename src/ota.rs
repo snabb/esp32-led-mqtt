@@ -12,10 +12,8 @@ use log::{info, warn};
 #[cfg(feature = "_control")]
 mod download;
 
-#[cfg(feature = "mqtt")]
-pub use download::submit;
 #[cfg(feature = "_control")]
-pub use download::{client, pull_enabled, update};
+pub use download::{client, pull_enabled, submit, update};
 
 /// What `flash::task` needs to start OTA downloads, if this build can do them.
 #[cfg(feature = "_control")]

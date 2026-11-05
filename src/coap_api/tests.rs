@@ -21,7 +21,7 @@ use rand_core::{TryCryptoRng, TryRng};
 use smart_leds::RGB8;
 
 use super::*;
-use crate::{EffectId, coap_keys, log_buffer::LogRing};
+use crate::{EffectId, log_buffer::LogRing};
 
 const DEVICE_KEY: &str = "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20";
 const CLIENT_KEY: [u8; 32] = [9; 32];
@@ -57,7 +57,16 @@ struct FakeDevice {
     light: Cell<LightState>,
     authenticated: Cell<bool>,
     logs: RefCell<LogRing<4096>>,
+    config: DeviceConfig,
+    ota_result: Cell<Result<(), &'static str>>,
+    ota_commands: RefCell<StdVec<StdVec<u8>>>,
+    busy: Cell<bool>,
+    written_config: RefCell<Option<DeviceConfig>>,
+    saved_clients: RefCell<Option<ClientList>>,
+    reboots: Cell<u32>,
 }
+
+const SETTINGS: &[u8] = br#"{"wifi_ssid":"home","wifi_password":"wifi-secret","mqtt_broker":"mqtt.example","mqtt_username":"me","mqtt_password":"mqtt-secret"}"#;
 
 impl FakeDevice {
     fn new() -> Self {
@@ -71,6 +80,18 @@ impl FakeDevice {
             }),
             authenticated: Cell::new(false),
             logs: RefCell::new(LogRing::new()),
+            config: {
+                let mut config = DeviceConfig::decode(SETTINGS).unwrap();
+                config.coap_device_key = DEVICE_KEY.try_into().unwrap();
+                config.wifi_ssid = "he said \"hi\"".try_into().unwrap();
+                config
+            },
+            ota_result: Cell::new(Ok(())),
+            ota_commands: RefCell::new(StdVec::new()),
+            busy: Cell::new(false),
+            written_config: RefCell::new(None),
+            saved_clients: RefCell::new(None),
+            reboots: Cell::new(0),
         }
     }
 }
@@ -105,6 +126,37 @@ impl Device for FakeDevice {
     }
     fn read_logs(&self, from: Option<u64>, output: &mut [u8]) -> LogRead {
         self.logs.borrow().read(from, output)
+    }
+    fn submit_ota(&self, command: &[u8]) -> Result<(), &'static str> {
+        self.ota_commands.borrow_mut().push(command.to_vec());
+        self.ota_result.get()
+    }
+    fn config(&self) -> &DeviceConfig {
+        &self.config
+    }
+    fn device_credential(&self) -> CoapCredential {
+        "abcd".try_into().unwrap()
+    }
+    fn write_config(&self, config: DeviceConfig) -> Result<(), Busy> {
+        if self.busy.get() {
+            return Err(Busy);
+        }
+        *self.written_config.borrow_mut() = Some(config);
+        Ok(())
+    }
+    fn save_clients(&self, clients: ClientList) -> Result<(), Busy> {
+        if self.busy.get() {
+            return Err(Busy);
+        }
+        *self.saved_clients.borrow_mut() = Some(clients);
+        Ok(())
+    }
+    fn reboot(&self) -> Result<(), Busy> {
+        if self.busy.get() {
+            return Err(Busy);
+        }
+        self.reboots.set(self.reboots.get() + 1);
+        Ok(())
     }
     fn authenticated(&self) {
         self.authenticated.set(true);
@@ -144,7 +196,7 @@ fn session_with_notifier<F: AsyncFnOnce(Client<'_>, SocketAddr, Notifier<'_>)>(
         let protection = Edhoc::with_store(crypto(2), device_identity, keys).unwrap();
         let shared = ApiShared::new();
         let mut endpoint = ApiEndpoint::new(&shared, protection).unwrap();
-        let mut resources = Resources::new(device);
+        let mut resources = Resources::new(device, keys);
         let mut router = ApiRouter::new(&POLICY);
         resources.register(&mut router).unwrap();
         let mut application = Authenticated { device, router };
@@ -203,11 +255,17 @@ async fn get(client: Client<'_>, server: SocketAddr, path: &str) -> (Code, StdVe
     (message.code(), message.payload().to_vec())
 }
 
-async fn put(client: Client<'_>, server: SocketAddr, path: &str, body: &[u8]) -> Code {
+async fn send(
+    client: Client<'_>,
+    server: SocketAddr,
+    method: Code,
+    path: &str,
+    body: &[u8],
+) -> (Code, StdVec<u8>) {
     let reply = client
         .client(server)
         .peer(DEVICE)
-        .request(Code::PUT, path)
+        .request(method, path)
         .unwrap()
         .payload(body)
         .unwrap()
@@ -215,7 +273,12 @@ async fn put(client: Client<'_>, server: SocketAddr, path: &str, body: &[u8]) ->
         .unwrap()
         .await
         .unwrap();
-    reply.message().unwrap().code()
+    let message = reply.message().unwrap();
+    (message.code(), message.payload().to_vec())
+}
+
+async fn put(client: Client<'_>, server: SocketAddr, path: &str, body: &[u8]) -> Code {
+    send(client, server, Code::PUT, path, body).await.0
 }
 
 #[test]
@@ -386,6 +449,227 @@ fn log_tailing_sees_new_text_and_any_gap() {
 }
 
 #[test]
+fn config_reads_without_secrets_and_escapes_text() {
+    let device = FakeDevice::new();
+    let keys = trusted_keys();
+    session(&device, CLIENT_KEY, &keys, async |client, server| {
+        let (code, body) = get(client, server, "/config").await;
+        assert_eq!(code, Code::CONTENT);
+        let text = core::str::from_utf8(&body).unwrap();
+        for secret in ["wifi-secret", "mqtt-secret", DEVICE_KEY] {
+            assert!(!text.contains(secret), "{text}");
+        }
+        assert!(text.contains(r#""has_wifi_password":true"#), "{text}");
+        assert!(text.contains(r#""has_mqtt_password":true"#), "{text}");
+        assert!(text.contains(r#""mqtt_broker":"mqtt.example""#), "{text}");
+        assert!(text.contains(r#""device_credential":"abcd""#), "{text}");
+        assert!(text.contains(r#""wifi_ssid":"he said \"hi\"""#), "{text}");
+    });
+}
+
+#[test]
+fn config_writes_are_validated_and_queued() {
+    let device = FakeDevice::new();
+    let keys = trusted_keys();
+    session(&device, CLIENT_KEY, &keys, async |client, server| {
+        assert_eq!(
+            put(client, server, "/config", b"{").await,
+            Code::BAD_REQUEST
+        );
+        let short_password = br#"{"wifi_ssid":"n","wifi_password":"short"}"#;
+        assert_eq!(
+            put(client, server, "/config", short_password).await,
+            Code::BAD_REQUEST
+        );
+        let with_key = format!(
+            r#"{{"wifi_ssid":"n","wifi_password":"password1","coap_device_key":"{}"}}"#,
+            "ab".repeat(32)
+        );
+        let (code, body) = send(client, server, Code::PUT, "/config", with_key.as_bytes()).await;
+        assert_eq!(
+            (code, body.as_slice()),
+            (Code::BAD_REQUEST, &b"coap_fields_not_allowed"[..])
+        );
+        let with_clients =
+            br#"{"wifi_ssid":"n","wifi_password":"password1","coap_clients":["a108"]}"#;
+        assert_eq!(
+            put(client, server, "/config", with_clients).await,
+            Code::BAD_REQUEST
+        );
+        assert!(device.written_config.borrow().is_none());
+
+        let good = br#"{"wifi_ssid":"new","wifi_password":"password1"}"#;
+        device.busy.set(true);
+        let (code, body) = send(client, server, Code::PUT, "/config", good).await;
+        assert_eq!((code, body.as_slice()), (Code::UNAVAILABLE, &b"busy"[..]));
+        device.busy.set(false);
+        assert_eq!(put(client, server, "/config", good).await, Code::CHANGED);
+    });
+    assert_eq!(
+        device.written_config.borrow().as_ref().unwrap().wifi_ssid,
+        "new"
+    );
+}
+
+#[test]
+fn large_settings_arrive_in_blocks() {
+    let device = FakeDevice::new();
+    let keys = trusted_keys();
+    session(&device, CLIENT_KEY, &keys, async |client, server| {
+        // Whitespace padding makes it several 64-byte blocks without changing its meaning.
+        let padded = format!(
+            "{}{}",
+            r#"{"wifi_ssid":"blocks","wifi_password":"password1"}"#,
+            " ".repeat(400)
+        );
+        let reply = client
+            .client(server)
+            .peer(DEVICE)
+            .upload(
+                Code::PUT,
+                "/config",
+                ContentFormat::OCTET_STREAM,
+                padded.as_bytes(),
+                2,
+            )
+            .await
+            .unwrap();
+        assert_eq!(reply.message().unwrap().code(), Code::CHANGED);
+    });
+    assert_eq!(
+        device.written_config.borrow().as_ref().unwrap().wifi_ssid,
+        "blocks"
+    );
+}
+
+fn stored_hex(identity_key: [u8; 32], kid: &[u8]) -> device_config::CoapCredential {
+    hex(client_identity(identity_key, kid).credential_bytes())
+}
+
+#[test]
+fn client_keys_are_added_and_removed_through_the_flash_job() {
+    let device = FakeDevice::new();
+    let keys = trusted_keys();
+    let first = stored_hex(CLIENT_KEY, &[0x01]);
+    let second = stored_hex(OTHER_KEY, &[0x02]);
+    session(&device, CLIENT_KEY, &keys, async |client, server| {
+        let clients =
+            async |method, path: &str, body: &[u8]| send(client, server, method, path, body).await;
+        assert_eq!(
+            clients(Code::POST, "/coap/clients", b"zz").await,
+            (Code::BAD_REQUEST, b"invalid_key".to_vec())
+        );
+
+        // An existing key adds nothing, and the store only changes once the job has saved.
+        let (code, _) = clients(Code::POST, "/coap/clients", first.as_bytes()).await;
+        assert_eq!(code, Code::CHANGED);
+        assert_eq!(device.saved_clients.borrow().as_ref().unwrap().len(), 1);
+
+        let colliding = stored_hex(OTHER_KEY, &[0x01]);
+        assert_eq!(
+            clients(Code::POST, "/coap/clients", colliding.as_bytes()).await,
+            (Code::BAD_REQUEST, b"duplicate_key_id".to_vec())
+        );
+
+        let (code, _) = clients(Code::POST, "/coap/clients", second.as_bytes()).await;
+        assert_eq!(code, Code::CHANGED);
+        let saved = device.saved_clients.borrow().clone().unwrap();
+        assert_eq!(saved.as_slice(), [first.clone(), second.clone()]);
+        assert_eq!(keys.load(&saved), 0);
+
+        let (code, list) = get(client, server, "/coap/clients").await;
+        assert_eq!(code, Code::CONTENT);
+        let list = std::string::String::from_utf8(list).unwrap();
+        let fingerprint = |hex: &str| {
+            let mut ccs = [0; 128];
+            coap_keys::fingerprint(coap_keys::read_hex(hex, &mut ccs).unwrap()).unwrap()
+        };
+        assert_eq!(
+            list,
+            format!(r#"["{}","{}"]"#, fingerprint(&first), fingerprint(&second))
+        );
+
+        assert_eq!(
+            clients(Code::DELETE, "/coap/clients?fp=00000000", b"").await,
+            (Code::NOT_FOUND, b"unknown_key".to_vec())
+        );
+        assert_eq!(
+            clients(Code::DELETE, "/coap/clients", b"").await.0,
+            Code::BAD_REQUEST
+        );
+        let path = format!("/coap/clients?fp={}", fingerprint(&second));
+        assert_eq!(clients(Code::DELETE, &path, b"").await.0, Code::DELETED);
+        let saved = device.saved_clients.borrow().clone().unwrap();
+        assert_eq!(saved.as_slice(), [first.clone()]);
+        assert_eq!(keys.load(&saved), 0);
+
+        let path = format!("/coap/clients?fp={}", fingerprint(&first));
+        assert_eq!(
+            clients(Code::DELETE, &path, b"").await,
+            (Code::BAD_REQUEST, b"last_key".to_vec())
+        );
+
+        device.busy.set(true);
+        assert_eq!(
+            clients(Code::POST, "/coap/clients", second.as_bytes()).await,
+            (Code::UNAVAILABLE, b"busy".to_vec())
+        );
+        device.busy.set(false);
+    });
+}
+
+#[test]
+fn the_client_list_has_a_limit() {
+    let device = FakeDevice::new();
+    let keys = ClientKeys::new();
+    let full: StdVec<_> = (0..4u8)
+        .map(|n| stored_hex([20 + n; 32], &[n + 1]))
+        .collect();
+    assert_eq!(keys.load(&full), 0);
+    let _ = device;
+    assert_eq!(
+        keys.with_added(&stored_hex(OTHER_KEY, &[9])).err(),
+        Some("too_many_keys")
+    );
+}
+
+#[test]
+fn ota_trigger_passes_the_command_and_explains_refusals() {
+    let device = FakeDevice::new();
+    let keys = trusted_keys();
+    session(&device, CLIENT_KEY, &keys, async |client, server| {
+        let path = "/firmware/update";
+        let (code, _) = send(client, server, Code::POST, path, b"{}").await;
+        assert_eq!(code, Code::CHANGED);
+        for (reason, expected) in [
+            ("busy", Code::UNAVAILABLE),
+            ("unavailable", Code::UNAVAILABLE),
+            ("invalid_command", Code::BAD_REQUEST),
+            ("already_running", Code::BAD_REQUEST),
+        ] {
+            device.ota_result.set(Err(reason));
+            let (code, body) = send(client, server, Code::POST, path, b"{}").await;
+            assert_eq!((code, body.as_slice()), (expected, reason.as_bytes()));
+        }
+    });
+    assert_eq!(device.ota_commands.borrow()[0], b"{}");
+}
+
+#[test]
+fn reboot_is_queued_unless_flash_is_busy() {
+    let device = FakeDevice::new();
+    let keys = trusted_keys();
+    session(&device, CLIENT_KEY, &keys, async |client, server| {
+        let (code, _) = send(client, server, Code::POST, "/reboot", b"").await;
+        assert_eq!(code, Code::CHANGED);
+        device.busy.set(true);
+        let (code, _) = send(client, server, Code::POST, "/reboot", b"").await;
+        assert_eq!(code, Code::UNAVAILABLE);
+    });
+    assert_eq!(device.reboots.get(), 1);
+}
+
+#[test]
 fn an_unknown_client_key_gets_nothing() {
     let device = FakeDevice::new();
     let keys = trusted_keys();
@@ -427,6 +711,27 @@ fn without_authentication_only_discovery_answers() {
             .await
             .unwrap();
         assert_eq!(reply.message().unwrap().code(), Code::UNAUTHORIZED);
+        for (method, path) in [
+            (Code::PUT, "/speed"),
+            (Code::PUT, "/config"),
+            (Code::POST, "/coap/clients"),
+            (Code::DELETE, "/coap/clients"),
+            (Code::POST, "/firmware/update"),
+            (Code::POST, "/reboot"),
+        ] {
+            let reply = unprotected
+                .request(method, path)
+                .unwrap()
+                .send()
+                .unwrap()
+                .await
+                .unwrap();
+            assert_eq!(
+                reply.message().unwrap().code(),
+                Code::UNAUTHORIZED,
+                "{path}"
+            );
+        }
 
         // Discovery lists only what the caller could access: nothing.
         let reply = unprotected.get("/.well-known/core").await.unwrap();
@@ -435,6 +740,10 @@ fn without_authentication_only_discovery_answers() {
     });
     assert!(!device.light().on);
     assert!(!device.authenticated.get());
+    assert!(device.written_config.borrow().is_none());
+    assert!(device.saved_clients.borrow().is_none());
+    assert!(device.ota_commands.borrow().is_empty());
+    assert_eq!(device.reboots.get(), 0);
 }
 
 #[test]

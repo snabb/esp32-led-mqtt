@@ -25,6 +25,10 @@ pub enum Job {
     #[cfg(feature = "_control")]
     Ota(ota_protocol::Request),
     Config(Command),
+    #[cfg(feature = "coap")]
+    CoapClients(esp32_led_mqtt::coap_api::ClientList),
+    #[cfg(feature = "coap")]
+    Reboot,
 }
 
 /// Set while the owner can accept a job. Stays clear after an unhealthy boot.
@@ -130,6 +134,18 @@ pub async fn task(
                 config::handle(&mut flash, command).await;
                 // Reboot even after an error: a failed write may have committed,
                 // and active settings must match the stored ones.
+                Timer::after_millis(250).await;
+                esp_hal::system::software_reset();
+            }
+            #[cfg(feature = "coap")]
+            Job::CoapClients(clients) => {
+                arm_watchdog(&mut wdt, 30);
+                crate::coap::save_clients(&mut flash, clients).await;
+                wdt.disable();
+            }
+            #[cfg(feature = "coap")]
+            Job::Reboot => {
+                // Lets the reply leave.
                 Timer::after_millis(250).await;
                 esp_hal::system::software_reset();
             }

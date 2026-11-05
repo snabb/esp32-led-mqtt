@@ -32,8 +32,8 @@ pub struct Client {
     tls: &'static mbedtls_rs::Tls<'static>,
 }
 
-#[cfg_attr(not(feature = "mqtt"), allow(dead_code))]
-pub fn submit(payload: &[u8], retained: bool) {
+/// Starts the update, or reports why it won't both on the status and to the caller.
+pub fn submit(payload: &[u8], retained: bool) -> Result<(), &'static str> {
     let result = (|| {
         if retained {
             return Err("retained_command");
@@ -59,6 +59,7 @@ pub fn submit(payload: &[u8], retained: bool) {
     if let Err(reason) = result {
         status("rejected", reason, 0);
     }
+    result
 }
 
 /// Whether this image was built for a bootloader that can roll back.

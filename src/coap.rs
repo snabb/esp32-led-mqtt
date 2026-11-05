@@ -9,15 +9,17 @@ use embassy_net::{
 };
 use embassy_time::{Instant, Timer};
 use esp_hal::rng::Trng;
+use esp_storage::FlashStorage;
 use esp32_led_mqtt::{
     coap_api::{
-        ApiEndpoint, ApiRouter, ApiShared, Authenticated, ClientKeys, DATAGRAM_BYTES, Device, Info,
-        POLICY, PORT, Resources, resource,
+        ApiEndpoint, ApiRouter, ApiShared, Authenticated, Busy, ClientKeys, ClientList,
+        DATAGRAM_BYTES, Device, Info, POLICY, PORT, Resources, resource,
     },
     coap_keys,
-    device_config::DeviceConfig,
+    device_config::{CoapCredential, DeviceConfig},
     light_command::{LightState, LightUpdate},
     log_buffer::LogRead,
+    provisioning::Command,
 };
 use heapless::String;
 use log::{error, info, warn};
@@ -26,7 +28,11 @@ use mai_coap::{
     transport::embassy::EmbassyTransport,
 };
 
-use crate::{identity::DeviceIdentity, light_state, log_sink, ota, tsens};
+use crate::{
+    flash::{self, Job},
+    identity::DeviceIdentity,
+    light_state, log_sink, ota, tsens,
+};
 
 const SOCKET_RX_SLOTS: usize = 4;
 const SOCKET_TX_SLOTS: usize = 2;
@@ -36,6 +42,25 @@ static CLIENT_KEYS: ClientKeys = ClientKeys::new();
 struct Hardware {
     stack: Stack<'static>,
     name: &'static str,
+    settings: &'static DeviceConfig,
+}
+
+/// Claims the flash owner's single job slot for `job`.
+fn queue(job: impl FnOnce() -> Job) -> Result<(), Busy> {
+    if !flash::try_claim() {
+        return Err(Busy);
+    }
+    flash::queue(job());
+    Ok(())
+}
+
+/// Saves the client list and, if that worked, applies it to the next handshake.
+pub async fn save_clients(flash: &mut FlashStorage<'static>, clients: ClientList) {
+    if crate::config::save_clients(flash, &clients).await {
+        CLIENT_KEYS.load(&clients);
+    } else {
+        warn!("Could not save the CoAP client keys");
+    }
 }
 
 impl Device for Hardware {
@@ -67,6 +92,29 @@ impl Device for Hardware {
     }
     fn read_logs(&self, from: Option<u64>, output: &mut [u8]) -> LogRead {
         log_sink::read(from, output)
+    }
+    fn submit_ota(&self, command: &[u8]) -> Result<(), &'static str> {
+        ota::submit(command, false)
+    }
+    fn config(&self) -> &DeviceConfig {
+        self.settings
+    }
+    fn device_credential(&self) -> CoapCredential {
+        crate::config::device_credential()
+    }
+    fn write_config(&self, config: DeviceConfig) -> Result<(), Busy> {
+        queue(|| {
+            Job::Config(Command::Configure {
+                id: "coap".try_into().expect("short ID"),
+                config,
+            })
+        })
+    }
+    fn save_clients(&self, clients: ClientList) -> Result<(), Busy> {
+        queue(|| Job::CoapClients(clients))
+    }
+    fn reboot(&self) -> Result<(), Busy> {
+        queue(|| Job::Reboot)
     }
     fn authenticated(&self) {
         ota::COAP_AUTHENTICATED.store(true, Ordering::Release);
@@ -148,8 +196,9 @@ pub async fn task(
     let device = Hardware {
         stack,
         name: &identity.slug,
+        settings,
     };
-    let mut resources = Resources::new(&device);
+    let mut resources = Resources::new(&device, &CLIENT_KEYS);
     let mut router = ApiRouter::new(&POLICY);
     resources.register(&mut router).expect("router capacity");
     let mut application = Authenticated {
