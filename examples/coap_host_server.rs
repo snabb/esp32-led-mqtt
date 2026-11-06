@@ -2,7 +2,7 @@
 //!
 //! ```sh
 //! uv run tools/coap.py keygen
-//! cargo run --target x86_64-unknown-linux-gnu --features coap --example coap_host_server -- \
+//! cargo run --target x86_64-unknown-linux-gnu --example coap_host_server -- \
 //!     127.0.0.1:5683 local/coap/host.ccs local/coap/client.ccs
 //! uv run tools/coap.py --host 127.0.0.1 --device-ccs local/coap/host.ccs info
 //! ```

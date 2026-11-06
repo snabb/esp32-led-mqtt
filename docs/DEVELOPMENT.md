@@ -9,14 +9,14 @@ need an explicit target:
 ```sh
 cargo fmt --check
 cargo test --lib --target x86_64-unknown-linux-gnu
-cargo test --lib --target x86_64-unknown-linux-gnu --features coap
+cargo test --lib --target x86_64-unknown-linux-gnu --no-default-features --features mdns,mqtt
 cargo check --target riscv32imac-unknown-none-elf
 OTA_ALLOWED_HOSTS=updates.example.invalid OTA_ROLLBACK_BOOTLOADER=1 \
   cargo clippy --target riscv32imac-unknown-none-elf -- -D warnings
 ```
 
-CI repeats the firmware checks with `--no-default-features` and with
-`--no-default-features --features mqtt`.
+CI repeats the firmware checks with `--no-default-features`, and with that plus each of
+`--features mqtt`, `--features mdns,mqtt` and `--features coap`.
 
 Run Clippy with the OTA variables set, or the OTA code paths go unchecked.
 
@@ -26,7 +26,7 @@ Run Clippy with the OTA variables set, or the OTA code paths go unchecked.
 |---|---|---|
 | `mqtt` | Yes | MQTT, Home Assistant discovery and OTA started over MQTT |
 | `mdns` | Yes | mDNS responder for `esp32-led-XXXXXX.local` |
-| `coap` | No | [CoAP API](COAP.md) |
+| `coap` | Yes | [CoAP API](COAP.md) |
 | `heap-stats` | No | Allocator high-water counters, see [heap measurements](#heap-measurements) |
 
 Without a control plane the firmware still drives the LEDs, the button and USB
@@ -69,7 +69,7 @@ controlled comparison. These are from instrumented builds that log long gaps bet
 Host tests cover the library crate (`src/lib.rs` and its modules): effects, OTA
 command, HTTP and image validation, the TLS flag policy, settings validation,
 USB command framing, and the settings store, including simulated power loss
-at every step of a settings write. With `--features coap` they also cover the CoAP
+at every step of a settings write. They also cover the CoAP
 resources, through real EDHOC and OSCORE sessions over loopback UDP. The binary-only
 modules (networking, flash ownership, USB I/O) are tested only on hardware.
 

@@ -18,7 +18,7 @@ name = "coap_host_server"
 required-features = ["coap"]
 
 [features]
-default = ["mdns", "mqtt"]
+default = ["coap", "mdns", "mqtt"]
 heap-stats = ["esp-alloc/internal-heap-stats"]
 coap = ["dep:mai-coap", "dep:rand_core", "dep:zeroize", "embassy-net/udp", "_control"]
 mdns = [

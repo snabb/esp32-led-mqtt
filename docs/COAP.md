@@ -2,12 +2,7 @@
 
 The `coap` feature adds a direct, authenticated API beside MQTT: everything MQTT offers,
 plus settings, client keys, firmware upload and device logs. Home Assistant keeps using
-MQTT. The feature is off by default, so build with it:
-
-```sh
-OTA_ALLOWED_HOSTS=firmware.example.com OTA_ROLLBACK_BOOTLOADER=1 \
-  cargo build --locked --release --features coap
-```
+MQTT. The feature is on by default, and the server starts once the device has a client key.
 
 ## Security
 
