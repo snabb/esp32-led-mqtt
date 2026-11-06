@@ -19,12 +19,17 @@ static DEVICE_CREDENTIAL: critical_section::Mutex<
     core::cell::RefCell<device_config::CoapCredential>,
 > = critical_section::Mutex::new(core::cell::RefCell::new(heapless::String::new()));
 
-/// Remembers the public credential, for `status` replies.
+/// The public credential for a config, empty if it has no device key.
 #[cfg(feature = "coap")]
-fn set_device_credential(config: &DeviceConfig) {
-    let credential = esp32_led_mqtt::coap_keys::public_credential(&config.coap_device_key);
+fn credential_of(config: &DeviceConfig) -> device_config::CoapCredential {
+    esp32_led_mqtt::coap_keys::public_credential(&config.coap_device_key).unwrap_or_default()
+}
+
+/// Remembers the credential of the stored key, for USB replies.
+#[cfg(feature = "coap")]
+fn set_device_credential(credential: device_config::CoapCredential) {
     critical_section::with(|cs| {
-        *DEVICE_CREDENTIAL.borrow_ref_mut(cs) = credential.unwrap_or_default();
+        *DEVICE_CREDENTIAL.borrow_ref_mut(cs) = credential;
     });
 }
 
@@ -87,7 +92,7 @@ pub async fn load(flash: &mut FlashStorage<'static>) -> Result<Option<DeviceConf
     );
     #[cfg(feature = "coap")]
     if let Some(config) = &result {
-        set_device_credential(config);
+        set_device_credential(credential_of(config));
     }
     Ok(result)
 }
@@ -164,7 +169,6 @@ fn provide_device_key(mut config: DeviceConfig) -> Result<DeviceConfig, config_s
         config.coap_device_key =
             coap_keys::generate_device_key(rng).map_err(|_| config_store::Error::Storage)?;
     }
-    set_device_credential(&config);
     Ok(config)
 }
 
@@ -183,7 +187,16 @@ pub async fn handle(flash: &mut FlashStorage<'static>, command: Command) {
                     #[cfg(not(feature = "coap"))]
                     let config = Ok(config);
                     match config {
-                        Ok(config) => config_store::save(&mut storage, range, config).await,
+                        Ok(config) => {
+                            #[cfg(feature = "coap")]
+                            let credential = credential_of(&config);
+                            let saved = config_store::save(&mut storage, range, config).await;
+                            #[cfg(feature = "coap")]
+                            if saved.is_ok() {
+                                set_device_credential(credential);
+                            }
+                            saved
+                        }
                         Err(error) => Err(error),
                     }
                 }
@@ -191,10 +204,14 @@ pub async fn handle(flash: &mut FlashStorage<'static>, command: Command) {
             };
             (id, saved)
         }
-        Command::Erase { id } => (
-            id,
-            config_store::erase(&mut storage, range).await.map(|()| 0),
-        ),
+        Command::Erase { id } => {
+            let erased = config_store::erase(&mut storage, range).await.map(|()| 0);
+            #[cfg(feature = "coap")]
+            if erased.is_ok() {
+                set_device_credential(Default::default());
+            }
+            (id, erased)
+        }
         Command::Status { .. } => unreachable!("the USB task answers status requests"),
     };
     match result {
