@@ -139,8 +139,8 @@ abandoned, and the running image is never touched.
 
 ## Finding devices
 
-With the `mdns` feature, a device answers as `esp32-led-XXXXXX.local` and advertises
-`_coap._udp`:
+With the `mdns` feature, a device answers as `esp32-led-XXXXXX.local`, and advertises
+`_coap._udp` once it has CoAP keys:
 
 ```sh
 avahi-browse -rt _coap._udp

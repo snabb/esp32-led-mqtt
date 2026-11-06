@@ -29,10 +29,11 @@ const TTL_SECS: u32 = 120;
 const MAX_MESSAGE: usize = 1472;
 
 #[embassy_executor::task]
-pub async fn task(stack: Stack<'static>, identity: &'static DeviceIdentity) {
+pub async fn task(stack: Stack<'static>, identity: &'static DeviceIdentity, advertise_coap: bool) {
     let answers = Answers {
         stack,
         hostname: &identity.slug,
+        advertise_coap,
     };
     let buffers = UdpBuffers::<1, MAX_MESSAGE, MAX_MESSAGE, 2>::new();
     let udp = Udp::new(stack, &buffers);
@@ -72,6 +73,7 @@ pub async fn task(stack: Stack<'static>, identity: &'static DeviceIdentity) {
 struct Answers<'a> {
     stack: Stack<'a>,
     hostname: &'a str,
+    advertise_coap: bool,
 }
 
 impl HostAnswers for Answers<'_> {
@@ -89,21 +91,22 @@ impl HostAnswers for Answers<'_> {
             ipv6: Ipv6Addr::UNSPECIFIED,
             ttl: Ttl::from_secs(TTL_SECS),
         };
-        #[cfg(feature = "coap")]
-        {
-            let service = Service {
-                name: self.hostname,
-                priority: 0,
-                weight: 0,
-                service: "_coap",
-                protocol: "_udp",
-                port: esp32_led_mqtt::coap_api::PORT,
-                service_subtypes: &[],
-                txt_kvs: &[],
-            };
-            ServiceAnswers::new(&host, &service).visit(f)
+        if self.advertise_coap {
+            #[cfg(feature = "coap")]
+            {
+                let service = Service {
+                    name: self.hostname,
+                    priority: 0,
+                    weight: 0,
+                    service: "_coap",
+                    protocol: "_udp",
+                    port: esp32_led_mqtt::coap_api::PORT,
+                    service_subtypes: &[],
+                    txt_kvs: &[],
+                };
+                return ServiceAnswers::new(&host, &service).visit(f);
+            }
         }
-        #[cfg(not(feature = "coap"))]
         host.visit(f)
     }
 }

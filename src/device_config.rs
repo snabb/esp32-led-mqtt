@@ -139,6 +139,11 @@ impl DeviceConfig {
         Ok(())
     }
 
+    /// Whether the CoAP server has what it needs to start.
+    pub fn has_coap_keys(&self) -> bool {
+        !self.coap_device_key.is_empty() && !self.coap_clients.is_empty()
+    }
+
     /// Carries the CoAP keys over from the stored snapshot, so that writing settings
     /// can't silently lock clients out: a new snapshot only replaces the client list by
     /// naming one, and never the device key.

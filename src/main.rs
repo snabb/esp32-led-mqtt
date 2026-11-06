@@ -185,9 +185,7 @@ async fn main(spawner: Spawner) -> ! {
     let download_context: ota::DownloadContext = ();
     let control_required = device_config.is_some_and(|settings| {
         (cfg!(feature = "mqtt") && !settings.mqtt_broker.is_empty())
-            || (cfg!(feature = "coap")
-                && !settings.coap_device_key.is_empty()
-                && !settings.coap_clients.is_empty())
+            || (cfg!(feature = "coap") && settings.has_coap_keys())
     });
     if let Some(settings) = device_config {
         let authentication = match settings.wifi_auth {
@@ -256,11 +254,11 @@ async fn main(spawner: Spawner) -> ! {
             spawner.spawn(mqtt::task(stack, identity, settings, download_context).unwrap());
         }
         #[cfg(feature = "coap")]
-        if !settings.coap_device_key.is_empty() && !settings.coap_clients.is_empty() {
+        if settings.has_coap_keys() {
             spawner.spawn(coap::task(stack, identity, settings).unwrap());
         }
         #[cfg(feature = "mdns")]
-        spawner.spawn(mdns::task(stack, identity).unwrap());
+        spawner.spawn(mdns::task(stack, identity, settings.has_coap_keys()).unwrap());
         network = Some(stack);
     }
     spawner.spawn(
