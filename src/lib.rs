@@ -30,7 +30,7 @@ pub fn device_slug(mac_suffix: [u8; 3]) -> heapless::String<16> {
 /// Home Assistant name for "no effect", which shows the solid color.
 pub const EFFECT_DISABLED_NAME: &str = "None";
 /// Display names in `EffectId` declaration order; also the button cycle order.
-pub const EFFECTS: [(EffectId, &str); 25] = [
+pub const EFFECTS: [(EffectId, &str); 30] = [
     (EffectId::Rainbow, "Rainbow"),
     (EffectId::ColorWipe, "Color Wipe"),
     (EffectId::Scan, "Scan"),
@@ -48,6 +48,11 @@ pub const EFFECTS: [(EffectId, &str); 25] = [
     (EffectId::Aurora, "Aurora"),
     (EffectId::PlasmaFlow, "Plasma Flow"),
     (EffectId::StaticNoise, "Static Noise"),
+    (EffectId::PendulumWave, "Pendulum Wave"),
+    (EffectId::Ripples, "Ripples"),
+    (EffectId::LavaLamp, "Lava Lamp"),
+    (EffectId::Fireflies, "Fireflies"),
+    (EffectId::ReactionDiffusion, "Reaction Diffusion"),
     (EffectId::FinlandSnow, "Finland Snow"),
     (
         EffectId::FinlandBlueWhiteTwinkle,
@@ -80,6 +85,11 @@ pub enum EffectId {
     Aurora,
     PlasmaFlow,
     StaticNoise,
+    PendulumWave,
+    Ripples,
+    LavaLamp,
+    Fireflies,
+    ReactionDiffusion,
     FinlandSnow,
     FinlandBlueWhiteTwinkle,
     FinlandSnowfall,
@@ -174,6 +184,8 @@ pub struct EffectRuntime<const N: usize> {
     ticks_done: u64,
     effect_data: [u8; N],
     twinkle_color: [RGB8; N],
+    /// Two values per LED for simulations that need more precision than `effect_data`.
+    field: [[i32; 2]; N],
     rng: XorShift32,
 }
 
@@ -192,6 +204,7 @@ impl<const N: usize> EffectRuntime<N> {
             ticks_done: 0,
             effect_data: [0; N],
             twinkle_color: [RGB8 { r: 0, g: 0, b: 0 }; N],
+            field: [[0; 2]; N],
             rng: XorShift32::new(0x1234_abcd),
         }
     }
@@ -216,6 +229,7 @@ impl<const N: usize> EffectRuntime<N> {
         self.ticks_done = 0;
         self.effect_data.fill(0);
         self.twinkle_color.fill(RGB8 { r: 0, g: 0, b: 0 });
+        self.field.fill([0; 2]);
         self.frame.fill(RGB8 { r: 0, g: 0, b: 0 });
         self.tick_frame.fill(RGB8 { r: 0, g: 0, b: 0 });
         self.prev_tick_frame.fill(RGB8 { r: 0, g: 0, b: 0 });

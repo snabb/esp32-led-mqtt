@@ -9,12 +9,17 @@ mod color_wipe;
 mod confetti;
 mod finland;
 mod fire2012;
+mod fireflies;
 mod fireworks;
 mod flicker;
 mod juggle;
+mod lava_lamp;
 mod pacifica;
+mod pendulum_wave;
 mod plasma_flow;
 mod rainbow;
+mod reaction_diffusion;
+mod ripples;
 mod scan;
 mod sinelon;
 mod static_noise;
@@ -40,6 +45,11 @@ pub(crate) fn render<const N: usize>(runtime: &mut EffectRuntime<N>) {
         EffectId::Aurora => aurora::render(runtime),
         EffectId::PlasmaFlow => plasma_flow::render(runtime),
         EffectId::StaticNoise => static_noise::render(runtime),
+        EffectId::PendulumWave => pendulum_wave::render(runtime),
+        EffectId::Ripples => ripples::render(runtime),
+        EffectId::LavaLamp => lava_lamp::render(runtime),
+        EffectId::Fireflies => fireflies::render(runtime),
+        EffectId::ReactionDiffusion => reaction_diffusion::render(runtime),
         EffectId::FinlandSnow => finland::render(runtime, 2),
         EffectId::FinlandBlueWhiteTwinkle => finland::render(runtime, 3),
         EffectId::FinlandSnowfall => finland::render(runtime, 5),
@@ -88,5 +98,40 @@ fn add_smooth_dot(frame: &mut [RGB8], wave: u16, color: RGB8) {
     frame[index] = add_rgb(frame[index], scale_rgb(color, 255 - next_weight));
     if let Some(next) = frame.get_mut(index + 1) {
         *next = add_rgb(*next, scale_rgb(color, next_weight));
+    }
+}
+
+/// Sine of a full-circle phase in Q16, from an odd quintic on the quarter wave with
+/// the true slope at zero and no slope jump at the peaks.
+fn sin_q16(phase: u16) -> i32 {
+    // pi/2 and the two terms that make the curve reach 1 with zero slope, in Q16.
+    const A: i64 = 102_944;
+    const B: i64 = -42_047;
+    const C: i64 = 4_639;
+    let signed = i64::from(phase as i16);
+    let folded = if signed > 16_384 {
+        32_768 - signed
+    } else if signed < -16_384 {
+        -32_768 - signed
+    } else {
+        signed
+    };
+    let x = folded << 2;
+    let x2 = (x * x) >> 16;
+    let x4 = (x2 * x2) >> 16;
+    ((x * (A + ((B * x2 + C * x4) >> 16))) >> 16) as i32
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sin_q16;
+
+    #[test]
+    fn sine_is_accurate() {
+        for phase in (0..=u16::MAX).step_by(97) {
+            let exact = (f64::from(phase) / 65_536.0 * core::f64::consts::TAU).sin();
+            let error = (f64::from(sin_q16(phase)) / 65_536.0 - exact).abs();
+            assert!(error < 0.001, "phase {phase}: error {error}");
+        }
     }
 }

@@ -4,7 +4,7 @@ Bare-metal Rust firmware ([Embassy](https://embassy.dev/) + esp-hal) that
 runs an addressable RGB LED strip from an ESP32-C6 and connects it to
 Home Assistant over MQTT.
 
-- 25 animated effects plus a solid color, with brightness and effect-speed control
+- 30 animated effects plus a solid color, with brightness and effect-speed control
 - Home Assistant MQTT discovery: a light entity plus an effect-speed slider
 - Optional push button: next effect, random color, power on/off
 - Wi-Fi and MQTT settings are written over USB and kept in flash, so one
@@ -127,7 +127,8 @@ The device has four entities:
 
 Effects: Rainbow, Color Wipe, Scan, Twinkle, Random Twinkle, Fireworks, Flicker,
 Breathe, Theater Chase, Confetti, Sinelon, Juggle, Fire 2012, Pacifica, Aurora,
-Plasma Flow, Static Noise.
+Plasma Flow, Static Noise, Pendulum Wave, Ripples, Lava Lamp, Fireflies,
+Reaction Diffusion.
 
 Finland effects use fixed palettes and are drawn for a vertical strip with the
 first LED at the bottom (`reverse_direction` in `hardware.json` flips a strip
