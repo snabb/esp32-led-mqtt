@@ -9,6 +9,7 @@ need an explicit target:
 ```sh
 cargo fmt --check
 cargo test --lib --target x86_64-unknown-linux-gnu
+cargo test --lib --target x86_64-unknown-linux-gnu --features coap
 cargo check --target riscv32imac-unknown-none-elf
 OTA_ALLOWED_HOSTS=updates.example.invalid OTA_ROLLBACK_BOOTLOADER=1 \
   cargo clippy --target riscv32imac-unknown-none-elf -- -D warnings
@@ -25,7 +26,7 @@ Run Clippy with the OTA variables set, or the OTA code paths go unchecked.
 |---|---|---|
 | `mqtt` | Yes | MQTT, Home Assistant discovery and OTA started over MQTT |
 | `mdns` | Yes | mDNS responder for `esp32-led-XXXXXX.local` |
-| `coap` | No, until `mai-coap` is published | [CoAP API](COAP.md) |
+| `coap` | No | [CoAP API](COAP.md) |
 | `heap-stats` | No | Allocator high-water counters, see [heap measurements](#heap-measurements) |
 
 Without a control plane the firmware still drives the LEDs, the button and USB

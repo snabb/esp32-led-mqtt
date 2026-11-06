@@ -2482,7 +2482,7 @@ dependencies = [
 [[package]]
 name = "mai-coap"
 version = "0.1.0"
-source = "git+https://github.com/snabb/mai-coap.git?rev=d83f3c4da63a67273a858fc96b7fd032d82676bf#d83f3c4da63a67273a858fc96b7fd032d82676bf"
+source = "git+https://github.com/snabb/mai-coap.git?rev=880dbbcd37e7a739f670e3cf6c6bc1df198bf632#880dbbcd37e7a739f670e3cf6c6bc1df198bf632"
 dependencies = [
  "aes",
  "async-io",

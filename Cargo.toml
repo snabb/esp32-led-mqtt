@@ -42,7 +42,7 @@ sequential-storage = "8.0.2"
 embedded-storage-async = "0.4.1"
 log = "0.4.35"
 critical-section = "1.2.0"
-mai-coap = { git = "https://github.com/snabb/mai-coap.git", rev = "d83f3c4da63a67273a858fc96b7fd032d82676bf", default-features = false, features = [
+mai-coap = { git = "https://github.com/snabb/mai-coap.git", rev = "880dbbcd37e7a739f670e3cf6c6bc1df198bf632", default-features = false, features = [
   "block1",
   "discovery",
   "edhoc",
@@ -81,7 +81,7 @@ embedded-storage = "0.3.2"
 embassy-embedded-hal = "0.6.0"
 mbedtls-rs = { git = "https://github.com/esp-rs/mbedtls-rs", rev = "07aeabb493ac5c71b06199414807cf49d899dec6", default-features = false, features = ["tls", "esp32c6", "hook-wall-clock", "ssl-out-content-len-2048"], optional = true }
 time = { version = "0.3.55", default-features = false, optional = true }
-mai-coap = { git = "https://github.com/snabb/mai-coap.git", rev = "d83f3c4da63a67273a858fc96b7fd032d82676bf", default-features = false, features = ["embassy-net-ipv4", "embassy-time"], optional = true }
+mai-coap = { git = "https://github.com/snabb/mai-coap.git", rev = "880dbbcd37e7a739f670e3cf6c6bc1df198bf632", default-features = false, features = ["embassy-net-ipv4", "embassy-time"], optional = true }
 esp-rtos    = { version = "0.4.0", features = ["embassy", "esp-radio", "esp32c6", "log-04"] }
 minimq      = { version = "0.13.5", default-features = false, optional = true }
 static_cell = "2.1.1"
@@ -94,7 +94,7 @@ sha2 = { version = "0.11.1", default-features = false }
 async-io = "2.6.0"
 mbedtls-rs = { git = "https://github.com/esp-rs/mbedtls-rs", rev = "07aeabb493ac5c71b06199414807cf49d899dec6" }
 critical-section = { version = "1.2.0", features = ["std"] }
-mai-coap = { git = "https://github.com/snabb/mai-coap.git", rev = "d83f3c4da63a67273a858fc96b7fd032d82676bf", default-features = false, features = ["client", "std"] }
+mai-coap = { git = "https://github.com/snabb/mai-coap.git", rev = "880dbbcd37e7a739f670e3cf6c6bc1df198bf632", default-features = false, features = ["client", "std"] }
 
 [build-dependencies]
 x509-cert = { version = "0.3.0", default-features = false, features = ["std"] }

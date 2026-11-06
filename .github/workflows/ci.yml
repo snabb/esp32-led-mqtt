@@ -26,6 +26,12 @@ jobs:
       - name: Run host tests
         run: cargo test --lib --target x86_64-unknown-linux-gnu
 
+      - name: Run host tests with CoAP
+        run: cargo test --lib --target x86_64-unknown-linux-gnu --features coap
+
+      - name: Check the CoAP host example
+        run: cargo check --example coap_host_server --target x86_64-unknown-linux-gnu --features coap
+
       - name: Check firmware
         run: cargo check --target riscv32imac-unknown-none-elf
 
@@ -34,6 +40,12 @@ jobs:
 
       - name: Check firmware with MQTT only
         run: cargo check --target riscv32imac-unknown-none-elf --no-default-features --features mqtt
+
+      - name: Check firmware with CoAP
+        run: cargo check --target riscv32imac-unknown-none-elf --features coap
+
+      - name: Check firmware with CoAP only
+        run: cargo check --target riscv32imac-unknown-none-elf --no-default-features --features coap
 
       - name: Run Clippy with OTA enabled
         env:
@@ -52,3 +64,15 @@ jobs:
           OTA_ALLOWED_HOSTS: updates.example.invalid
           OTA_ROLLBACK_BOOTLOADER: "1"
         run: cargo clippy --target riscv32imac-unknown-none-elf --no-default-features --features mqtt -- -D warnings
+
+      - name: Run Clippy with CoAP
+        env:
+          OTA_ALLOWED_HOSTS: updates.example.invalid
+          OTA_ROLLBACK_BOOTLOADER: "1"
+        run: cargo clippy --target riscv32imac-unknown-none-elf --features coap -- -D warnings
+
+      - name: Run Clippy with CoAP only
+        env:
+          OTA_ALLOWED_HOSTS: updates.example.invalid
+          OTA_ROLLBACK_BOOTLOADER: "1"
+        run: cargo clippy --target riscv32imac-unknown-none-elf --no-default-features --features coap -- -D warnings
