@@ -236,11 +236,14 @@ manifest last. Don't put an image that hasn't been tested on hardware behind a
 Tested on an M5Stack NanoC6 (4 MiB):
 
 - USB install and provisioning, with settings kept across reboots and OTA
+- Install after a full flash erase, with the first CoAP key given at first provisioning and
+  given later to a configured device
 - HTTPS OTA in both slot directions, trial confirmation
 - Retained discovery, state and OTA status, Home Assistant control
 - Button actions
 - The device rename on one unit, with `tools/migrate-device-name.py`
-- mDNS on its own subnet. From another VLAN it depends on the router's reflection
+- mDNS on its own subnet, with `_coap._udp` absent until the device has keys. From another
+  VLAN it depends on the router's reflection
 - CoAP over Wi-Fi: every resource, Observe, client keys, settings, logs and tailing
 - Firmware upload in both slot directions, interrupted, and with a wrong digest
 - A trial confirmed by CoAP during a broker outage
