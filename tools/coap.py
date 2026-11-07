@@ -1,7 +1,7 @@
 #!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.12"
-# dependencies = ["aiocoap[oscore]==0.4.17", "cbor2==6.2.0.post2"]
+# dependencies = ["aiocoap[oscore]==0.4.17", "cbor2==6.2.1"]
 # ///
 """Control a device over CoAP, authenticated with EDHOC and protected with OSCORE.
 
