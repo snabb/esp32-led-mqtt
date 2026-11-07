@@ -1,10 +1,12 @@
 use crate::{EffectId, EffectRuntime, scale_rgb};
+use color_waves::Variant;
 use smart_leds::RGB8;
 
 // To add an effect: create a file in this directory, add it below, dispatch it
 // in render(), then add its EffectId variant and EFFECTS entry in lib.rs.
 mod aurora;
 mod breathe;
+mod color_waves;
 mod color_wipe;
 mod confetti;
 mod crossing_waves;
@@ -52,6 +54,9 @@ pub(crate) fn render<const N: usize>(runtime: &mut EffectRuntime<N>) {
         EffectId::Fireflies => fireflies::render(runtime),
         EffectId::ReactionDiffusion => reaction_diffusion::render(runtime),
         EffectId::CrossingWaves => crossing_waves::render(runtime),
+        EffectId::ColorInterference => color_waves::render(runtime, Variant::ColorInterference),
+        EffectId::ChromaWaves => color_waves::render(runtime, Variant::ChromaWaves),
+        EffectId::RainbowBeats => color_waves::render(runtime, Variant::RainbowBeats),
         EffectId::FinlandSnow => finland::render(runtime, 2),
         EffectId::FinlandBlueWhiteTwinkle => finland::render(runtime, 3),
         EffectId::FinlandSnowfall => finland::render(runtime, 5),

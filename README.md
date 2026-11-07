@@ -4,7 +4,7 @@ Bare-metal Rust firmware ([Embassy](https://embassy.dev/) + esp-hal) that
 runs an addressable RGB LED strip from an ESP32-C6 and connects it to
 Home Assistant over MQTT.
 
-- 31 animated effects plus a solid color, with brightness, effect-speed and
+- 34 animated effects plus a solid color, with brightness, effect-speed and
   effect-variation control
 - Home Assistant MQTT discovery: a light entity plus effect-speed and
   effect-variation sliders
@@ -127,7 +127,7 @@ The device has five entities:
 - **Effect Variation** (number, 0–255, default 128): a knob whose meaning depends on
   the effect. It sets how often things appear in Twinkle, Random Twinkle, Fireworks,
   Fire 2012, Ripples and Static Noise, the shimmer in Aurora, the brightness floor in
-  Plasma Flow, and the rate of the falling wave in Crossing Waves. Other effects
+  Plasma Flow, and the rate of the second wave in the wave effects. Other effects
   ignore it.
 - **Chip Temperature** (diagnostic sensor, °C): die temperature, updated every minute.
 - **Firmware Version** (diagnostic sensor): the running build ID.
@@ -135,11 +135,17 @@ The device has five entities:
 Effects: Rainbow, Color Wipe, Scan, Twinkle, Random Twinkle, Fireworks, Flicker,
 Breathe, Theater Chase, Confetti, Sinelon, Juggle, Fire 2012, Pacifica, Aurora,
 Plasma Flow, Static Noise, Pendulum Wave, Ripples, Lava Lamp, Fireflies,
-Reaction Diffusion, Crossing Waves.
+Reaction Diffusion.
 
-Crossing Waves: a rising sine and a falling sawtooth, each in its own colour.
-Effect Variation sets the sawtooth's rate: 0 stops it, 128 matches the sine and
-255 nearly doubles it.
+Wave effects combine two or three waves. Effect Variation sets the rate of the
+last one: 0 stops it, 128 matches the first and 255 nearly doubles it.
+
+- Crossing Waves: a rising sine and a falling sawtooth, each in its own colour.
+- Color Interference: two waves in opposite directions bend the hue; the nodes
+  keep the base hue.
+- Chroma Waves: one wave per colour channel, scaled to full brightness.
+- Rainbow Beats: two rainbows in opposite directions, vivid where they agree and
+  pale where they oppose.
 
 Finland effects use fixed palettes and are drawn for a vertical strip with the
 first LED at the bottom (`reverse_direction` in `hardware.json` flips a strip
