@@ -65,6 +65,7 @@ HOST="--host esp32-led-XXXXXX.local"
 uv run tools/coap.py $HOST info
 uv run tools/coap.py $HOST light '{"state":"ON","effect":"Pacifica"}'
 uv run tools/coap.py $HOST speed 20
+uv run tools/coap.py $HOST variation 160
 uv run tools/coap.py $HOST logs -f
 uv run tools/coap.py $HOST push firmware.bin
 ```
@@ -78,6 +79,7 @@ files are found by host name otherwise.
 |---|---|---|---|
 | `/light` | GET, PUT | Yes | The [MQTT light command](MQTT.md#light-command), JSON. Fields left out keep their values |
 | `/speed` | GET, PUT | Yes | Integer `1`–`128` as text |
+| `/variation` | GET, PUT | Yes | Integer `0`–`255` as text |
 | `/temperature` | GET | Yes | °C as text, one decimal |
 | `/info` | GET | | JSON: name, build, hardware, uptime, free heap, IP address |
 | `/effects` | GET | | JSON list of effect names, block-wise |

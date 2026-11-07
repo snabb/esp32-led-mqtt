@@ -16,7 +16,7 @@ pub(super) fn render<const N: usize>(runtime: &mut EffectRuntime<N>, random_colo
     runtime.simulate(tick_ms, MAX_TICKS_PER_FRAME, |runtime, _| {
         for index in 0..N {
             runtime.effect_data[index] = runtime.effect_data[index].saturating_sub(DECAY);
-            if runtime.effect_data[index] == 0 && runtime.chance(runtime.params.intensity, 20) {
+            if runtime.effect_data[index] == 0 && runtime.chance(runtime.params.variation, 20) {
                 runtime.effect_data[index] = 255;
                 runtime.twinkle_color[index] = if random_color {
                     hsv_rainbow(runtime.rng.next_u8(), 220, 255)

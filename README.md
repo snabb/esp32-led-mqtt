@@ -4,8 +4,10 @@ Bare-metal Rust firmware ([Embassy](https://embassy.dev/) + esp-hal) that
 runs an addressable RGB LED strip from an ESP32-C6 and connects it to
 Home Assistant over MQTT.
 
-- 30 animated effects plus a solid color, with brightness and effect-speed control
-- Home Assistant MQTT discovery: a light entity plus an effect-speed slider
+- 31 animated effects plus a solid color, with brightness, effect-speed and
+  effect-variation control
+- Home Assistant MQTT discovery: a light entity plus effect-speed and
+  effect-variation sliders
 - Optional push button: next effect, random color, power on/off
 - Wi-Fi and MQTT settings are written over USB and kept in flash, so one
   firmware image (with no credentials in it) works for every device
@@ -117,18 +119,27 @@ the same port.
 
 ### Home Assistant
 
-The device has four entities:
+The device has five entities:
 
 - **LED Strip** (light): on/off, RGB color, brightness and effect. The `None`
   effect shows the solid color.
 - **Effect Speed** (number, 1–128, default 64 = normal): exponential, from 1/16× to 16×.
+- **Effect Variation** (number, 0–255, default 128): a knob whose meaning depends on
+  the effect. It sets how often things appear in Twinkle, Random Twinkle, Fireworks,
+  Fire 2012, Ripples and Static Noise, the shimmer in Aurora, the brightness floor in
+  Plasma Flow, and the rate of the falling wave in Crossing Waves. Other effects
+  ignore it.
 - **Chip Temperature** (diagnostic sensor, °C): die temperature, updated every minute.
 - **Firmware Version** (diagnostic sensor): the running build ID.
 
 Effects: Rainbow, Color Wipe, Scan, Twinkle, Random Twinkle, Fireworks, Flicker,
 Breathe, Theater Chase, Confetti, Sinelon, Juggle, Fire 2012, Pacifica, Aurora,
 Plasma Flow, Static Noise, Pendulum Wave, Ripples, Lava Lamp, Fireflies,
-Reaction Diffusion.
+Reaction Diffusion, Crossing Waves.
+
+Crossing Waves: a rising sine and a falling sawtooth, each in its own colour.
+Effect Variation sets the sawtooth's rate: 0 stops it, 128 matches the sine and
+255 nearly doubles it.
 
 Finland effects use fixed palettes and are drawn for a vertical strip with the
 first LED at the bottom (`reverse_direction` in `hardware.json` flips a strip
@@ -139,11 +150,11 @@ mounted the other way up):
 - Scenes: Finland Revontulet, Finland Kaamos.
 
 After a reboot the strip stays dark until the device reaches the MQTT broker,
-then restores the light state and effect speed it last published there. If the
-broker has none, or is never reached, the strip stays dark until it is turned on
-from Home Assistant or with the button. The button turns it on as `Rainbow` at
-brightness 8/255 and speed 64, and a button press before the broker is reached
-cancels the restore.
+then restores the light state, effect speed and effect variation it last
+published there. If the broker has none, or is never reached, the strip stays
+dark until it is turned on from Home Assistant or with the button. The button
+turns it on as `Rainbow` at brightness 8/255, speed 64 and variation 128, and a
+button press before the broker is reached cancels the restore.
 
 ### Button
 

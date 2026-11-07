@@ -13,10 +13,13 @@ pub struct DeviceIdentity {
     pub slug: heapless::String<16>,
     pub discovery_topic: heapless::String<80>,
     pub speed_discovery_topic: heapless::String<80>,
+    pub variation_discovery_topic: heapless::String<80>,
     pub command_topic: heapless::String<64>,
     pub state_topic: heapless::String<64>,
     pub speed_command_topic: heapless::String<80>,
     pub speed_state_topic: heapless::String<80>,
+    pub variation_command_topic: heapless::String<80>,
+    pub variation_state_topic: heapless::String<80>,
     pub temperature_discovery_topic: heapless::String<80>,
     pub temperature_state_topic: heapless::String<64>,
     pub firmware_discovery_topic: heapless::String<80>,
@@ -39,6 +42,11 @@ impl DeviceIdentity {
                 slug
             )
             .expect("device speed discovery topic capacity too small"),
+            variation_discovery_topic: heapless::format!(
+                "homeassistant/number/{}-effect-variation/config",
+                slug
+            )
+            .expect("device variation discovery topic capacity too small"),
             command_topic: heapless::format!("{}/light/set", slug)
                 .expect("device command topic capacity too small"),
             state_topic: heapless::format!("{}/light/state", slug)
@@ -47,6 +55,10 @@ impl DeviceIdentity {
                 .expect("device speed command topic capacity too small"),
             speed_state_topic: heapless::format!("{}/effect_speed/state", slug)
                 .expect("device speed state topic capacity too small"),
+            variation_command_topic: heapless::format!("{}/effect_variation/set", slug)
+                .expect("device variation command topic capacity too small"),
+            variation_state_topic: heapless::format!("{}/effect_variation/state", slug)
+                .expect("device variation state topic capacity too small"),
             availability_topic: heapless::format!("{}/status", slug)
                 .expect("device availability topic capacity too small"),
             temperature_discovery_topic: heapless::format!(

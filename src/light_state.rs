@@ -1,7 +1,9 @@
 use core::cell::{Cell, RefCell};
 
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, watch::Watch};
-use esp32_led_mqtt::{EffectId, EffectParams, NORMAL_EFFECT_SPEED, light_command::LightState};
+use esp32_led_mqtt::{
+    EffectId, EffectParams, NORMAL_EFFECT_SPEED, NORMAL_EFFECT_VARIATION, light_command::LightState,
+};
 use smart_leds::RGB8;
 
 static LIGHT_STATE: critical_section::Mutex<RefCell<LightState>> =
@@ -20,6 +22,7 @@ const DEFAULT_LIGHT_STATE: LightState = LightState {
     brightness: DEFAULT_BRIGHTNESS,
     effect: Some(EffectId::Rainbow),
     speed: NORMAL_EFFECT_SPEED,
+    variation: NORMAL_EFFECT_VARIATION,
     color: RGB8 {
         r: 255,
         g: 96,
@@ -65,6 +68,6 @@ pub(crate) fn effect_params(id: EffectId, state: LightState) -> EffectParams {
         id,
         primary: state.color,
         speed: state.speed,
-        intensity: 128,
+        variation: state.variation,
     }
 }

@@ -9,7 +9,7 @@ pub(super) fn render<const N: usize>(runtime: &mut EffectRuntime<N>) {
     let phase_a = runtime.phase(WAVE_A_MS);
     let phase_b = runtime.phase(WAVE_B_MS);
     let phase_c = runtime.phase(WAVE_C_MS);
-    let brightness_floor = 64_u8.saturating_add(runtime.params.intensity / 8);
+    let brightness_floor = 64_u8.saturating_add(runtime.params.variation / 8);
     let hue_offset = phase_b.wrapping_add(u16::from(runtime.params.primary.r / 2) << 8);
 
     for (index, pixel) in runtime.frame.iter_mut().enumerate() {

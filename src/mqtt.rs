@@ -6,7 +6,7 @@ use embassy_sync::watch::DynReceiver;
 use embassy_time::{Duration, Instant, Timer, with_deadline, with_timeout};
 use esp32_led_mqtt::{
     EFFECT_DISABLED_NAME, EFFECTS, MAX_EFFECT_SPEED,
-    light_command::{light_state_json, parse_light_command, parse_speed},
+    light_command::{light_state_json, parse_light_command, parse_speed, parse_variation},
 };
 use log::{info, warn};
 use mbedtls_rs::TlsGroup;
@@ -161,8 +161,10 @@ async fn run_connected<IO: minimq::Io>(
     publish(&mut session, &identity.availability_topic, "online").await?;
     publish_light_discovery(&mut session, identity).await?;
     publish_speed_discovery(&mut session, identity).await?;
+    publish_variation_discovery(&mut session, identity).await?;
     publish_light_state(&mut session, identity).await?;
     publish_speed_state(&mut session, identity).await?;
+    publish_variation_state(&mut session, identity).await?;
     publish_temperature_discovery(&mut session, identity).await?;
     publish_firmware_version(&mut session, identity).await?;
     // Marks the current reading as seen; a sampler not yet started publishes on its first change.
@@ -176,6 +178,7 @@ async fn run_connected<IO: minimq::Io>(
                 &[
                     TopicFilter::new(identity.command_topic.as_str()),
                     TopicFilter::new(identity.speed_command_topic.as_str()),
+                    TopicFilter::new(identity.variation_command_topic.as_str()),
                     TopicFilter::new(identity.ota_command_topic.as_str()),
                 ],
                 &[],
@@ -201,6 +204,7 @@ async fn run_connected<IO: minimq::Io>(
             Either4::Second(()) => {
                 publish_light_state(&mut session, identity).await?;
                 publish_speed_state(&mut session, identity).await?;
+                publish_variation_state(&mut session, identity).await?;
             }
             Either4::Third(status) => {
                 publish(&mut session, &identity.ota_status_topic, &status).await?
@@ -212,7 +216,7 @@ async fn run_connected<IO: minimq::Io>(
     }
 }
 
-/// Reads back the light and speed states this device last published (retained)
+/// Reads back the light, speed and variation states this device last published (retained)
 /// and restores them. Without them the light stays off.
 async fn restore_retained_state<IO: minimq::Io>(
     session: &mut Connection<'_, '_, IO>,
@@ -221,6 +225,7 @@ async fn restore_retained_state<IO: minimq::Io>(
     let topics = [
         identity.state_topic.as_str(),
         identity.speed_state_topic.as_str(),
+        identity.variation_state_topic.as_str(),
     ];
     session
         .subscribe(&topics.map(TopicFilter::new), &[])
@@ -229,8 +234,9 @@ async fn restore_retained_state<IO: minimq::Io>(
 
     let mut light = None;
     let mut speed = None;
+    let mut variation = None;
     let deadline = Instant::now() + RESTORE_WAIT;
-    while light.is_none() || speed.is_none() {
+    while light.is_none() || speed.is_none() || variation.is_none() {
         let Ok(message) = with_deadline(deadline, session.recv()).await else {
             break;
         };
@@ -239,6 +245,8 @@ async fn restore_retained_state<IO: minimq::Io>(
             light = parse_light_command(message.payload());
         } else if message.topic() == topics[1] {
             speed = parse_speed(message.payload());
+        } else if message.topic() == topics[2] {
+            variation = parse_variation(message.payload());
         } else {
             // A resumed session may deliver commands; they are newer than
             // the retained state and cancel the restore.
@@ -251,9 +259,10 @@ async fn restore_retained_state<IO: minimq::Io>(
         .await
         .map_err(mqtt_error)?;
     info!(
-        "Restoring retained light state: light {}, speed {}",
+        "Restoring retained light state: light {}, speed {}, variation {}",
         light.is_some(),
-        speed.is_some()
+        speed.is_some(),
+        variation.is_some()
     );
     light_state::restore(|state| {
         if let Some(light) = light {
@@ -261,6 +270,9 @@ async fn restore_retained_state<IO: minimq::Io>(
         }
         if let Some(speed) = speed {
             state.speed = speed;
+        }
+        if let Some(variation) = variation {
+            state.variation = variation;
         }
     });
     Ok(())
@@ -277,6 +289,8 @@ fn handle_message(identity: &DeviceIdentity, message: &InboundPublish<'_>) {
         }
     } else if topic == identity.speed_command_topic.as_str() {
         handle_speed_command(message.payload());
+    } else if topic == identity.variation_command_topic.as_str() {
+        handle_variation_command(message.payload());
     }
 }
 
@@ -340,6 +354,34 @@ async fn publish_speed_state<IO: minimq::Io>(
     let mut payload: heapless::String<3> = heapless::String::new();
     write!(payload, "{}", light_state::get().speed)?;
     publish(session, &identity.speed_state_topic, &payload).await
+}
+
+async fn publish_variation_discovery<IO: minimq::Io>(
+    session: &mut Connection<'_, '_, IO>,
+    identity: &DeviceIdentity,
+) -> Result<(), MqttRunError> {
+    let mut payload: heapless::String<700> = heapless::String::new();
+    write!(
+        payload,
+        r#"{{"name":"Effect Variation","unique_id":"{}-effect-variation","command_topic":"{}","state_topic":"{}","availability_topic":"{}","payload_available":"online","payload_not_available":"offline","min":0,"max":255,"step":1,"mode":"slider","device":{{"identifiers":["{}"],"name":"{}","manufacturer":"esp32-led-mqtt","model":"{}"}}}}"#,
+        identity.slug,
+        identity.variation_command_topic,
+        identity.variation_state_topic,
+        identity.availability_topic,
+        identity.slug,
+        DEVICE_NAME,
+        DEVICE_MODEL,
+    )?;
+    publish(session, &identity.variation_discovery_topic, &payload).await
+}
+
+async fn publish_variation_state<IO: minimq::Io>(
+    session: &mut Connection<'_, '_, IO>,
+    identity: &DeviceIdentity,
+) -> Result<(), MqttRunError> {
+    let mut payload: heapless::String<3> = heapless::String::new();
+    write!(payload, "{}", light_state::get().variation)?;
+    publish(session, &identity.variation_state_topic, &payload).await
 }
 
 async fn publish_temperature_discovery<IO: minimq::Io>(
@@ -416,6 +458,13 @@ fn handle_speed_command(payload: &[u8]) {
     match parse_speed(payload) {
         Some(speed) => light_state::update(|state| state.speed = speed),
         None => warn!("Ignoring invalid effect speed command"),
+    }
+}
+
+fn handle_variation_command(payload: &[u8]) {
+    match parse_variation(payload) {
+        Some(variation) => light_state::update(|state| state.variation = variation),
+        None => warn!("Ignoring invalid effect variation command"),
     }
 }
 

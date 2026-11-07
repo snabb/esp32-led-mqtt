@@ -23,7 +23,7 @@ fn tick<const N: usize>(runtime: &mut EffectRuntime<N>) {
         runtime.effect_data[index] = heat as u8;
     }
 
-    if runtime.chance(runtime.params.intensity, 45) {
+    if runtime.chance(runtime.params.variation, 45) {
         let spark_index = (runtime.rng.next_u8() as usize) % fire_spark_height(N);
         let spark = 160_u8.saturating_add(runtime.rng.next_u8() % 96);
         runtime.effect_data[spark_index] = runtime.effect_data[spark_index].saturating_add(spark);

@@ -110,6 +110,11 @@ impl Device for HostDevice {
         light.speed = speed;
         self.light.set(light);
     }
+    fn set_variation(&self, variation: u8) {
+        let mut light = self.light.get();
+        light.variation = variation;
+        self.light.set(light);
+    }
     fn temperature(&self) -> Option<f32> {
         Some(21.5)
     }
@@ -218,6 +223,7 @@ async fn notify_logs(handle: Handle<'_, 1152, 0>) {
         let _ = handle.notify(resource::LOGS);
         let _ = handle.notify(resource::LIGHT);
         let _ = handle.notify(resource::SPEED);
+        let _ = handle.notify(resource::VARIATION);
     }
 }
 
@@ -249,6 +255,7 @@ fn main() {
             brightness: 8,
             effect: Some(EffectId::Rainbow),
             speed: 64,
+            variation: 128,
             color: RGB8 { r: 1, g: 2, b: 3 },
         }),
         config,

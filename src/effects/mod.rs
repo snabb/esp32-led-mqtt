@@ -7,6 +7,7 @@ mod aurora;
 mod breathe;
 mod color_wipe;
 mod confetti;
+mod crossing_waves;
 mod finland;
 mod fire2012;
 mod fireflies;
@@ -50,6 +51,7 @@ pub(crate) fn render<const N: usize>(runtime: &mut EffectRuntime<N>) {
         EffectId::LavaLamp => lava_lamp::render(runtime),
         EffectId::Fireflies => fireflies::render(runtime),
         EffectId::ReactionDiffusion => reaction_diffusion::render(runtime),
+        EffectId::CrossingWaves => crossing_waves::render(runtime),
         EffectId::FinlandSnow => finland::render(runtime, 2),
         EffectId::FinlandBlueWhiteTwinkle => finland::render(runtime, 3),
         EffectId::FinlandSnowfall => finland::render(runtime, 5),

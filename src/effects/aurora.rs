@@ -10,7 +10,7 @@ pub(super) fn render<const N: usize>(runtime: &mut EffectRuntime<N>) {
     let phase_a = runtime.phase(CURTAIN_MS);
     let phase_b = runtime.phase(FOLD_MS);
     let phase_c = runtime.phase(SHIMMER_MS);
-    let shimmer_gain = runtime.params.intensity.max(32);
+    let shimmer_gain = runtime.params.variation.max(32);
 
     for (index, pixel) in runtime.frame.iter_mut().enumerate() {
         let pos = strip_position16::<N>(index);

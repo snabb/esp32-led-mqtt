@@ -288,6 +288,8 @@ async def run(args):
                 await device.put("/light", args.json.encode())
             case "speed":
                 await device.put("/speed", str(args.value).encode())
+            case "variation":
+                await device.put("/variation", str(args.value).encode())
             case "logs":
                 await show_logs(device, args.follow)
             case "config-get":
@@ -319,6 +321,7 @@ def main():
         commands.add_parser(name)
     commands.add_parser("light", help="send a light command").add_argument("json")
     commands.add_parser("speed").add_argument("value", type=int)
+    commands.add_parser("variation").add_argument("value", type=int)
     logs = commands.add_parser("logs", help="read recent logs")
     logs.add_argument(
         "-f", "--follow", action="store_true", help="keep printing new lines"

@@ -1,4 +1,4 @@
-//! Light and effect-speed commands, shared by every control plane.
+//! Light, effect-speed and effect-variation commands, shared by every control plane.
 
 use core::fmt::Write;
 
@@ -14,6 +14,7 @@ pub struct LightState {
     pub brightness: u8,
     pub effect: Option<EffectId>,
     pub speed: u8,
+    pub variation: u8,
     pub color: RGB8,
 }
 
@@ -95,6 +96,12 @@ pub fn parse_speed(payload: &[u8]) -> Option<u8> {
         .filter(|speed| (1..=MAX_EFFECT_SPEED).contains(speed))
 }
 
+pub fn parse_variation(payload: &[u8]) -> Option<u8> {
+    core::str::from_utf8(payload)
+        .ok()
+        .and_then(|text| text.trim().parse::<u8>().ok())
+}
+
 #[derive(Deserialize)]
 struct LightCommand<'a> {
     #[serde(default)]
@@ -124,6 +131,7 @@ mod tests {
             brightness: 8,
             effect: Some(EffectId::Rainbow),
             speed: 64,
+            variation: 128,
             color: RGB8 { r: 1, g: 2, b: 3 },
         }
     }
@@ -174,6 +182,14 @@ mod tests {
     }
 
     #[test]
+    fn variation_accepts_the_whole_byte_range() {
+        assert_eq!(parse_variation(b"0"), Some(0));
+        assert_eq!(parse_variation(b" 255\n"), Some(255));
+        assert_eq!(parse_variation(b"256"), None);
+        assert_eq!(parse_variation(b"-1"), None);
+    }
+
+    #[test]
     fn invalid_json_is_rejected() {
         assert!(parse_light_command(b"{").is_none());
     }
@@ -185,6 +201,7 @@ mod tests {
             brightness: 255,
             effect: Some(EffectId::FinlandBlueWhiteTwinkle),
             speed: 64,
+            variation: 128,
             color: RGB8 {
                 r: 255,
                 g: 255,

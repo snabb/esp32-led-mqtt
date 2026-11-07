@@ -10,7 +10,8 @@ sets `status` to `offline`. Everything the device publishes is retained. After
 a lost connection it retries every 5 seconds.
 
 On the first connection after boot, before publishing anything, the device
-subscribes to its own retained `light/state` and `effect_speed/state` for up to
+subscribes to its own retained `light/state`, `effect_speed/state` and
+`effect_variation/state` for up to
 2 seconds and restores them. It then unsubscribes and publishes as usual.
 
 ## Topics
@@ -22,12 +23,15 @@ subscribes to its own retained `light/state` and `effect_speed/state` for up to
 | `PREFIX/light/state` | device → | Light state (JSON) |
 | `PREFIX/effect_speed/set` | → device | Integer `1`–`128` as text |
 | `PREFIX/effect_speed/state` | device → | Integer `1`–`128` as text |
+| `PREFIX/effect_variation/set` | → device | Integer `0`–`255` as text |
+| `PREFIX/effect_variation/state` | device → | Integer `0`–`255` as text |
 | `PREFIX/temperature/state` | device → | Chip temperature in °C as text, one decimal. Published on connect and every 60 s. |
 | `PREFIX/firmware/state` | device → | Running build ID (as text), published on connect |
 | `PREFIX/ota/set` | → device | OTA command. Must not be retained. See [OTA updates](OTA.md#send-an-update). |
 | `PREFIX/ota/status` | device → | OTA status (JSON). See [status messages](OTA.md#status-messages). |
 | `homeassistant/light/PREFIX/config` | device → | Discovery for the light |
 | `homeassistant/number/PREFIX-effect-speed/config` | device → | Discovery for the speed slider |
+| `homeassistant/number/PREFIX-effect-variation/config` | device → | Discovery for the variation slider |
 | `homeassistant/sensor/PREFIX-temperature/config` | device → | Discovery for the chip temperature sensor |
 | `homeassistant/sensor/PREFIX-firmware/config` | device → | Discovery for the firmware version sensor |
 
@@ -66,10 +70,20 @@ speed never makes an effect jump.
 mosquitto_pub -h BROKER -t PREFIX/effect_speed/set -m 20
 ```
 
+## Effect variation
+
+A per-effect knob, `128` by default; see the
+[README](../README.md#home-assistant) for what it does in each effect. Where it
+sets a rate, changing it never makes an effect jump.
+
+```sh
+mosquitto_pub -h BROKER -t PREFIX/effect_variation/set -m 160
+```
+
 ## Home Assistant discovery
 
 On each connection the device publishes a JSON-schema light (`LED Strip`) and a
-number entity (`Effect Speed`, slider mode) and a diagnostic temperature sensor
+number entities (`Effect Speed` and `Effect Variation`, slider mode) and a diagnostic temperature sensor
 (`Chip Temperature`, die temperature) and a diagnostic `Firmware Version` sensor. All belong to a device named
 **ESP32 LED MQTT**. All entities use `PREFIX/status` for availability.
 

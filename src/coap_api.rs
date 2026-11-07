@@ -25,7 +25,10 @@ use serde::Serialize;
 use crate::{
     EFFECT_DISABLED_NAME, EFFECTS, coap_keys,
     device_config::{self, CoapCredential, DeviceConfig},
-    light_command::{LightState, LightUpdate, light_state_json, parse_light_command, parse_speed},
+    light_command::{
+        LightState, LightUpdate, light_state_json, parse_light_command, parse_speed,
+        parse_variation,
+    },
     log_buffer::LogRead,
     ota_protocol::{ImageTarget, ImageWriter, Manifest, SLOT_SIZE},
 };
@@ -33,7 +36,7 @@ use crate::{
 pub const PORT: u16 = 5683;
 /// Leaves room for a 1024-byte block plus OSCORE's option and tag.
 pub const DATAGRAM_BYTES: usize = 1152;
-const ROUTES: usize = 13;
+const ROUTES: usize = 14;
 const UPLOADS: usize = 2;
 const UPLOAD_BYTES: usize = 2048;
 /// Observations and uploads pin their contexts, and with every context pinned no new handshake
@@ -66,6 +69,7 @@ pub mod resource {
     pub const TEMPERATURE: u32 = 3;
     pub const FIRMWARE: u32 = 4;
     pub const LOGS: u32 = 5;
+    pub const VARIATION: u32 = 6;
 }
 
 pub type ApiShared = Shared<DATAGRAM_BYTES, COMMANDS>;
@@ -218,6 +222,7 @@ pub trait Device {
     fn light(&self) -> LightState;
     fn update_light(&self, update: &LightUpdate);
     fn set_speed(&self, speed: u8);
+    fn set_variation(&self, variation: u8);
     /// Latest die temperature in °C, if measured yet.
     fn temperature(&self) -> Option<f32>;
     /// Latest OTA status as JSON.
@@ -415,6 +420,7 @@ pub struct Info<'a> {
 enum Kind {
     Light,
     Speed,
+    Variation,
     Temperature,
     Info,
     Firmware,
@@ -493,6 +499,16 @@ impl<D: Device> Application<DATAGRAM_BYTES> for Handler<'_, D> {
                 let speed: String<3> = heapless::format!("{}", self.device.light().speed)
                     .map_err(|_| Code::INTERNAL_ERROR)?;
                 reply(response, ContentFormat::TEXT, speed.as_bytes())
+            }
+            Kind::Variation if write => {
+                let variation = parse_variation(request.payload()).ok_or(Code::BAD_REQUEST)?;
+                self.device.set_variation(variation);
+                changed(response)
+            }
+            Kind::Variation => {
+                let variation: String<3> = heapless::format!("{}", self.device.light().variation)
+                    .map_err(|_| Code::INTERNAL_ERROR)?;
+                reply(response, ContentFormat::TEXT, variation.as_bytes())
             }
             Kind::Temperature => {
                 let celsius = self.device.temperature().ok_or(Code::UNAVAILABLE)?;
@@ -699,6 +715,7 @@ const JSON: &[(&str, Option<&str>)] = &[("ct", Some("50"))];
 pub struct Resources<'d, D, A: UploadAccess> {
     light: Handler<'d, D>,
     speed: Handler<'d, D>,
+    variation: Handler<'d, D>,
     temperature: Handler<'d, D>,
     info: Handler<'d, D>,
     firmware: Handler<'d, D>,
@@ -728,6 +745,7 @@ impl<'d, D: Device, A: UploadAccess> Resources<'d, D, A> {
         Self {
             light: handler(Kind::Light),
             speed: handler(Kind::Speed),
+            variation: handler(Kind::Variation),
             temperature: handler(Kind::Temperature),
             info: handler(Kind::Info),
             firmware: handler(Kind::Firmware),
@@ -750,6 +768,7 @@ impl<'d, D: Device, A: UploadAccess> Resources<'d, D, A> {
     pub fn register<'r>(&'r mut self, router: &mut ApiRouter<'r>) -> Result<(), Error> {
         router.route("/light", READ_WRITE, &mut self.light)?;
         router.route("/speed", READ_WRITE, &mut self.speed)?;
+        router.route("/variation", READ_WRITE, &mut self.variation)?;
         router.route("/temperature", READ, &mut self.temperature)?;
         router.route("/info", READ, &mut self.info)?;
         router.route("/firmware", READ, &mut self.firmware)?;
@@ -776,6 +795,7 @@ impl<'d, D: Device, A: UploadAccess> Resources<'d, D, A> {
         };
         router.observable("/light", notify(resource::LIGHT))?;
         router.observable("/speed", notify(resource::SPEED))?;
+        router.observable("/variation", notify(resource::VARIATION))?;
         router.observable("/temperature", notify(resource::TEMPERATURE))?;
         router.observable("/firmware", notify(resource::FIRMWARE))?;
         // Each notification carries a whole block, so there's no need for more than this.
@@ -783,6 +803,7 @@ impl<'d, D: Device, A: UploadAccess> Resources<'d, D, A> {
 
         router.describe("/light", JSON_OBSERVABLE, false)?;
         router.describe("/speed", TEXT_OBSERVABLE, false)?;
+        router.describe("/variation", TEXT_OBSERVABLE, false)?;
         router.describe("/temperature", TEXT_OBSERVABLE, false)?;
         router.describe("/firmware", JSON_OBSERVABLE, false)?;
         router.describe("/logs", TEXT_OBSERVABLE, false)?;

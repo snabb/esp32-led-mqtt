@@ -143,7 +143,7 @@ the Google chain, and the Let's Encrypt chain tested uses ECDSA certificates.
 | `build.rs` | Turns `hardware.json` into `OUT_DIR/hardware.rs` (LED type, pins, timing). Sets the build ID, build time and app name. |
 | `src/main.rs` | Peripheral setup, Wi-Fi connection loop, LED render loop |
 | `src/light_state.rs` | Shared light state and change signal |
-| `src/light_command.rs` | Host-tested light and effect-speed command parsing |
+| `src/light_command.rs` | Host-tested light, effect-speed and effect-variation command parsing |
 | `src/coap_api.rs`, `src/coap_crypto.rs`, `src/coap_keys.rs`, `src/log_buffer.rs` | Host-tested CoAP resources, crypto provider, keys and log ring |
 | `src/coap.rs`, `src/log_sink.rs` | CoAP server task, logger with RAM copy |
 | `src/mqtt.rs` | MQTT session, Home Assistant discovery, command handling |

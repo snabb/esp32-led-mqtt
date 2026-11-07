@@ -132,6 +132,7 @@ impl FakeDevice {
                 brightness: 8,
                 effect: Some(EffectId::Rainbow),
                 speed: 64,
+                variation: 128,
                 color: RGB8 { r: 1, g: 2, b: 3 },
             }),
             authenticated: Cell::new(false),
@@ -166,6 +167,11 @@ impl Device for FakeDevice {
     fn set_speed(&self, speed: u8) {
         let mut light = self.light.get();
         light.speed = speed;
+        self.light.set(light);
+    }
+    fn set_variation(&self, variation: u8) {
+        let mut light = self.light.get();
+        light.variation = variation;
         self.light.set(light);
     }
     fn temperature(&self) -> Option<f32> {
@@ -370,6 +376,18 @@ fn resources_read_and_write_through_an_authenticated_session() {
         assert_eq!(get(client, server, "/speed").await.1, b"20");
         assert_eq!(put(client, server, "/speed", b"0").await, Code::BAD_REQUEST);
 
+        assert_eq!(get(client, server, "/variation").await.1, b"128");
+        assert_eq!(put(client, server, "/variation", b"0").await, Code::CHANGED);
+        assert_eq!(
+            put(client, server, "/variation", b"200").await,
+            Code::CHANGED
+        );
+        assert_eq!(get(client, server, "/variation").await.1, b"200");
+        assert_eq!(
+            put(client, server, "/variation", b"256").await,
+            Code::BAD_REQUEST
+        );
+
         assert_eq!(get(client, server, "/temperature").await.1, b"21.2");
         assert_eq!(
             get(client, server, "/firmware").await.1,
@@ -390,6 +408,7 @@ fn resources_read_and_write_through_an_authenticated_session() {
     assert!(device.authenticated.get());
     assert!(device.light().on);
     assert_eq!(device.light().speed, 20);
+    assert_eq!(device.light().variation, 200);
     assert_eq!(device.light().effect, Some(EffectId::Pacifica));
 }
 
@@ -1147,6 +1166,7 @@ fn without_authentication_only_discovery_answers() {
         for path in [
             "/light",
             "/speed",
+            "/variation",
             "/info",
             "/firmware",
             "/effects",
@@ -1171,6 +1191,7 @@ fn without_authentication_only_discovery_answers() {
         assert_eq!(reply.message().unwrap().code(), Code::UNAUTHORIZED);
         for (method, path) in [
             (Code::PUT, "/speed"),
+            (Code::PUT, "/variation"),
             (Code::PUT, "/config"),
             (Code::POST, "/coap/clients"),
             (Code::DELETE, "/coap/clients"),

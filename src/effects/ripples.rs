@@ -3,7 +3,7 @@ use crate::{EffectRuntime, blend_rgb};
 use smart_leds::RGB8;
 
 const TICK_MS: u64 = 17;
-/// Each slot of about 1 s holds at most one drop, taken by chance at the intensity.
+/// Each slot of about 1 s holds at most one drop, taken by chance at the variation.
 const SLOT_TICKS: u64 = 64;
 /// A drop grows over this many ticks so that it doesn't pop in at full height.
 const DROP_TICKS: u64 = 8;
@@ -63,7 +63,7 @@ fn tick<const N: usize>(runtime: &mut EffectRuntime<N>, time_us: u64) {
 
 fn add_drop<const N: usize>(runtime: &mut EffectRuntime<N>, tick_index: u64) {
     let hash = mix((tick_index / SLOT_TICKS) as u32);
-    if (hash & 0xff) >= u32::from(runtime.params.intensity) {
+    if (hash & 0xff) >= u32::from(runtime.params.variation) {
         return;
     }
     let start = u64::from(hash >> 8) % (SLOT_TICKS - DROP_TICKS);

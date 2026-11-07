@@ -9,7 +9,7 @@ pub(super) fn render<const N: usize>(runtime: &mut EffectRuntime<N>) {
 }
 
 fn tick<const N: usize>(runtime: &mut EffectRuntime<N>) {
-    let color_chance = 8 + runtime.params.intensity / 12;
+    let color_chance = 8 + runtime.params.variation / 12;
 
     for index in 0..N {
         let level = if runtime.rng.next_u8() & 1 == 0 {

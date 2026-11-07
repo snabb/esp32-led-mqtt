@@ -30,7 +30,7 @@ pub fn device_slug(mac_suffix: [u8; 3]) -> heapless::String<16> {
 /// Home Assistant name for "no effect", which shows the solid color.
 pub const EFFECT_DISABLED_NAME: &str = "None";
 /// Display names in `EffectId` declaration order; also the button cycle order.
-pub const EFFECTS: [(EffectId, &str); 30] = [
+pub const EFFECTS: [(EffectId, &str); 31] = [
     (EffectId::Rainbow, "Rainbow"),
     (EffectId::ColorWipe, "Color Wipe"),
     (EffectId::Scan, "Scan"),
@@ -53,6 +53,7 @@ pub const EFFECTS: [(EffectId, &str); 30] = [
     (EffectId::LavaLamp, "Lava Lamp"),
     (EffectId::Fireflies, "Fireflies"),
     (EffectId::ReactionDiffusion, "Reaction Diffusion"),
+    (EffectId::CrossingWaves, "Crossing Waves"),
     (EffectId::FinlandSnow, "Finland Snow"),
     (
         EffectId::FinlandBlueWhiteTwinkle,
@@ -90,6 +91,7 @@ pub enum EffectId {
     LavaLamp,
     Fireflies,
     ReactionDiffusion,
+    CrossingWaves,
     FinlandSnow,
     FinlandBlueWhiteTwinkle,
     FinlandSnowfall,
@@ -122,6 +124,8 @@ impl EffectId {
 /// Slider value for 1× effect speed.
 pub const NORMAL_EFFECT_SPEED: u8 = 64;
 pub const MAX_EFFECT_SPEED: u8 = 128;
+/// Middle of the variation slider; effects default to their designed look here.
+pub const NORMAL_EFFECT_VARIATION: u8 = 128;
 
 /// Longest wall-clock gap one frame may advance the effect clock by, so a stall
 /// (flash writes, OTA) doesn't make the animation jump.
@@ -133,7 +137,8 @@ pub struct EffectParams {
     pub primary: RGB8,
     /// Slider value `1..=MAX_EFFECT_SPEED`; see `speed_rate_q16`.
     pub speed: u8,
-    pub intensity: u8,
+    /// Per-effect knob `0..=255`, such as density or the rate of a second wave.
+    pub variation: u8,
 }
 
 impl Default for EffectParams {
@@ -146,7 +151,7 @@ impl Default for EffectParams {
                 b: 24,
             },
             speed: NORMAL_EFFECT_SPEED,
-            intensity: 128,
+            variation: NORMAL_EFFECT_VARIATION,
         }
     }
 }
@@ -182,6 +187,8 @@ pub struct EffectRuntime<const N: usize> {
     clock_us: u64,
     clock_frac_q16: u16,
     ticks_done: u64,
+    /// `clock_us` and `variation_clock_us()` when the variation last changed.
+    variation_anchor: (u64, u64),
     effect_data: [u8; N],
     twinkle_color: [RGB8; N],
     /// Two values per LED for simulations that need more precision than `effect_data`.
@@ -202,6 +209,7 @@ impl<const N: usize> EffectRuntime<N> {
             clock_us: 0,
             clock_frac_q16: 0,
             ticks_done: 0,
+            variation_anchor: (0, 0),
             effect_data: [0; N],
             twinkle_color: [RGB8 { r: 0, g: 0, b: 0 }; N],
             field: [[0; 2]; N],
@@ -212,6 +220,9 @@ impl<const N: usize> EffectRuntime<N> {
     pub fn set_effect(&mut self, params: EffectParams) {
         if self.params.id != params.id {
             self.reset();
+        }
+        if self.params.variation != params.variation {
+            self.variation_anchor = (self.clock_us, self.variation_clock_us());
         }
         self.params = params;
     }
@@ -227,6 +238,7 @@ impl<const N: usize> EffectRuntime<N> {
         self.clock_us = 0;
         self.clock_frac_q16 = 0;
         self.ticks_done = 0;
+        self.variation_anchor = (0, 0);
         self.effect_data.fill(0);
         self.twinkle_color.fill(RGB8 { r: 0, g: 0, b: 0 });
         self.field.fill([0; 2]);
@@ -249,6 +261,13 @@ impl<const N: usize> EffectRuntime<N> {
     /// Wrapping phase of a cycle lasting `period_ms` at 1×.
     fn phase(&self, period_ms: u32) -> u16 {
         phase_at(self.clock_us, period_ms)
+    }
+
+    /// A second effect clock running at `variation / 128` of `clock_us`. It is
+    /// re-anchored on each variation change, so moving the slider never jumps.
+    fn variation_clock_us(&self) -> u64 {
+        let (clock_us, variation_clock_us) = self.variation_anchor;
+        variation_clock_us + (self.clock_us - clock_us) * u64::from(self.params.variation) / 128
     }
 
     /// Index of the current step of a pattern that advances every `step_ms` at 1×.
@@ -504,7 +523,7 @@ mod tests {
         EffectRuntime::new(EffectParams {
             id,
             speed,
-            intensity: 255,
+            variation: 255,
             ..EffectParams::default()
         })
     }
@@ -578,6 +597,42 @@ mod tests {
             });
             assert_eq!(runtime.render(now_us), &before, "{name}");
         }
+    }
+
+    /// Only for effects that use the variation as a rate; as an amplitude it
+    /// may change the frame at once, like brightness.
+    #[test]
+    fn variation_rate_changes_do_not_jump() {
+        let mut runtime = runtime::<16>(EffectId::CrossingWaves, NORMAL_EFFECT_SPEED);
+        for frame in 0..300 {
+            runtime.render(frame * FRAME_US);
+        }
+        let now_us = 300 * FRAME_US;
+        let before = *runtime.render(now_us);
+        runtime.set_effect(EffectParams {
+            variation: 0,
+            ..runtime.params
+        });
+        assert_eq!(runtime.render(now_us), &before);
+    }
+
+    #[test]
+    fn variation_clock_keeps_its_time_across_changes() {
+        let mut runtime = runtime::<1>(EffectId::CrossingWaves, NORMAL_EFFECT_SPEED);
+        for frame in 0..=60 {
+            runtime.render(frame * FRAME_US);
+        }
+        let (clock_us, variation_us) = (runtime.clock_us, runtime.variation_clock_us());
+        assert_eq!(variation_us, clock_us * 255 / 128);
+        runtime.set_effect(EffectParams {
+            variation: 64,
+            ..runtime.params
+        });
+        for frame in 61..=120 {
+            runtime.render(frame * FRAME_US);
+        }
+        let elapsed_us = runtime.clock_us - clock_us;
+        assert_eq!(runtime.variation_clock_us(), variation_us + elapsed_us / 2);
     }
 
     #[test]

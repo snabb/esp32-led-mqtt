@@ -192,6 +192,9 @@ impl Device for HardwareDevice {
     fn set_speed(&self, speed: u8) {
         light_state::update(|state| state.speed = speed);
     }
+    fn set_variation(&self, variation: u8) {
+        light_state::update(|state| state.variation = variation);
+    }
     fn temperature(&self) -> Option<f32> {
         tsens::TEMPERATURE.try_get()
     }
@@ -261,7 +264,7 @@ async fn notify_changes(handle: mai_coap::endpoint::Handle<'_, DATAGRAM_BYTES, 0
         )
         .await
         {
-            Either4::First(()) => &[resource::LIGHT, resource::SPEED],
+            Either4::First(()) => &[resource::LIGHT, resource::SPEED, resource::VARIATION],
             Either4::Second(_) => &[resource::FIRMWARE],
             Either4::Third(_) => &[resource::TEMPERATURE],
             Either4::Fourth(()) => &[resource::LOGS],
