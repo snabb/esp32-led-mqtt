@@ -148,9 +148,9 @@ last one: 0 stops it, 128 matches the first and 255 nearly doubles it.
   pale where they oppose.
 
 Paint Mixing: drops of paint land and bleed into each other; opposite hues mix to
-a pale tint. Hue Sort: the rainbow is shuffled, then sorted back by swapping
-neighbours. Color Sand: grains fall from the top and pile up in coloured layers
-from the first LED, then the full pile slides out of the bottom.
+a pale tint. Color Sand: grains fall from the top and pile up in coloured layers
+from the first LED, then the full pile slides out of the bottom. Falling Colours:
+one colour after another falls from the top and covers the whole strip.
 
 Finland effects use fixed palettes and are drawn for a vertical strip with the
 first LED at the bottom (`reverse_direction` in `hardware.json` flips a strip

@@ -11,12 +11,12 @@ mod color_waves;
 mod color_wipe;
 mod confetti;
 mod crossing_waves;
+mod falling_colours;
 mod finland;
 mod fire2012;
 mod fireflies;
 mod fireworks;
 mod flicker;
-mod hue_sort;
 mod juggle;
 mod lava_lamp;
 mod pacifica;
@@ -61,8 +61,8 @@ pub(crate) fn render<const N: usize>(runtime: &mut EffectRuntime<N>) {
         EffectId::ChromaWaves => color_waves::render(runtime, Variant::ChromaWaves),
         EffectId::RainbowBeats => color_waves::render(runtime, Variant::RainbowBeats),
         EffectId::PaintMixing => paint_mixing::render(runtime),
-        EffectId::HueSort => hue_sort::render(runtime),
         EffectId::ColorSand => color_sand::render(runtime),
+        EffectId::FallingColours => falling_colours::render(runtime),
         EffectId::FinlandSnow => finland::render(runtime, 2),
         EffectId::FinlandBlueWhiteTwinkle => finland::render(runtime, 3),
         EffectId::FinlandSnowfall => finland::render(runtime, 5),
