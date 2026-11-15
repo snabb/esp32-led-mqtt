@@ -4,7 +4,7 @@ Bare-metal Rust firmware ([Embassy](https://embassy.dev/) + esp-hal) that
 runs an addressable RGB LED strip from an ESP32-C6 and connects it to
 Home Assistant over MQTT.
 
-- 40 animated effects plus a solid color, with brightness, effect-speed and
+- 41 animated effects plus a solid color, with brightness, effect-speed and
   effect-variation control
 - Home Assistant MQTT discovery: a light entity plus effect-speed and
   effect-variation sliders
@@ -128,7 +128,7 @@ The device has five entities:
   Fire 2012, Ripples and Static Noise, the shimmer in Aurora, the brightness floor in
   Plasma Flow, the rate of the second wave in the wave effects, how often drops
   fall in Paint Mixing, the red/white ratio in Candy Cane and the bulb width (1–10
-  LEDs) in Christmas Lights. Other effects ignore it.
+  LEDs) in Christmas Chase and Christmas Flow. Other effects ignore it.
 - **Chip Temperature** (diagnostic sensor, °C): die temperature, updated every minute.
 - **Firmware Version** (diagnostic sensor): the running build ID.
 
@@ -155,9 +155,10 @@ one colour after another falls from the top and covers the whole strip.
 Christmas effects, drawn for a vertical strip with the first LED at the bottom:
 
 - Candy Cane: red and white stripes rising up the strip.
-- Christmas Lights: a multicolour bulb string alternating between a chase and
-  colours flowing upward. Effect Variation sets how many consecutive LEDs, 1–10,
-  share a colour; each LED still moves on its own.
+- Christmas Chase: a multicolour bulb string with a brightness wave chasing up it.
+- Christmas Flow: a multicolour bulb string whose colours move up one LED a second.
+
+In both, Effect Variation sets how many consecutive LEDs, 1–10, share a colour.
 - Tinsel: a metallic strand with glints in drifting bands of light, changing
   smoothly between gold, red, green and blue every 10 seconds.
 

@@ -1,7 +1,7 @@
 //! Christmas effects, drawn for a vertical strip with LED 0 at the bottom.
 
 use super::{hash, sin_q16};
-use crate::{EffectRuntime, blend_rgb, phase_at, scale_rgb, step_crossfade};
+use crate::{EffectRuntime, blend_rgb, scale_rgb, step_crossfade};
 use smart_leds::RGB8;
 
 const fn rgb(r: u8, g: u8, b: u8) -> RGB8 {
@@ -43,56 +43,47 @@ const BULBS: [RGB8; 5] = [
     rgb(10, 40, 255),
     rgb(255, 165, 15),
 ];
-const PROGRAMME_MS: u32 = 12_000;
-const PROGRAMMES: u32 = 2;
-/// The last sixth of each programme crossfades into the next.
-const PROGRAMME_FADE_FROM: u32 = 65_536 * 5 / 6;
 /// Dimmest bulb level, so the string never shows dark gaps.
 const BULB_FLOOR: u32 = 90;
 
-/// A multicolour bulb string stepping through the programmes of an old light
-/// controller: a chase, then colours flowing upward. The variation sets how
-/// many consecutive LEDs, 1 to 10, share a colour; each LED still chases and
-/// flows on its own.
-pub(super) fn christmas_lights<const N: usize>(runtime: &mut EffectRuntime<N>) {
-    let clock_us = runtime.clock_us;
-    let width = 1 + usize::from(runtime.params.variation) * 10 / 256;
-    let programme = runtime.step(PROGRAMME_MS);
-    let progress = u32::from(runtime.phase(PROGRAMME_MS));
-    let fade = progress.saturating_sub(PROGRAMME_FADE_FROM) * 255 / (65_536 - PROGRAMME_FADE_FROM);
-    let fade = (fade * fade * (3 * 255 - 2 * fade) / (255 * 255)) as u8;
+/// Colour of LED `position` when runs of `width` LEDs share a bulb colour.
+fn bulb_color(position: usize, width: usize) -> RGB8 {
+    BULBS[position / width % BULBS.len()]
+}
+
+/// Consecutive LEDs sharing a colour, 1 to 10, from the variation.
+fn bulb_width<const N: usize>(runtime: &EffectRuntime<N>) -> usize {
+    1 + usize::from(runtime.params.variation) * 10 / 256
+}
+
+/// A multicolour bulb string with a brightness wave chasing up it, one crest
+/// every four LEDs.
+pub(super) fn christmas_chase<const N: usize>(runtime: &mut EffectRuntime<N>) {
+    let width = bulb_width(runtime);
+    let time = runtime.phase(1_200);
     for (index, pixel) in runtime.frame.iter_mut().enumerate() {
-        let current = bulb(programme % PROGRAMMES, index, width, clock_us);
-        *pixel = if fade == 0 {
-            current
-        } else {
-            let next = bulb((programme + 1) % PROGRAMMES, index, width, clock_us);
-            blend_rgb(current, next, fade)
-        };
+        let level = wave8(((index as u32 * 65_536 / 4) as u16).wrapping_sub(time));
+        let level = BULB_FLOOR + level * (255 - BULB_FLOOR) / 255;
+        *pixel = scale_rgb(bulb_color(index, width), level as u8);
     }
 }
 
-fn bulb(programme: u32, index: usize, width: usize, clock_us: u64) -> RGB8 {
-    // Colour of the run of `width` LEDs that `position` falls in.
-    let color = |position: usize| BULBS[position / width % BULBS.len()];
-    let level = match programme {
-        // A brightness wave chasing up the string, one crest every four LEDs.
-        0 => wave8(((index as u32 * 65_536 / 4) as u16).wrapping_sub(phase_at(clock_us, 1_200))),
-        // The colours move up one LED a second.
-        _ => {
-            let shift = (clock_us / 1_000_000) as usize;
-            let progress = (clock_us % 1_000_000 * 255 / 1_000_000) as u32;
-            let weight = progress * progress * (3 * 255 - 2 * progress) / (255 * 255);
-            // Offset by a whole colour cycle so the subtraction never wraps.
-            let cycle = width * BULBS.len();
-            let position = index + cycle - shift % cycle;
-            return blend_rgb(color(position), color(position + cycle - 1), weight as u8);
-        }
-    };
-    scale_rgb(
-        color(index),
-        (BULB_FLOOR + level * (255 - BULB_FLOOR) / 255) as u8,
-    )
+/// A multicolour bulb string whose colours move up one LED a second.
+pub(super) fn christmas_flow<const N: usize>(runtime: &mut EffectRuntime<N>) {
+    let width = bulb_width(runtime);
+    let shift = (runtime.clock_us / 1_000_000) as usize;
+    let progress = (runtime.clock_us % 1_000_000 * 255 / 1_000_000) as u32;
+    let weight = (progress * progress * (3 * 255 - 2 * progress) / (255 * 255)) as u8;
+    // Offset by a whole colour cycle so the subtraction never wraps.
+    let cycle = width * BULBS.len();
+    for (index, pixel) in runtime.frame.iter_mut().enumerate() {
+        let position = index + cycle - shift % cycle;
+        *pixel = blend_rgb(
+            bulb_color(position, width),
+            bulb_color(position + cycle - 1, width),
+            weight,
+        );
+    }
 }
 
 const TINSEL: [RGB8; 4] = [
