@@ -51,11 +51,7 @@ fn emit_build_identity() {
     println!("cargo:rerun-if-env-changed=OTA_BUILD_ID");
     println!("cargo:rerun-if-changed=src");
     println!("cargo:rerun-if-changed=Cargo.lock");
-    for name in [
-        "OTA_ALLOWED_HOSTS",
-        "OTA_ALLOW_HTTP",
-        "OTA_ROLLBACK_BOOTLOADER",
-    ] {
+    for name in ["OTA_ALLOW_HTTP", "OTA_ROLLBACK_BOOTLOADER"] {
         println!("cargo:rerun-if-env-changed={name}");
     }
     let git = |args: &[&str]| {

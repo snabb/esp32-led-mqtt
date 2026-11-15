@@ -145,6 +145,6 @@ This keeps the running settings the same as the stored ones.
 | Variable | Effect |
 |---|---|
 | `ESP_LOG` | Log filter built into the image, read by esp-println: `error`, `warn`, `info`, `debug` or `trace`, optionally followed by per-module filters. Default `info`, set in `.cargo/config.toml`. A value in the environment takes precedence. |
-| `OTA_ALLOWED_HOSTS`, `OTA_ROLLBACK_BOOTLOADER`, `OTA_ALLOW_HTTP`, `OTA_BUILD_ID`, `SOURCE_DATE_EPOCH` | OTA and build identity. See [OTA build variables](OTA.md#build-variables). |
+| `OTA_ROLLBACK_BOOTLOADER`, `OTA_ALLOW_HTTP`, `OTA_BUILD_ID`, `SOURCE_DATE_EPOCH` | OTA and build identity. See [OTA build variables](OTA.md#build-variables). |
 
 Changing any of these variables triggers a rebuild.

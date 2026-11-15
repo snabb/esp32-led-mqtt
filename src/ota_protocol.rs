@@ -12,7 +12,6 @@ pub const PROJECT: &str = env!("FIRMWARE_APP_PROJECT");
 pub enum Error {
     Command,
     Url,
-    Host,
     Size,
     Digest,
     Target,
@@ -111,11 +110,9 @@ impl Manifest {
 }
 
 impl Request {
-    /// Parse a complete command and enforce the configured host allowlist.
-    ///
-    /// `hosts` is a comma-separated list of exact DNS names or IPv4 addresses.
-    /// Plain HTTP is rejected unless explicitly enabled for local testing.
-    pub fn parse(payload: &[u8], hosts: &str, allow_http: bool) -> Result<Self, Error> {
+    /// Parse a complete command. Any host is accepted; plain HTTP is rejected
+    /// unless explicitly enabled for local testing.
+    pub fn parse(payload: &[u8], allow_http: bool) -> Result<Self, Error> {
         let (command, consumed): (Command<'_>, _) =
             serde_json_core::from_slice(payload).map_err(|_| Error::Command)?;
         if !payload[consumed..].iter().all(u8::is_ascii_whitespace) {
@@ -157,12 +154,6 @@ impl Request {
                 .all(|b| b.is_ascii_alphanumeric() || b".-".contains(&b))
         {
             return Err(Error::Url);
-        }
-        if !hosts
-            .split(',')
-            .any(|allowed| allowed.trim().eq_ignore_ascii_case(host))
-        {
-            return Err(Error::Host);
         }
         let mut request = Self {
             host: String::try_from(host).map_err(|_| Error::Url)?,
@@ -468,22 +459,18 @@ mod tests {
     }
     const DIGEST: &str = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
     fn parse(url: &str) -> Result<Request, Error> {
-        Request::parse(
-            command(url, 4096, DIGEST, "test-1").as_bytes(),
-            "fw.example",
-            false,
-        )
+        Request::parse(command(url, 4096, DIGEST, "test-1").as_bytes(), false)
     }
 
     #[test]
-    fn command_restricts_host_and_transport() {
+    fn command_restricts_url_and_transport() {
         let request = parse("https://fw.example:8443/fw.bin").unwrap();
         assert!(request.tls);
         assert_eq!(request.port, 8443);
         assert_eq!(request.path, "/fw.bin");
         assert_eq!(
-            parse("https://evil.example/fw.bin").unwrap_err(),
-            Error::Host
+            parse("https://other.example/fw.bin").unwrap().host,
+            "other.example"
         );
         assert_eq!(parse("http://fw.example/fw.bin").unwrap_err(), Error::Url);
         for url in [
@@ -508,7 +495,7 @@ mod tests {
             good.replace("test-1", ""),
             good.replace("\"size\":4096", "\"size\":4096,\"size\":4096"),
         ] {
-            assert!(Request::parse(bad.as_bytes(), "fw.example", false).is_err());
+            assert!(Request::parse(bad.as_bytes(), false).is_err());
         }
     }
 

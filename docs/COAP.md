@@ -11,7 +11,7 @@ Every resource needs OSCORE (RFC 8613) keyed by EDHOC (RFC 9528), except discove
 requests get 4.01.
 
 A trusted client has full control of the device, including installing any firmware and
-reading its logs. Images aren't signed, and `OTA_ALLOWED_HOSTS` doesn't apply to uploads.
+reading its logs. Images aren't signed.
 Protect client keys accordingly.
 
 ### Keys
@@ -135,7 +135,7 @@ A `next` lower than the client's own offset means the device restarted.
 4. Any authenticated request counts as the control plane's part of the trial, so `push` polls
    `/firmware` until the trial has passed, or reports that it rolled back.
 
-It needs an image built with `OTA_ROLLBACK_BOOTLOADER=1`, but not `OTA_ALLOWED_HOSTS`.
+It needs an image built with `OTA_ROLLBACK_BOOTLOADER=1`.
 Starting an upload aborts one already in progress. One that stalls for 30 seconds is
 abandoned, and the running image is never touched.
 

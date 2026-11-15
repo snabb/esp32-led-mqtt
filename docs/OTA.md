@@ -22,7 +22,7 @@ OTA needs all of these:
 1. The rollback bootloader from `tools/build-ota-bootloader.sh`, flashed as in
    the [README quick start](../README.md#3-flash-over-usb). espflash's default
    bootloader doesn't do rollback.
-2. A build with `OTA_ROLLBACK_BOOTLOADER=1` and a non-empty `OTA_ALLOWED_HOSTS`.
+2. A build with `OTA_ROLLBACK_BOOTLOADER=1`.
 3. Device settings, so that the device has Wi-Fi and MQTT.
 
 If anything is missing, the device runs normally and reports OTA as `disabled`.
@@ -33,7 +33,6 @@ them can only be replaced over USB.
 
 | Variable | Meaning |
 |---|---|
-| `OTA_ALLOWED_HOSTS` | Comma-separated list of exact host names or IPv4 addresses (case-insensitive) that the device may download from. It is compiled in, so a new host only works once an image that lists it is running. |
 | `OTA_ROLLBACK_BOOTLOADER=1` | You confirm that the rollback bootloader is installed. The firmware can't detect this itself. |
 | `OTA_ALLOW_HTTP=1` | Also accept `http://` URLs. For local testing only. |
 | `OTA_BUILD_ID` | Image version, 1–31 characters from letters, digits, `.`, `_` and `-`. The default is the UTC build time plus the Git commit, such as `20261102T194500Z-ad6073d4`, with `-dirty` added if there are uncommitted changes. |
@@ -48,8 +47,7 @@ appears in every OTA status message.
    and with a new build ID:
 
    ```sh
-   OTA_BUILD_ID=v2 OTA_ALLOWED_HOSTS=firmware.example.com \
-     OTA_ROLLBACK_BOOTLOADER=1 cargo build --locked --release
+   OTA_BUILD_ID=v2 OTA_ROLLBACK_BOOTLOADER=1 cargo build --locked --release
    ```
 
 2. Convert the ELF to an application binary. Don't use `--merge`:
@@ -59,7 +57,7 @@ appears in every OTA status message.
      target/riscv32imac-unknown-none-elf/release/esp32-led-mqtt firmware.bin
    ```
 
-3. Upload `firmware.bin` to an allowed host. See
+3. Upload `firmware.bin` to an HTTPS host. See
    [hosting requirements](#hosting-requirements).
 
 4. Write the command. `build` must equal the image's build ID. `crc32` is the
@@ -120,7 +118,7 @@ transitions can be skipped:
 
 | Detail | Cause and fix |
 |---|---|
-| `invalid_command` | Malformed JSON, missing or extra fields, a host not in `OTA_ALLOWED_HOSTS`, an `http://` URL without `OTA_ALLOW_HTTP`, `target` other than `esp32c6`, a `size` outside 288 bytes–1984 KiB, or a malformed digest |
+| `invalid_command` | Malformed JSON, missing or extra fields, an `http://` URL without `OTA_ALLOW_HTTP`, `target` other than `esp32c6`, a `size` outside 288 bytes–1984 KiB, or a malformed digest |
 | `already_running` | `build` is the same as the running build ID |
 | `unavailable` | OTA is disabled in the running image, or a trial boot hasn't been confirmed yet |
 | `busy` | An update or USB settings write is already running |
@@ -197,16 +195,15 @@ chain or a host name mismatch, before it sends the HTTP request.
 OTA is designed for a trusted network:
 
 - The MQTT command is the authorization. Anyone who can publish to
-  `PREFIX/ota/set` can install any image from an allowed host that matches the
-  hardware profile. Restrict that topic with broker ACLs.
+  `PREFIX/ota/set` can install any image from any HTTPS host whose certificate
+  the bundled roots accept, if it matches the hardware profile. Restrict that topic with broker ACLs.
 - Images are checked against the SHA-256, CRC32 and size in the command and
   against the app descriptor. They aren't signed.
 - There is no anti-rollback, so an older build can be installed.
 - Flash encryption and secure boot aren't used. Anyone with physical access can
   read the settings, credentials included.
 
-With the `coap` feature, a trusted CoAP client can upload any image, without
-`OTA_ALLOWED_HOSTS` applying. See [CoAP security](COAP.md#security).
+With the `coap` feature, a trusted CoAP client can upload any image. See [CoAP security](COAP.md#security).
 
 ## Flash layout
 

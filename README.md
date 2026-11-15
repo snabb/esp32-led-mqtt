@@ -64,14 +64,13 @@ tools/build-ota-bootloader.sh
 ### 2. Build the firmware
 
 Edit `hardware.json` first if your hardware differs from the defaults. To make
-OTA updates possible, list the hosts that will serve firmware images:
+OTA updates possible:
 
 ```sh
-OTA_ALLOWED_HOSTS=firmware.example.com OTA_ROLLBACK_BOOTLOADER=1 \
-  cargo build --locked --release
+OTA_ROLLBACK_BOOTLOADER=1 cargo build --locked --release
 ```
 
-Leaving out both variables (`cargo build --locked --release`) builds an image
+Leaving out the variable (`cargo build --locked --release`) builds an image
 that can't be updated over OTA. You can turn OTA on later by reinstalling over
 USB. See [OTA updates](docs/OTA.md#enabling-ota) for details.
 

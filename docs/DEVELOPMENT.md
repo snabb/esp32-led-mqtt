@@ -11,8 +11,7 @@ cargo fmt --check
 cargo test --lib --target x86_64-unknown-linux-gnu
 cargo test --lib --target x86_64-unknown-linux-gnu --no-default-features --features mdns,mqtt
 cargo check --target riscv32imac-unknown-none-elf
-OTA_ALLOWED_HOSTS=updates.example.invalid OTA_ROLLBACK_BOOTLOADER=1 \
-  cargo clippy --target riscv32imac-unknown-none-elf -- -D warnings
+OTA_ROLLBACK_BOOTLOADER=1 cargo clippy --target riscv32imac-unknown-none-elf -- -D warnings
 ```
 
 CI repeats the firmware checks with `--no-default-features`, and with that plus each of

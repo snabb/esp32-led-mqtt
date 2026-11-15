@@ -41,12 +41,8 @@ pub fn submit(payload: &[u8], retained: bool) -> Result<(), &'static str> {
         if !AVAILABLE.load(Ordering::Acquire) {
             return Err("unavailable");
         }
-        let request = Request::parse(
-            payload,
-            option_env!("OTA_ALLOWED_HOSTS").unwrap_or(""),
-            option_env!("OTA_ALLOW_HTTP") == Some("1"),
-        )
-        .map_err(|_| "invalid_command")?;
+        let request = Request::parse(payload, option_env!("OTA_ALLOW_HTTP") == Some("1"))
+            .map_err(|_| "invalid_command")?;
         if request.manifest.build == env!("FIRMWARE_BUILD_ID") {
             return Err("already_running");
         }
@@ -69,7 +65,7 @@ pub fn rollback_enabled() -> bool {
 
 /// Whether this image was built with the settings required to download updates.
 pub fn pull_enabled() -> bool {
-    rollback_enabled() && !option_env!("OTA_ALLOWED_HOSTS").unwrap_or("").is_empty()
+    rollback_enabled()
 }
 
 /// Enables downloads when configured. Call only after `confirm_boot` succeeds.
