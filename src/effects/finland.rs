@@ -4,7 +4,7 @@ pub(super) mod kaamos;
 pub(super) mod revontulet;
 pub(super) mod snowflakes;
 
-use super::{MAX_TICKS_PER_FRAME, strip_position16};
+use super::{MAX_TICKS_PER_FRAME, hash, strip_position16};
 use crate::{EffectRuntime, blend_rgb, ease_wave16, half_sin8, half_sin16, scale_rgb};
 use smart_leds::RGB8;
 
@@ -18,16 +18,6 @@ const WHITE: RGB8 = RGB8 {
     g: 255,
     b: 255,
 };
-
-/// Murmur3 finalizer: stateless randomness keeps effects pure functions of the clock.
-fn hash(value: u32) -> u32 {
-    let mut h = value;
-    h ^= h >> 16;
-    h = h.wrapping_mul(0x85eb_ca6b);
-    h ^= h >> 13;
-    h = h.wrapping_mul(0xc2b2_ae35);
-    h ^ (h >> 16)
-}
 
 /// Smooth 1D noise in `0..=255`; one random value per 256 units of `position`.
 fn value_noise(seed: u32, position: u32) -> u8 {

@@ -4,7 +4,7 @@ Bare-metal Rust firmware ([Embassy](https://embassy.dev/) + esp-hal) that
 runs an addressable RGB LED strip from an ESP32-C6 and connects it to
 Home Assistant over MQTT.
 
-- 34 animated effects plus a solid color, with brightness, effect-speed and
+- 37 animated effects plus a solid color, with brightness, effect-speed and
   effect-variation control
 - Home Assistant MQTT discovery: a light entity plus effect-speed and
   effect-variation sliders
@@ -127,8 +127,8 @@ The device has five entities:
 - **Effect Variation** (number, 0–255, default 128): a knob whose meaning depends on
   the effect. It sets how often things appear in Twinkle, Random Twinkle, Fireworks,
   Fire 2012, Ripples and Static Noise, the shimmer in Aurora, the brightness floor in
-  Plasma Flow, and the rate of the second wave in the wave effects. Other effects
-  ignore it.
+  Plasma Flow, the rate of the second wave in the wave effects, and how often drops
+  fall in Paint Mixing. Other effects ignore it.
 - **Chip Temperature** (diagnostic sensor, °C): die temperature, updated every minute.
 - **Firmware Version** (diagnostic sensor): the running build ID.
 
@@ -146,6 +146,11 @@ last one: 0 stops it, 128 matches the first and 255 nearly doubles it.
 - Chroma Waves: one wave per colour channel, scaled to full brightness.
 - Rainbow Beats: two rainbows in opposite directions, vivid where they agree and
   pale where they oppose.
+
+Paint Mixing: drops of paint land and bleed into each other; opposite hues mix to
+a pale tint. Hue Sort: the rainbow is shuffled, then sorted back by swapping
+neighbours. Color Sand: grains fall from the top and pile up in coloured layers
+from the first LED, then the full pile slides out of the bottom.
 
 Finland effects use fixed palettes and are drawn for a vertical strip with the
 first LED at the bottom (`reverse_direction` in `hardware.json` flips a strip

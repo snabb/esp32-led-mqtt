@@ -6,6 +6,7 @@ use smart_leds::RGB8;
 // in render(), then add its EffectId variant and EFFECTS entry in lib.rs.
 mod aurora;
 mod breathe;
+mod color_sand;
 mod color_waves;
 mod color_wipe;
 mod confetti;
@@ -15,9 +16,11 @@ mod fire2012;
 mod fireflies;
 mod fireworks;
 mod flicker;
+mod hue_sort;
 mod juggle;
 mod lava_lamp;
 mod pacifica;
+mod paint_mixing;
 mod pendulum_wave;
 mod plasma_flow;
 mod rainbow;
@@ -57,6 +60,9 @@ pub(crate) fn render<const N: usize>(runtime: &mut EffectRuntime<N>) {
         EffectId::ColorInterference => color_waves::render(runtime, Variant::ColorInterference),
         EffectId::ChromaWaves => color_waves::render(runtime, Variant::ChromaWaves),
         EffectId::RainbowBeats => color_waves::render(runtime, Variant::RainbowBeats),
+        EffectId::PaintMixing => paint_mixing::render(runtime),
+        EffectId::HueSort => hue_sort::render(runtime),
+        EffectId::ColorSand => color_sand::render(runtime),
         EffectId::FinlandSnow => finland::render(runtime, 2),
         EffectId::FinlandBlueWhiteTwinkle => finland::render(runtime, 3),
         EffectId::FinlandSnowfall => finland::render(runtime, 5),
@@ -66,6 +72,16 @@ pub(crate) fn render<const N: usize>(runtime: &mut EffectRuntime<N>) {
         EffectId::FinlandRevontulet => finland::revontulet::render(runtime),
         EffectId::FinlandKaamos => finland::kaamos::render(runtime),
     }
+}
+
+/// Murmur3 finalizer: stateless randomness keeps effects pure functions of the clock.
+fn hash(value: u32) -> u32 {
+    let mut h = value;
+    h ^= h >> 16;
+    h = h.wrapping_mul(0x85eb_ca6b);
+    h ^= h >> 13;
+    h = h.wrapping_mul(0xc2b2_ae35);
+    h ^ (h >> 16)
 }
 
 /// Caps the simulation work of one frame after a stall or at high speed.
