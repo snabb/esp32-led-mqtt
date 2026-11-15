@@ -157,7 +157,7 @@ Christmas effects, drawn for a vertical strip with the first LED at the bottom:
 - Candy Cane: red and white stripes rising up the strip.
 - Christmas Lights: a multicolour bulb string alternating between a chase and
   colours flowing upward. Effect Variation sets how many consecutive LEDs, 1–10,
-  share a colour.
+  share a colour; each LED still moves on its own.
 - Tinsel: a metallic strand with glints in drifting bands of light, changing
   smoothly between gold, red, green and blue every 10 seconds.
 
