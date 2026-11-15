@@ -4,7 +4,7 @@ Bare-metal Rust firmware ([Embassy](https://embassy.dev/) + esp-hal) that
 runs an addressable RGB LED strip from an ESP32-C6 and connects it to
 Home Assistant over MQTT.
 
-- 41 animated effects plus a solid color, with brightness, effect-speed and
+- 42 animated effects plus a solid color, with brightness, effect-speed and
   effect-variation control
 - Home Assistant MQTT discovery: a light entity plus effect-speed and
   effect-variation sliders
@@ -127,15 +127,16 @@ The device has five entities:
   the effect. It sets how often things appear in Twinkle, Random Twinkle, Fireworks,
   Fire 2012, Ripples and Static Noise, the shimmer in Aurora, the brightness floor in
   Plasma Flow, the rate of the second wave in the wave effects, how often drops
-  fall in Paint Mixing, the red/white ratio in Candy Cane and the bulb width (1–10
-  LEDs) in Christmas Chase and Christmas Flow. Other effects ignore it.
+  fall in Paint Mixing, the red/white ratio in Candy Cane, the bulb width (1–10
+  LEDs) in Christmas Chase and Christmas Flow, and the tail length in Sinelon and
+  Colour Sinelon (doubling every 32 steps up). Other effects ignore it.
 - **Chip Temperature** (diagnostic sensor, °C): die temperature, updated every minute.
 - **Firmware Version** (diagnostic sensor): the running build ID.
 
 Effects: Rainbow, Color Wipe, Scan, Twinkle, Random Twinkle, Fireworks, Flicker,
-Breathe, Theater Chase, Confetti, Sinelon, Juggle, Fire 2012, Pacifica, Aurora,
-Plasma Flow, Static Noise, Pendulum Wave, Ripples, Lava Lamp, Fireflies,
-Reaction Diffusion.
+Breathe, Theater Chase, Confetti, Sinelon, Colour Sinelon (a new colour at each
+turn), Juggle, Fire 2012, Pacifica, Aurora, Plasma Flow, Static Noise, Pendulum
+Wave, Ripples, Lava Lamp, Fireflies, Reaction Diffusion.
 
 Wave effects combine two or three waves. Effect Variation sets the rate of the
 last one: 0 stops it, 128 matches the first and 255 nearly doubles it.
