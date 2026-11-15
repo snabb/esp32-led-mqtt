@@ -61,8 +61,8 @@ pub(super) fn render<const N: usize>(runtime: &mut EffectRuntime<N>, variant: Va
             }
         }
     };
-    for index in 0..N {
-        runtime.frame[index] = pixel(index);
+    for (index, out) in runtime.frame.iter_mut().enumerate() {
+        *out = pixel(index);
     }
 }
 
