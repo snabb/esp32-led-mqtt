@@ -127,8 +127,8 @@ The device has five entities:
   the effect. It sets how often things appear in Twinkle, Random Twinkle, Fireworks,
   Fire 2012, Ripples and Static Noise, the shimmer in Aurora, the brightness floor in
   Plasma Flow, the rate of the second wave in the wave effects, how often drops
-  fall in Paint Mixing, the red/white ratio in Candy Cane and the colour of Tinsel.
-  Other effects ignore it.
+  fall in Paint Mixing and the red/white ratio in Candy Cane. Other effects
+  ignore it.
 - **Chip Temperature** (diagnostic sensor, °C): die temperature, updated every minute.
 - **Firmware Version** (diagnostic sensor): the running build ID.
 
@@ -155,10 +155,10 @@ one colour after another falls from the top and covers the whole strip.
 Christmas effects, drawn for a vertical strip with the first LED at the bottom:
 
 - Candy Cane: red and white stripes rising up the strip.
-- Christmas Lights: a multicolour bulb string stepping through light-controller
-  programmes: steady, slow glow, chase, dips and colours flowing upward.
-- Tinsel: a metallic strand with glints in drifting bands of light; blue, silver,
-  gold, red or green.
+- Christmas Lights: a multicolour bulb string alternating between a chase and
+  colours flowing upward.
+- Tinsel: a metallic strand with glints in drifting bands of light, changing
+  smoothly between gold, red, green and blue every 10 seconds.
 
 Finland effects use fixed palettes and are drawn for a vertical strip with the
 first LED at the bottom (`reverse_direction` in `hardware.json` flips a strip

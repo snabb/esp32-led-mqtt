@@ -1,7 +1,7 @@
 //! Christmas effects, drawn for a vertical strip with LED 0 at the bottom.
 
 use super::{hash, sin_q16};
-use crate::{EffectRuntime, blend_rgb, half_sin16, phase_at, scale_rgb};
+use crate::{EffectRuntime, blend_rgb, phase_at, scale_rgb, step_crossfade};
 use smart_leds::RGB8;
 
 const fn rgb(r: u8, g: u8, b: u8) -> RGB8 {
@@ -44,14 +44,14 @@ const BULBS: [RGB8; 5] = [
     rgb(255, 165, 15),
 ];
 const PROGRAMME_MS: u32 = 12_000;
-const PROGRAMMES: u32 = 5;
+const PROGRAMMES: u32 = 2;
 /// The last sixth of each programme crossfades into the next.
 const PROGRAMME_FADE_FROM: u32 = 65_536 * 5 / 6;
 /// Dimmest bulb level, so the string never shows dark gaps.
 const BULB_FLOOR: u32 = 90;
 
 /// A multicolour bulb string stepping through the programmes of an old light
-/// controller: steady, slow glow, chase, dips and colours flowing upward.
+/// controller: a chase, then colours flowing upward.
 pub(super) fn christmas_lights<const N: usize>(runtime: &mut EffectRuntime<N>) {
     let clock_us = runtime.clock_us;
     let programme = runtime.step(PROGRAMME_MS);
@@ -72,32 +72,8 @@ pub(super) fn christmas_lights<const N: usize>(runtime: &mut EffectRuntime<N>) {
 fn bulb(programme: u32, index: usize, clock_us: u64) -> RGB8 {
     let color = BULBS[index % BULBS.len()];
     let level = match programme {
-        // Nearly steady, with a faint glow so a lit string looks alive.
-        0 => {
-            215 + wave8(phase_at(clock_us, 6_000).wrapping_add(hash(index as u32) as u16)) * 40
-                / 255
-        }
-        // Alternate bulbs glow up and down in turn.
-        1 => wave8(
-            phase_at(clock_us, 4_000).wrapping_add(if index.is_multiple_of(2) {
-                0
-            } else {
-                0x8000
-            }),
-        ),
         // A brightness wave chasing up the string, one crest every four bulbs.
-        2 => wave8(((index as u32 * 65_536 / 4) as u16).wrapping_sub(phase_at(clock_us, 1_200))),
-        // Each bulb dips briefly now and then, on its own rhythm.
-        3 => {
-            let random = hash(index as u32 ^ 0xc0de);
-            let period_ms = 3_000 + random % 4_000;
-            let phase = phase_at(clock_us + u64::from(random >> 12), period_ms);
-            if phase < 0x4000 {
-                255 - u32::from(half_sin16(phase << 2))
-            } else {
-                255
-            }
-        }
+        0 => wave8(((index as u32 * 65_536 / 4) as u16).wrapping_sub(phase_at(clock_us, 1_200))),
         // The colours move up one bulb a second.
         _ => {
             let shift = (clock_us / 1_000_000) as usize;
@@ -112,28 +88,27 @@ fn bulb(programme: u32, index: usize, clock_us: u64) -> RGB8 {
     scale_rgb(color, (BULB_FLOOR + level * (255 - BULB_FLOOR) / 255) as u8)
 }
 
-/// Tinsel colours the variation slides between.
-const TINSEL: [RGB8; 5] = [
-    rgb(20, 60, 255),
-    rgb(200, 205, 215),
+const TINSEL: [RGB8; 4] = [
     rgb(255, 150, 20),
     rgb(220, 10, 10),
     rgb(0, 170, 40),
+    rgb(20, 60, 255),
 ];
+/// Each colour holds, then crossfades into the next during the last 30 %.
+const COLOR_MS: u32 = 10_000;
 const GLINT_MS: u32 = 2_500;
 const SWAY_MS: u32 = 7_000;
 const BAND_MS: u32 = 5_000;
 
 /// A metallic strand: the body brightness sways slowly while short glints
-/// flash where bands of light drift upward. The variation picks the colour:
-/// blue, silver, gold (the default), red and green.
+/// flash where bands of light drift upward. The colour cycles through gold,
+/// red, green and blue.
 pub(super) fn tinsel<const N: usize>(runtime: &mut EffectRuntime<N>) {
-    let stops = u32::from(runtime.params.variation) * (TINSEL.len() as u32 - 1) * 256 / 255;
-    let stop = (stops >> 8) as usize;
+    let step = runtime.step(COLOR_MS) as usize;
     let base = blend_rgb(
-        TINSEL[stop],
-        TINSEL[(stop + 1).min(TINSEL.len() - 1)],
-        stops as u8,
+        TINSEL[step % TINSEL.len()],
+        TINSEL[(step + 1) % TINSEL.len()],
+        step_crossfade(runtime.phase(COLOR_MS)),
     );
     let highlight = blend_rgb(base, rgb(255, 250, 240), 170);
     let (glint, sway, band) = (
