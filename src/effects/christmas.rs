@@ -51,19 +51,21 @@ const PROGRAMME_FADE_FROM: u32 = 65_536 * 5 / 6;
 const BULB_FLOOR: u32 = 90;
 
 /// A multicolour bulb string stepping through the programmes of an old light
-/// controller: a chase, then colours flowing upward.
+/// controller: a chase, then colours flowing upward. The variation sets how
+/// many consecutive LEDs, 1 to 10, form one bulb.
 pub(super) fn christmas_lights<const N: usize>(runtime: &mut EffectRuntime<N>) {
     let clock_us = runtime.clock_us;
+    let width = 1 + usize::from(runtime.params.variation) * 10 / 256;
     let programme = runtime.step(PROGRAMME_MS);
     let progress = u32::from(runtime.phase(PROGRAMME_MS));
     let fade = progress.saturating_sub(PROGRAMME_FADE_FROM) * 255 / (65_536 - PROGRAMME_FADE_FROM);
     let fade = (fade * fade * (3 * 255 - 2 * fade) / (255 * 255)) as u8;
     for (index, pixel) in runtime.frame.iter_mut().enumerate() {
-        let current = bulb(programme % PROGRAMMES, index, clock_us);
+        let current = bulb(programme % PROGRAMMES, index / width, clock_us);
         *pixel = if fade == 0 {
             current
         } else {
-            let next = bulb((programme + 1) % PROGRAMMES, index, clock_us);
+            let next = bulb((programme + 1) % PROGRAMMES, index / width, clock_us);
             blend_rgb(current, next, fade)
         };
     }
