@@ -4,7 +4,7 @@ Bare-metal Rust firmware ([Embassy](https://embassy.dev/) + esp-hal) that
 runs an addressable RGB LED strip from an ESP32-C6 and connects it to
 Home Assistant over MQTT.
 
-- 37 animated effects plus a solid color, with brightness, effect-speed and
+- 40 animated effects plus a solid color, with brightness, effect-speed and
   effect-variation control
 - Home Assistant MQTT discovery: a light entity plus effect-speed and
   effect-variation sliders
@@ -126,8 +126,9 @@ The device has five entities:
 - **Effect Variation** (number, 0–255, default 128): a knob whose meaning depends on
   the effect. It sets how often things appear in Twinkle, Random Twinkle, Fireworks,
   Fire 2012, Ripples and Static Noise, the shimmer in Aurora, the brightness floor in
-  Plasma Flow, the rate of the second wave in the wave effects, and how often drops
-  fall in Paint Mixing. Other effects ignore it.
+  Plasma Flow, the rate of the second wave in the wave effects, how often drops
+  fall in Paint Mixing, the red/white ratio in Candy Cane and the colour of Tinsel.
+  Other effects ignore it.
 - **Chip Temperature** (diagnostic sensor, °C): die temperature, updated every minute.
 - **Firmware Version** (diagnostic sensor): the running build ID.
 
@@ -150,6 +151,14 @@ Paint Mixing: drops of paint land and bleed into each other; opposite hues mix t
 a pale tint. Color Sand: grains fall from the top and pile up in coloured layers
 from the first LED, then the full pile slides out of the bottom. Falling Colours:
 one colour after another falls from the top and covers the whole strip.
+
+Christmas effects, drawn for a vertical strip with the first LED at the bottom:
+
+- Candy Cane: red and white stripes rising up the strip.
+- Christmas Lights: a multicolour bulb string stepping through light-controller
+  programmes: steady, slow glow, chase, dips and colours flowing upward.
+- Tinsel: a metallic strand with glints in drifting bands of light; blue, silver,
+  gold, red or green.
 
 Finland effects use fixed palettes and are drawn for a vertical strip with the
 first LED at the bottom (`reverse_direction` in `hardware.json` flips a strip

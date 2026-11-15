@@ -30,7 +30,7 @@ pub fn device_slug(mac_suffix: [u8; 3]) -> heapless::String<16> {
 /// Home Assistant name for "no effect", which shows the solid color.
 pub const EFFECT_DISABLED_NAME: &str = "None";
 /// Display names in `EffectId` declaration order; also the button cycle order.
-pub const EFFECTS: [(EffectId, &str); 37] = [
+pub const EFFECTS: [(EffectId, &str); 40] = [
     (EffectId::Rainbow, "Rainbow"),
     (EffectId::ColorWipe, "Color Wipe"),
     (EffectId::Scan, "Scan"),
@@ -60,6 +60,9 @@ pub const EFFECTS: [(EffectId, &str); 37] = [
     (EffectId::PaintMixing, "Paint Mixing"),
     (EffectId::ColorSand, "Color Sand"),
     (EffectId::FallingColours, "Falling Colours"),
+    (EffectId::CandyCane, "Candy Cane"),
+    (EffectId::ChristmasLights, "Christmas Lights"),
+    (EffectId::Tinsel, "Tinsel"),
     (EffectId::FinlandSnow, "Finland Snow"),
     (
         EffectId::FinlandBlueWhiteTwinkle,
@@ -104,6 +107,9 @@ pub enum EffectId {
     PaintMixing,
     ColorSand,
     FallingColours,
+    CandyCane,
+    ChristmasLights,
+    Tinsel,
     FinlandSnow,
     FinlandBlueWhiteTwinkle,
     FinlandSnowfall,

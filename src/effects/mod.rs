@@ -6,6 +6,7 @@ use smart_leds::RGB8;
 // in render(), then add its EffectId variant and EFFECTS entry in lib.rs.
 mod aurora;
 mod breathe;
+mod christmas;
 mod color_sand;
 mod color_waves;
 mod color_wipe;
@@ -63,6 +64,9 @@ pub(crate) fn render<const N: usize>(runtime: &mut EffectRuntime<N>) {
         EffectId::PaintMixing => paint_mixing::render(runtime),
         EffectId::ColorSand => color_sand::render(runtime),
         EffectId::FallingColours => falling_colours::render(runtime),
+        EffectId::CandyCane => christmas::candy_cane(runtime),
+        EffectId::ChristmasLights => christmas::christmas_lights(runtime),
+        EffectId::Tinsel => christmas::tinsel(runtime),
         EffectId::FinlandSnow => finland::render(runtime, 2),
         EffectId::FinlandBlueWhiteTwinkle => finland::render(runtime, 3),
         EffectId::FinlandSnowfall => finland::render(runtime, 5),
