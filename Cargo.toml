@@ -42,7 +42,7 @@ sequential-storage = "8.0.2"
 embedded-storage-async = "0.4.2"
 log = "0.4.35"
 critical-section = "1.2.0"
-mai-coap = { git = "https://github.com/snabb/mai-coap.git", rev = "649523e14e9cadcec38e1a5048ee2ca9ea720369", default-features = false, features = [
+mai-coap = { git = "https://github.com/snabb/mai-coap.git", rev = "9aed6d3427edeeb26c8152613b41959407063d7f", default-features = false, features = [
   "block1",
   "discovery",
   "edhoc",
@@ -79,9 +79,9 @@ esp-storage = { version = "0.10.0", features = ["esp32c6", "embedded-storage"] }
 embedded-io-async = "0.7.0"
 embedded-storage = "0.3.2"
 embassy-embedded-hal = "0.6.0"
-mbedtls-rs = { git = "https://github.com/esp-rs/mbedtls-rs", rev = "07aeabb493ac5c71b06199414807cf49d899dec6", default-features = false, features = ["tls", "esp32c6", "hook-wall-clock", "ssl-out-content-len-2048"], optional = true }
+mbedtls-rs = { git = "https://github.com/esp-rs/mbedtls-rs", rev = "026a9143654cbd8c214725543ca6df82c69cb1ac", default-features = false, features = ["tls", "esp32c6", "hook-wall-clock", "ssl-out-content-len-2048"], optional = true }
 time = { version = "0.3.55", default-features = false, optional = true }
-mai-coap = { git = "https://github.com/snabb/mai-coap.git", rev = "649523e14e9cadcec38e1a5048ee2ca9ea720369", default-features = false, features = ["embassy-net-ipv4", "embassy-time"], optional = true }
+mai-coap = { git = "https://github.com/snabb/mai-coap.git", rev = "9aed6d3427edeeb26c8152613b41959407063d7f", default-features = false, features = ["embassy-net-ipv4", "embassy-time"], optional = true }
 esp-rtos    = { version = "0.4.0", features = ["embassy", "esp-radio", "esp32c6", "log-04"] }
 minimq      = { version = "0.13.5", default-features = false, optional = true }
 static_cell = "2.1.1"
@@ -92,9 +92,9 @@ sha2 = { version = "0.11.1", default-features = false }
 
 [target.'cfg(not(target_arch = "riscv32"))'.dev-dependencies]
 async-io = "2.6.0"
-mbedtls-rs = { git = "https://github.com/esp-rs/mbedtls-rs", rev = "07aeabb493ac5c71b06199414807cf49d899dec6" }
+mbedtls-rs = { git = "https://github.com/esp-rs/mbedtls-rs", rev = "026a9143654cbd8c214725543ca6df82c69cb1ac" }
 critical-section = { version = "1.2.0", features = ["std"] }
-mai-coap = { git = "https://github.com/snabb/mai-coap.git", rev = "649523e14e9cadcec38e1a5048ee2ca9ea720369", default-features = false, features = ["client", "std"] }
+mai-coap = { git = "https://github.com/snabb/mai-coap.git", rev = "9aed6d3427edeeb26c8152613b41959407063d7f", default-features = false, features = ["client", "std"] }
 
 [build-dependencies]
 x509-cert = { version = "0.3.0", default-features = false, features = ["std"] }
