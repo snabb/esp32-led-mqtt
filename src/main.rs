@@ -7,7 +7,7 @@
 )]
 
 use embassy_executor::Spawner;
-use embassy_net::{Runner, StackResources};
+use embassy_net::{Runner, StackStorage, StaticPool};
 use embassy_time::{Duration, Instant, Ticker, Timer};
 use esp_backtrace as _;
 use esp_hal::{
@@ -21,7 +21,7 @@ use esp_hal::{
     timer::timg::TimerGroup,
 };
 use esp_radio::wifi::{
-    self, Config, ControllerConfig, Interface, WifiController, sta::StationConfig,
+    self, Config, ControllerConfig, Interface, PowerSaveMode, WifiController, sta::StationConfig,
 };
 use esp32_led_mqtt::{EffectId, EffectRuntime, corrected};
 use log::{error, info, warn};
@@ -44,6 +44,8 @@ mod mdns;
 mod memory;
 #[cfg(feature = "mqtt")]
 mod mqtt;
+#[cfg(any(feature = "coap", feature = "mdns", feature = "mqtt"))]
+mod network;
 mod ota;
 #[cfg(feature = "_control")]
 mod tls;
@@ -55,6 +57,9 @@ use light_state::{effect_params, get as light_state};
 
 // LED count, timing, color order and pins come from hardware.json via build.rs.
 include!(concat!(env!("OUT_DIR"), "/hardware.rs"));
+
+/// Every packet in flight or queued in a UDP socket. A buffer holds a whole Wi-Fi frame.
+static PACKET_POOL: StaticPool<1536, 16, 4> = StaticPool::new();
 
 // Wi-Fi activity can delay RMT refills; extra RMT memory gives the LED transfer
 // more slack while the radio stack is running.
@@ -96,7 +101,7 @@ async fn main(spawner: Spawner) -> ! {
     let mut timg0 = TimerGroup::new(peripherals.TIMG0);
     // Outlasts the two-minute OTA trial window; flash::task disables it afterwards.
     flash::arm_watchdog(&mut timg0.wdt, 125);
-    esp_rtos::start(timg0.timer0, peripherals.FROM_CPU_INTR0);
+    esp_rtos::start(timg0.timer0);
 
     info!(
         "Starting LED firmware {} hardware {}",
@@ -108,8 +113,7 @@ async fn main(spawner: Spawner) -> ! {
             .into_async()
             .split();
     spawner.spawn(config::usb_task(usb_rx).unwrap());
-    let mut flash = esp_storage::FlashStorage::new(peripherals.FLASH);
-    let layout = flash::check_partition_table(&mut flash);
+    let (mut flash, layout) = flash::open(peripherals.FLASH);
     let loaded = match layout {
         Ok(()) => config::load(&mut flash).await,
         Err(reason) => Err(reason),
@@ -219,18 +223,24 @@ async fn main(spawner: Spawner) -> ! {
         controller
             .set_max_tx_power(40)
             .expect("failed to limit Wi-Fi TX power");
+        controller
+            .set_power_saving(PowerSaveMode::Minimum)
+            .expect("failed to enable Wi-Fi power saving");
         let wifi_interface = Interface::station();
 
-        let net_config = embassy_net::Config::dhcpv4(Default::default());
         let rng = Rng::new();
         let seed = (u64::from(rng.random()) << 32) | u64::from(rng.random());
-        let (stack, runner) = embassy_net::new(
-            wifi_interface,
-            net_config,
-            // DHCP, DNS, MQTT and OTA, with room for the UDP services.
-            mk_static!(StackResources<8>, StackResources::<8>::new()),
+        let (stack, runner) = embassy_net::Stack::new(
+            mk_static!(StackStorage<'static>, StackStorage::new()),
+            &PACKET_POOL,
             seed,
         );
+        let iface = stack
+            .add_iface_borrowed(mk_static!(Interface, wifi_interface))
+            .expect("interface slot");
+        iface
+            .set_dhcpv4(Some(Default::default()))
+            .expect("Wi-Fi is an Ethernet medium");
 
         #[cfg(feature = "_control")]
         // This also starts the crypto work queues, which CoAP needs even without TLS: its
@@ -249,17 +259,19 @@ async fn main(spawner: Spawner) -> ! {
         }
         spawner.spawn(connection_task(controller).unwrap());
         spawner.spawn(net_task(runner).unwrap());
+        #[cfg(any(feature = "mdns", feature = "mqtt"))]
+        spawner.spawn(network::task(iface).unwrap());
         #[cfg(feature = "mqtt")]
         if !settings.mqtt_broker.is_empty() {
-            spawner.spawn(mqtt::task(stack, identity, settings, download_context).unwrap());
+            spawner.spawn(mqtt::task(iface, identity, settings, download_context).unwrap());
         }
         #[cfg(feature = "coap")]
         if settings.has_coap_keys() {
-            spawner.spawn(coap::task(stack, identity, settings).unwrap());
+            spawner.spawn(coap::task(iface, identity, settings).unwrap());
         }
         #[cfg(feature = "mdns")]
-        spawner.spawn(mdns::task(stack, identity, settings.has_coap_keys()).unwrap());
-        network = Some(stack);
+        spawner.spawn(mdns::task(iface, identity, settings.has_coap_keys()).unwrap());
+        network = Some(iface);
     }
     spawner.spawn(
         flash::task(
@@ -342,31 +354,31 @@ async fn connection_task(mut controller: WifiController<'static>) {
 }
 
 #[embassy_executor::task]
-async fn net_task(mut runner: Runner<'static, Interface>) {
+async fn net_task(mut runner: Runner<'static>) {
     runner.run().await;
 }
 
 /// Resolves an IPv4 literal, or else a DNS A record.
 #[cfg(feature = "_control")]
 async fn resolve_ipv4(
-    stack: embassy_net::Stack<'static>,
+    iface: embassy_net::iface::Iface<'static>,
     host: &str,
-) -> Result<embassy_net::IpAddress, &'static str> {
-    use embassy_net::{IpAddress, dns::DnsQueryType};
+) -> Result<embassy_net::wire::IpAddr, &'static str> {
+    use embassy_net::{dns::DnsQueryType, wire::IpAddr as IpAddress};
     use embassy_time::with_timeout;
 
     if let Ok(address) = host.parse() {
-        return Ok(IpAddress::Ipv4(address));
+        return Ok(IpAddress::V4(address));
     }
     let addresses = with_timeout(
         Duration::from_secs(15),
-        stack.dns_query(host, DnsQueryType::A),
+        iface.stack().dns_query(host, DnsQueryType::A),
     )
     .await
     .map_err(|_| "dns_timeout")?
     .map_err(|_| "dns")?;
     match addresses.first() {
-        Some(IpAddress::Ipv4(address)) => Ok(IpAddress::Ipv4(*address)),
+        Some(IpAddress::V4(address)) => Ok(IpAddress::V4(*address)),
         _ => Err("dns"),
     }
 }

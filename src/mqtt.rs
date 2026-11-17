@@ -1,7 +1,7 @@
 use core::fmt::Write;
 
 use embassy_futures::select::{Either4, select4};
-use embassy_net::{IpEndpoint, Stack, tcp::TcpSocket};
+use embassy_net::{iface::Iface, tcp::TcpSocket, wire::SocketAddr};
 use embassy_sync::watch::DynReceiver;
 use embassy_time::{Duration, Instant, Timer, with_deadline, with_timeout};
 use esp32_led_mqtt::{
@@ -50,7 +50,7 @@ const KEY_EXCHANGE_GROUPS: &[TlsGroup] = &[
 
 #[embassy_executor::task]
 pub async fn task(
-    stack: Stack<'static>,
+    iface: Iface<'static>,
     identity: &'static DeviceIdentity,
     settings: &'static esp32_led_mqtt::device_config::DeviceConfig,
     tls_context: crate::tls::Context,
@@ -67,12 +67,12 @@ pub async fn task(
             .expect("receiver capacity"),
     };
     loop {
-        stack.wait_config_up().await;
-        if let Some(config) = stack.config_v4() {
-            info!("Network ready with IP {}", config.address);
+        crate::network::wait_config(true).await;
+        if let Some(address) = crate::network::ipv4_address(iface) {
+            info!("Network ready with IP {}", address);
         }
 
-        let result = run_session(stack, identity, settings, tls_context, &mut events).await;
+        let result = run_session(iface, identity, settings, tls_context, &mut events).await;
         crate::ota::MQTT_READY.store(false, core::sync::atomic::Ordering::Release);
         match result {
             Ok(()) => warn!("MQTT session ended"),
@@ -84,7 +84,7 @@ pub async fn task(
 }
 
 async fn run_session(
-    stack: Stack<'static>,
+    iface: Iface<'static>,
     identity: &'static DeviceIdentity,
     settings: &'static esp32_led_mqtt::device_config::DeviceConfig,
     tls_context: crate::tls::Context,
@@ -95,15 +95,16 @@ async fn run_session(
     } else {
         None
     };
-    let address = crate::resolve_ipv4(stack, &settings.mqtt_broker)
+    let address = crate::resolve_ipv4(iface, &settings.mqtt_broker)
         .await
         .map_err(MqttRunError::Resolve)?;
     let mut tcp_rx = [0_u8; 2048];
     let mut tcp_tx = [0_u8; 2048];
-    let mut socket = TcpSocket::new(stack, &mut tcp_rx, &mut tcp_tx);
+    let mut socket = TcpSocket::new(iface.stack(), &mut tcp_rx, &mut tcp_tx)
+        .map_err(|_| MqttRunError::NoSocket)?;
     with_timeout(
         Duration::from_secs(15),
-        socket.connect(IpEndpoint::new(address, settings.mqtt_port)),
+        socket.connect(SocketAddr::new(address, settings.mqtt_port)),
     )
     .await
     .map_err(|_| MqttRunError::ConnectTimeout)?
@@ -475,6 +476,7 @@ enum MqttRunError {
     Transport,
     TlsIo(mbedtls_rs::SessionError),
     ConnectTimeout,
+    NoSocket,
     Tls(&'static str),
     PayloadTooLarge,
     Resolve(&'static str),

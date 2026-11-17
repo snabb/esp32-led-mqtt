@@ -3,11 +3,11 @@ use core::{
     sync::atomic::{AtomicBool, Ordering},
 };
 
-use embassy_net::Stack;
+use crate::flash::FlashStorage;
+use embassy_net::iface::Iface;
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, watch::Watch};
 use embassy_time::{Instant, Timer};
 use esp_hal_ota::{Ota, OtaImgState};
-use esp_storage::FlashStorage;
 use esp32_led_mqtt::ota_protocol;
 use heapless::String;
 use log::{info, warn};
@@ -39,27 +39,27 @@ pub static COAP_AUTHENTICATED: AtomicBool = AtomicBool::new(false);
 pub static STATUS: Watch<CriticalSectionRawMutex, String<192>, 2> = Watch::new();
 
 pub struct FlashAccess<S>(pub S);
-impl<S: BorrowMut<FlashStorage<'static>>> embedded_storage::ReadStorage for FlashAccess<S> {
-    type Error = esp_storage::FlashStorageError;
+impl<S: BorrowMut<FlashStorage>> embedded_storage::ReadStorage for FlashAccess<S> {
+    type Error = <FlashStorage as embedded_storage::ReadStorage>::Error;
     fn read(&mut self, offset: u32, bytes: &mut [u8]) -> Result<(), Self::Error> {
-        self.0.borrow_mut().read(offset, bytes)
+        embedded_storage::ReadStorage::read(self.0.borrow_mut(), offset, bytes)
     }
     fn capacity(&self) -> usize {
-        self.0.borrow().capacity()
+        embedded_storage::ReadStorage::capacity(self.0.borrow())
     }
 }
-impl<S: BorrowMut<FlashStorage<'static>>> embedded_storage::Storage for FlashAccess<S> {
+impl<S: BorrowMut<FlashStorage>> embedded_storage::Storage for FlashAccess<S> {
     fn write(&mut self, offset: u32, bytes: &[u8]) -> Result<(), Self::Error> {
-        self.0.borrow_mut().write(offset, bytes)
+        embedded_storage::Storage::write(self.0.borrow_mut(), offset, bytes)
     }
 }
 
 /// The flash of the slot this image isn't running from.
 #[cfg(feature = "_control")]
-pub struct UpdateSlot<S: BorrowMut<FlashStorage<'static>>>(pub Ota<FlashAccess<S>>);
+pub struct UpdateSlot<S: BorrowMut<FlashStorage>>(pub Ota<FlashAccess<S>>);
 
 #[cfg(feature = "_control")]
-impl<S: BorrowMut<FlashStorage<'static>>> ota_protocol::ImageTarget for UpdateSlot<S> {
+impl<S: BorrowMut<FlashStorage>> ota_protocol::ImageTarget for UpdateSlot<S> {
     fn begin(&mut self, size: u32, crc32: u32) -> Result<(), ota_protocol::TargetError> {
         self.0
             .begin(size, crc32)
@@ -93,13 +93,13 @@ pub fn status(state: &str, detail: &str, percent: u8) {
 /// flash writes disabled. `control_required` says a control plane is configured, so a
 /// trial image must prove it works; a device without one can't be reached to fix it anyway.
 pub async fn confirm_boot(
-    stack: Option<Stack<'static>>,
-    flash: &mut FlashStorage<'static>,
+    iface: Option<Iface<'static>>,
+    flash: &mut FlashStorage,
     layout: Result<(), &'static str>,
     control_required: bool,
 ) -> Result<(), &'static str> {
     let health = match layout {
-        Ok(()) => boot_health(stack, flash, control_required).await,
+        Ok(()) => boot_health(iface, flash, control_required).await,
         Err(reason) => Err(reason),
     };
     if let Err(reason) = health {
@@ -110,7 +110,7 @@ pub async fn confirm_boot(
 }
 
 /// Erases a rejected `otadata` entry; see `ota_protocol::stale_boot_entry`.
-fn clear_stale_boot_entry(flash: &mut FlashStorage<'static>) -> Result<(), &'static str> {
+fn clear_stale_boot_entry(flash: &mut FlashStorage) -> Result<(), &'static str> {
     let (first, second) = Ota::new(FlashAccess(&mut *flash))
         .and_then(|mut ota| ota.boot_entries())
         .map_err(|_| "partition_table")?;
@@ -125,16 +125,15 @@ fn clear_stale_boot_entry(flash: &mut FlashStorage<'static>) -> Result<(), &'sta
     if let Some(index) = ota_protocol::stale_boot_entry(entries) {
         warn!("Erasing rejected OTA entry {} after a rollback", index);
         let from = OTADATA_START + index as u32 * OTADATA_ENTRY_SIZE;
-        flash
-            .erase(from, from + OTADATA_ENTRY_SIZE)
+        embedded_storage::nor_flash::NorFlash::erase(flash, from, from + OTADATA_ENTRY_SIZE)
             .map_err(|_| "otadata_erase")?;
     }
     Ok(())
 }
 
 async fn boot_health(
-    stack: Option<Stack<'static>>,
-    flash: &mut FlashStorage<'static>,
+    iface: Option<Iface<'static>>,
+    flash: &mut FlashStorage,
     control_required: bool,
 ) -> Result<(), &'static str> {
     let start = Instant::now();
@@ -166,7 +165,7 @@ async fn boot_health(
                 !control_required
                     || MQTT_READY.load(Ordering::Acquire)
                     || COAP_AUTHENTICATED.load(Ordering::Acquire),
-                stack.is_some_and(|stack| stack.is_config_up()),
+                iface.is_some_and(|iface| iface.is_config_up()),
             ) {
                 ota_protocol::TrialDecision::Confirm => {
                     if ota.mark_app_valid().is_ok() {

@@ -2,15 +2,12 @@
 
 use core::{mem::MaybeUninit, sync::atomic::Ordering};
 
+use crate::flash::FlashStorage;
 use embassy_futures::select::{Either, Either4, select, select4};
-use embassy_net::{
-    Stack,
-    udp::{PacketMetadata, UdpSocket},
-};
+use embassy_net::{iface::Iface, udp::UdpSocket, wire::ListenSocketAddr};
 use embassy_time::{Instant, Timer};
 use esp_hal::{ecc::EllipticCurve, rng::Trng, sha::Sha256Context};
 use esp_hal_ota::Ota;
-use esp_storage::FlashStorage;
 use esp32_led_mqtt::{
     coap_api::{
         ApiEndpoint, ApiRouter, ApiShared, Authenticated, Busy, ClientKeys, ClientList,
@@ -28,7 +25,7 @@ use heapless::String;
 use log::{error, info, warn};
 use mai_coap::{
     Error, crypto::Sha256State, edhoc::endpoint::Edhoc, endpoint::RunError, time::EmbassyClock,
-    transport::embassy::EmbassyTransport,
+    transport::embassy_xarxa::EmbassyXarxaTransport,
 };
 use zeroize::Zeroizing;
 
@@ -39,9 +36,6 @@ use crate::{
     ota::{self, FlashAccess, UpdateSlot},
     tsens,
 };
-
-const SOCKET_RX_SLOTS: usize = 4;
-const SOCKET_TX_SLOTS: usize = 2;
 
 static CLIENT_KEYS: ClientKeys = ClientKeys::new();
 
@@ -126,7 +120,7 @@ impl Accelerator for Hardware {
 }
 
 struct HardwareDevice {
-    stack: Stack<'static>,
+    iface: Iface<'static>,
     name: &'static str,
     settings: &'static DeviceConfig,
 }
@@ -172,7 +166,7 @@ impl UploadAccess for FlashUpload {
 
 /// Saves the client list and applies it to the next handshake. A failed save may still have
 /// committed, so reboot to whatever is stored: a removed key must not stay usable.
-pub async fn save_clients(flash: &mut FlashStorage<'static>, clients: ClientList) {
+pub async fn save_clients(flash: &mut FlashStorage, clients: ClientList) {
     if crate::config::save_clients(flash, &clients).await {
         CLIENT_KEYS.load(&clients);
     } else {
@@ -205,10 +199,7 @@ impl Device for HardwareDevice {
         Info {
             name: self.name,
             uptime_s: Instant::now().as_secs(),
-            ip: self
-                .stack
-                .config_v4()
-                .map(|config| config.address.address()),
+            ip: crate::network::ipv4_address(self.iface),
             free_heap: esp_alloc::HEAP.free(),
         }
     }
@@ -279,7 +270,7 @@ async fn notify_changes(handle: mai_coap::endpoint::Handle<'_, DATAGRAM_BYTES, 0
 
 #[embassy_executor::task]
 pub async fn task(
-    stack: Stack<'static>,
+    iface: Iface<'static>,
     identity: &'static DeviceIdentity,
     settings: &'static DeviceConfig,
 ) {
@@ -301,18 +292,24 @@ pub async fn task(
         return;
     };
 
-    let mut rx_meta = [PacketMetadata::EMPTY; SOCKET_RX_SLOTS];
-    let mut tx_meta = [PacketMetadata::EMPTY; SOCKET_TX_SLOTS];
-    let mut rx = [0; 2 * DATAGRAM_BYTES];
-    let mut tx = [0; 2 * DATAGRAM_BYTES];
-    let mut socket = UdpSocket::new(stack, &mut rx_meta, &mut rx, &mut tx_meta, &mut tx);
-    while socket.bind(PORT).is_err() {
-        Timer::after_secs(1).await;
+    let Ok(mut socket) = UdpSocket::new(iface.stack()) else {
+        error!("CoAP disabled: no free UDP socket");
+        return;
+    };
+    if socket.bind_to_iface(Some(iface.handle())).is_err()
+        || socket.bind(PORT, ListenSocketAddr::UNSPECIFIED).is_err()
+    {
+        error!("CoAP disabled: cannot bind port {}", PORT);
+        return;
     }
-    let mut transport = EmbassyTransport { socket };
+    // The ID only has to be nonzero: the stack has this one interface.
+    let Ok(mut transport) = EmbassyXarxaTransport::new(&socket, iface.handle(), 1) else {
+        error!("CoAP disabled: socket not bound");
+        return;
+    };
 
     let device = HardwareDevice {
-        stack,
+        iface,
         name: &identity.slug,
         settings,
     };

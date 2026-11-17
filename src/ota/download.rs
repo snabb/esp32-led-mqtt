@@ -1,12 +1,12 @@
 use core::sync::atomic::{AtomicBool, Ordering};
 
+use crate::flash::FlashStorage;
 use embassy_futures::yield_now;
-use embassy_net::{IpEndpoint, Stack, tcp::TcpSocket};
+use embassy_net::{iface::Iface, tcp::TcpSocket, wire::SocketAddr};
 use embassy_time::{Duration, Timer, with_timeout};
 use embedded_io_async::{Read, Write};
 use esp_hal::sha::Sha256Context;
 use esp_hal_ota::Ota;
-use esp_storage::FlashStorage;
 use esp32_led_mqtt::ota_protocol::{self, ImageError, ImageWriter, Request};
 use heapless::String;
 use log::warn;
@@ -15,7 +15,7 @@ use mbedtls_rs::TlsGroup;
 use super::{FlashAccess, UpdateSlot, status};
 use crate::flash::{self, Job};
 
-type Updater<'a> = UpdateSlot<&'a mut FlashStorage<'static>>;
+type Updater<'a> = UpdateSlot<&'a mut FlashStorage>;
 
 static AVAILABLE: AtomicBool = AtomicBool::new(false);
 const READ_TIMEOUT: Duration = Duration::from_secs(15);
@@ -28,7 +28,7 @@ const KEY_EXCHANGE_GROUPS: &[TlsGroup] = &[TlsGroup::Secp256r1];
 /// Network and TLS context for downloading updates. Holding the TLS context also
 /// proves `tls::initialize` started the SHA queue, without which hashing hangs.
 pub struct Client {
-    stack: Stack<'static>,
+    iface: Iface<'static>,
     tls: &'static mbedtls_rs::Tls<'static>,
 }
 
@@ -69,10 +69,10 @@ pub fn pull_enabled() -> bool {
 }
 
 /// Enables downloads when configured. Call only after `confirm_boot` succeeds.
-pub fn client(stack: Option<Stack<'static>>, tls_context: crate::tls::Context) -> Option<Client> {
+pub fn client(iface: Option<Iface<'static>>, tls_context: crate::tls::Context) -> Option<Client> {
     let (client, disabled_reason) = if pull_enabled() {
-        match (stack, tls_context) {
-            (Some(stack), Ok(tls)) => (Some(Client { stack, tls }), ""),
+        match (iface, tls_context) {
+            (Some(iface), Ok(tls)) => (Some(Client { iface, tls }), ""),
             (Some(_), Err(reason)) => (None, reason),
             (None, _) => (None, "configure_network_and_ota"),
         }
@@ -89,12 +89,12 @@ pub fn client(stack: Option<Stack<'static>>, tls_context: crate::tls::Context) -
 }
 
 /// Downloads, verifies and activates `request`, rebooting into it on success.
-pub async fn update(client: &Client, flash: &mut FlashStorage<'static>, request: &Request) {
+pub async fn update(client: &Client, flash: &mut FlashStorage, request: &Request) {
     status("downloading", "", 0);
     let result = match Ota::new(FlashAccess(flash)) {
         Ok(ota) => with_timeout(
             UPDATE_TIMEOUT,
-            download(client.tls, client.stack, &mut UpdateSlot(ota), request),
+            download(client.tls, client.iface, &mut UpdateSlot(ota), request),
         )
         .await
         .unwrap_or(Err("timeout")),
@@ -116,18 +116,18 @@ pub async fn update(client: &Client, flash: &mut FlashStorage<'static>, request:
 
 async fn download(
     tls_context: &mbedtls_rs::Tls<'static>,
-    stack: Stack<'static>,
+    iface: Iface<'static>,
     ota: &mut Updater<'_>,
     request: &Request,
 ) -> Result<(), &'static str> {
-    let address = crate::resolve_ipv4(stack, &request.host).await?;
+    let address = crate::resolve_ipv4(iface, &request.host).await?;
     let mut rx = [0; 4096];
     let mut tx = [0; 2048];
-    let mut socket = TcpSocket::new(stack, &mut rx, &mut tx);
+    let mut socket = TcpSocket::new(iface.stack(), &mut rx, &mut tx).map_err(|_| "socket")?;
     socket.set_timeout(Some(READ_TIMEOUT));
     with_timeout(
         READ_TIMEOUT,
-        socket.connect(IpEndpoint::new(address, request.port)),
+        socket.connect(SocketAddr::new(address, request.port)),
     )
     .await
     .map_err(|_| "connect_timeout")?

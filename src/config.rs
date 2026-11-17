@@ -1,9 +1,9 @@
+use crate::flash::FlashStorage;
 use core::sync::atomic::{AtomicU32, Ordering};
 use embassy_embedded_hal::adapter::{BlockingAsync, YieldingAsync};
 use embassy_time::Timer;
 use embedded_io_async::Read;
 use esp_hal::{Async, usb::usb_serial_jtag::UsbSerialJtagRx};
-use esp_storage::FlashStorage;
 use esp32_led_mqtt::{
     config_store,
     device_config::{self, DeviceConfig},
@@ -43,7 +43,7 @@ pub fn device_credential() -> device_config::CoapCredential {
 /// saved. If not, the write may still have committed.
 #[cfg(feature = "coap")]
 pub async fn save_clients(
-    flash: &mut FlashStorage<'static>,
+    flash: &mut FlashStorage,
     clients: &esp32_led_mqtt::coap_api::ClientList,
 ) -> bool {
     let mut storage = YieldingAsync::new(BlockingAsync::new(flash));
@@ -81,7 +81,7 @@ fn device_credential_fields() -> &'static str {
 }
 
 /// Requires a partition table already checked by `flash::check_partition_table`.
-pub async fn load(flash: &mut FlashStorage<'static>) -> Result<Option<DeviceConfig>, &'static str> {
+pub async fn load(flash: &mut FlashStorage) -> Result<Option<DeviceConfig>, &'static str> {
     let mut storage = YieldingAsync::new(BlockingAsync::new(flash));
     let result = config_store::load(&mut storage, device_config::PARTITION)
         .await
@@ -174,7 +174,7 @@ fn provide_device_key(mut config: DeviceConfig) -> Result<DeviceConfig, config_s
 
 /// Persists a USB write command and reports the result. The caller must reboot
 /// afterwards, even after an error.
-pub async fn handle(flash: &mut FlashStorage<'static>, command: Command) {
+pub async fn handle(flash: &mut FlashStorage, command: Command) {
     let mut storage = YieldingAsync::new(BlockingAsync::new(flash));
     let range = device_config::PARTITION;
     let (id, result) = match command {

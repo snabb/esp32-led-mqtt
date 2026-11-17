@@ -6,72 +6,114 @@ use core::net::{Ipv4Addr, Ipv6Addr};
 #[cfg(feature = "coap")]
 use edge_mdns::host::{Service, ServiceAnswers};
 use edge_mdns::{
-    HostAnswer, HostAnswers, HostAnswersMdnsHandler, MdnsError,
-    buf::VecBufAccess,
-    domain::base::Ttl,
-    host::Host,
-    io::{self, IPV4_DEFAULT_SOCKET},
+    HostAnswer, HostAnswers, HostAnswersMdnsHandler, MdnsError, MdnsHandler, MdnsRequest,
+    MdnsResponse, domain::base::Ttl, host::Host,
 };
-use edge_nal::UdpSplit;
-use edge_nal_embassy::{Udp, UdpBuffers};
 use embassy_futures::select::select;
-use embassy_net::Stack;
-use embassy_sync::{blocking_mutex::raw::NoopRawMutex, signal::Signal};
+use embassy_net::{
+    iface::Iface,
+    udp::UdpSocket,
+    wire::{ListenSocketAddr, SocketAddr},
+};
 use embassy_time::Timer;
 use esp_hal::rng::Rng;
 use log::{info, warn};
 
-use crate::identity::DeviceIdentity;
+use crate::{identity::DeviceIdentity, network};
 
 /// RFC 6762's recommendation for records that name a host.
 const TTL_SECS: u32 = 120;
 /// An Ethernet payload less the IPv4 and UDP headers.
 const MAX_MESSAGE: usize = 1472;
+const PORT: u16 = 5353;
+const GROUP: Ipv4Addr = Ipv4Addr::new(224, 0, 0, 251);
 
 #[embassy_executor::task]
-pub async fn task(stack: Stack<'static>, identity: &'static DeviceIdentity, advertise_coap: bool) {
+pub async fn task(iface: Iface<'static>, identity: &'static DeviceIdentity, advertise_coap: bool) {
     let answers = Answers {
-        stack,
+        iface,
         hostname: &identity.slug,
         advertise_coap,
     };
-    let buffers = UdpBuffers::<1, MAX_MESSAGE, MAX_MESSAGE, 2>::new();
-    let udp = Udp::new(stack, &buffers);
-    let recv_buf = VecBufAccess::<NoopRawMutex, MAX_MESSAGE>::new();
-    let send_buf = VecBufAccess::<NoopRawMutex, MAX_MESSAGE>::new();
-    let announce = Signal::<NoopRawMutex, ()>::new();
+    let mut handler = HostAnswersMdnsHandler::new(&answers);
+    let Ok(mut socket) = UdpSocket::new(iface.stack()) else {
+        warn!("mDNS disabled: no free UDP socket");
+        return;
+    };
+    // RFC 6762 §11: older queriers drop responses with any other IP TTL.
+    if socket.set_hop_limit(Some(255)).is_err()
+        || iface.join_multicast_group(GROUP).is_err()
+        || socket.bind(PORT, ListenSocketAddr::UNSPECIFIED).is_err()
+    {
+        warn!("mDNS disabled: could not bind its socket");
+        return;
+    }
+    let mut request = [0; MAX_MESSAGE];
+    let mut response = [0; MAX_MESSAGE];
 
     loop {
-        // The responder stops at the first failed send, and sends fail without an address.
-        stack.wait_config_up().await;
-        // edge-nal-embassy ignores the interface: a stack is one interface.
-        let interface = Some(Ipv4Addr::UNSPECIFIED);
-        match io::bind(&udp, IPV4_DEFAULT_SOCKET, interface, None).await {
-            Ok(mut socket) => {
-                let (recv, send) = socket.split();
-                let mdns = io::Mdns::new(
-                    interface,
-                    None,
-                    recv,
-                    send,
-                    &recv_buf,
-                    &send_buf,
-                    Rng::new(),
-                    &announce,
-                );
-                info!("mDNS answering as {}.local", identity.slug);
-                let handler = HostAnswersMdnsHandler::new(&answers);
-                select(mdns.run(handler), stack.wait_config_down()).await;
-            }
-            Err(_) => warn!("mDNS could not bind its socket"),
+        network::wait_config(true).await;
+        info!("mDNS answering as {}.local", identity.slug);
+        // Announce the address, which may be new.
+        if let Ok(MdnsResponse::Reply { data, .. }) =
+            handler.handle(MdnsRequest::None, &mut response)
+        {
+            send(&socket, data, SocketAddr::new(GROUP.into(), PORT)).await;
         }
-        Timer::after_secs(1).await;
+        select(
+            serve(&socket, &mut handler, &mut request, &mut response),
+            network::wait_config(false),
+        )
+        .await;
+    }
+}
+
+async fn serve(
+    socket: &UdpSocket<'_>,
+    handler: &mut impl MdnsHandler,
+    request: &mut [u8],
+    response: &mut [u8],
+) -> ! {
+    loop {
+        let Ok((len, meta)) = socket.recv_from(request).await else {
+            continue;
+        };
+        // RFC 6762 §6.7: a query from another port is a one-shot query, answered directly.
+        let legacy = meta.remote_addr.port != PORT;
+        let request = MdnsRequest::Request {
+            legacy,
+            multicast: meta.local_addr.is_some_and(|addr| addr.is_multicast()),
+            data: &request[..len],
+        };
+        let (data, delay) = match handler.handle(request, response) {
+            Ok(MdnsResponse::Reply { data, delay }) => (data, delay),
+            Ok(MdnsResponse::None) | Err(MdnsError::InvalidMessage) => continue,
+            Err(err) => {
+                warn!("mDNS could not answer: {:?}", err);
+                continue;
+            }
+        };
+        if legacy {
+            send(socket, data, meta.remote_addr).await;
+            continue;
+        }
+        if delay {
+            // RFC 6762 §6: 20–120 ms, so that responders to a shared record don't collide.
+            Timer::after_millis(20 + u64::from(Rng::new().random()) % 100).await;
+        }
+        send(socket, data, SocketAddr::new(GROUP.into(), PORT)).await;
+    }
+}
+
+async fn send(socket: &UdpSocket<'_>, data: &[u8], to: SocketAddr) {
+    if let Err(err) = socket.send_to(data, to).await {
+        warn!("mDNS send failed: {:?}", err);
     }
 }
 
 /// Reads the address on each query, because DHCP can change it.
 struct Answers<'a> {
-    stack: Stack<'a>,
+    iface: Iface<'a>,
     hostname: &'a str,
     advertise_coap: bool,
 }
@@ -84,10 +126,7 @@ impl HostAnswers for Answers<'_> {
     {
         let host = Host {
             hostname: self.hostname,
-            ipv4: self
-                .stack
-                .config_v4()
-                .map_or(Ipv4Addr::UNSPECIFIED, |config| config.address.address()),
+            ipv4: network::ipv4_address(self.iface).unwrap_or(Ipv4Addr::UNSPECIFIED),
             ipv6: Ipv6Addr::UNSPECIFIED,
             ttl: Ttl::from_secs(TTL_SECS),
         };

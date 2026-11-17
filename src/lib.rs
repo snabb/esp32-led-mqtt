@@ -17,6 +17,7 @@ pub mod log_buffer;
 pub mod ota_protocol;
 pub mod provisioning;
 pub mod random_color;
+pub mod word_flash;
 
 use smart_leds::RGB8;
 

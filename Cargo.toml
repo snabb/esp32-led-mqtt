@@ -21,13 +21,7 @@ required-features = ["coap"]
 default = ["coap", "mdns", "mqtt"]
 heap-stats = ["esp-alloc/internal-heap-stats"]
 coap = ["dep:mai-coap", "dep:rand_core", "dep:zeroize", "embassy-net/udp", "_control"]
-mdns = [
-  "dep:edge-mdns",
-  "dep:edge-nal",
-  "dep:edge-nal-embassy",
-  "embassy-net/multicast",
-  "embassy-net/udp",
-]
+mdns = ["dep:edge-mdns", "embassy-net/multicast", "embassy-net/udp"]
 mqtt = ["dep:minimq", "_control"]
 # Implied by any remote control plane: OTA downloads, TLS and the temperature sampler.
 _control = ["dep:mbedtls-rs", "dep:time"]
@@ -39,6 +33,7 @@ serde = { version = "1.0.229", default-features = false, features = ["derive"] }
 serde-json-core = "0.7.0"
 digest = { version = "0.11.3", default-features = false }
 sequential-storage = "8.0.2"
+embedded-storage = "0.3.2"
 embedded-storage-async = "0.4.2"
 log = "0.4.35"
 critical-section = "1.2.0"
@@ -54,13 +49,20 @@ rand_core = { version = "0.10.1", default-features = false, optional = true }
 zeroize = { version = "1.9.1", default-features = false, optional = true }
 
 [target.'cfg(target_arch = "riscv32")'.dependencies]
-edge-mdns = { version = "0.8.0", default-features = false, features = ["io"], optional = true }
-edge-nal = { version = "0.7.0", optional = true }
-# Its default features turn on unrelated embassy-net stack features.
-edge-nal-embassy = { version = "0.9.0", default-features = false, features = ["medium-ethernet", "multicast", "proto-ipv4", "udp"], optional = true }
+edge-mdns = { version = "0.8.0", default-features = false, optional = true }
 embassy-executor = "0.10.0"
 embassy-futures  = "0.1.2"
-embassy-net      = { version = "0.9.1", features = ["dhcpv4", "dns", "medium-ethernet", "proto-ipv4", "tcp"] }
+# Unreleased: the xarxa-based stack. The same revision as mai-coap's, so both share one stack.
+embassy-net = { git = "https://github.com/embassy-rs/embassy", rev = "8a940dab0d56a910277b816987e45315ca7979aa", default-features = false, features = [
+  "dhcpv4",
+  "dns",
+  "icmp-ping-reply",
+  "iface-bind",
+  "ipv4",
+  "log",
+  "medium-ethernet",
+  "tcp",
+] }
 embassy-sync     = "0.8.0"
 embassy-time     = "0.5.1"
 esp-alloc        = { version = "0.11.0", features = ["esp32c6"] }
@@ -70,18 +72,16 @@ esp-backtrace = { version = "0.20.0", features = [
   "println",
 ] }
 esp-bootloader-esp-idf = { version = "0.6.0", features = ["esp32c6", "log-04"] }
-esp-hal = { version = "1.2.2", features = ["esp32c6", "log-04", "unstable"] }
+esp-hal = { version = "1.2.0", features = ["esp32c6", "log-04", "unstable"] }
 esp-hal-smartled = { version = "0.18.0", features = ["esp32c6"] }
 esp-println = { version = "0.18.0", features = ["esp32c6", "log-04"] }
 esp-radio   = { version = "1.0.0-beta.1", features = ["esp32c6", "log-04", "unstable", "wifi"] }
 esp-hal-ota = { version = "0.7.2", features = ["esp32c6"] }
-esp-storage = { version = "0.10.0", features = ["esp32c6", "embedded-storage"] }
 embedded-io-async = "0.7.0"
-embedded-storage = "0.3.2"
 embassy-embedded-hal = "0.6.0"
-mbedtls-rs = { git = "https://github.com/esp-rs/mbedtls-rs", rev = "026a9143654cbd8c214725543ca6df82c69cb1ac", default-features = false, features = ["tls", "esp32c6", "hook-wall-clock", "ssl-out-content-len-2048"], optional = true }
+mbedtls-rs = { git = "https://github.com/snabb/mbedtls-rs", rev = "42601bd06", default-features = false, features = ["tls", "esp32c6", "hook-wall-clock", "ssl-out-content-len-2048"], optional = true }
 time = { version = "0.3.55", default-features = false, optional = true }
-mai-coap = { git = "https://github.com/snabb/mai-coap.git", rev = "9aed6d3427edeeb26c8152613b41959407063d7f", default-features = false, features = ["embassy-net-ipv4", "embassy-time"], optional = true }
+mai-coap = { git = "https://github.com/snabb/mai-coap.git", rev = "9aed6d3427edeeb26c8152613b41959407063d7f", default-features = false, features = ["embassy-net-xarxa-ipv4", "embassy-time"], optional = true }
 esp-rtos    = { version = "0.4.0", features = ["embassy", "esp-radio", "esp32c6", "log-04"] }
 minimq      = { version = "0.13.5", default-features = false, optional = true }
 static_cell = "2.1.1"
@@ -92,7 +92,7 @@ sha2 = { version = "0.11.1", default-features = false }
 
 [target.'cfg(not(target_arch = "riscv32"))'.dev-dependencies]
 async-io = "2.6.0"
-mbedtls-rs = { git = "https://github.com/esp-rs/mbedtls-rs", rev = "026a9143654cbd8c214725543ca6df82c69cb1ac" }
+mbedtls-rs = { git = "https://github.com/snabb/mbedtls-rs", rev = "42601bd06" }
 critical-section = { version = "1.2.0", features = ["std"] }
 mai-coap = { git = "https://github.com/snabb/mai-coap.git", rev = "9aed6d3427edeeb26c8152613b41959407063d7f", default-features = false, features = ["client", "std"] }
 
@@ -114,3 +114,26 @@ codegen-units = 1     # LLVM can perform better optimizations using a single thr
 debug         = 2     # prefer slower builds but better debugging experience
 lto           = 'fat'
 opt-level     = 's'
+
+[patch.crates-io]
+esp-alloc = { git = "https://github.com/snabb/esp-hal", rev = "a7cfb84d1" }
+esp-backtrace = { git = "https://github.com/snabb/esp-hal", rev = "a7cfb84d1" }
+esp-bootloader-esp-idf = { git = "https://github.com/snabb/esp-hal", rev = "a7cfb84d1" }
+esp-config = { git = "https://github.com/snabb/esp-hal", rev = "a7cfb84d1" }
+esp-hal = { git = "https://github.com/snabb/esp-hal", rev = "a7cfb84d1" }
+esp-hal-procmacros = { git = "https://github.com/snabb/esp-hal", rev = "a7cfb84d1" }
+esp-metadata-generated = { git = "https://github.com/snabb/esp-hal", rev = "a7cfb84d1" }
+esp-phy = { git = "https://github.com/snabb/esp-hal", rev = "a7cfb84d1" }
+esp-println = { git = "https://github.com/snabb/esp-hal", rev = "a7cfb84d1" }
+esp-radio = { git = "https://github.com/snabb/esp-hal", rev = "a7cfb84d1" }
+esp-radio-rtos-driver = { git = "https://github.com/snabb/esp-hal", rev = "a7cfb84d1" }
+esp-riscv-rt = { git = "https://github.com/snabb/esp-hal", rev = "a7cfb84d1" }
+esp-rom-sys = { git = "https://github.com/snabb/esp-hal", rev = "a7cfb84d1" }
+esp-rtos = { git = "https://github.com/snabb/esp-hal", rev = "a7cfb84d1" }
+esp-sync = { git = "https://github.com/snabb/esp-hal", rev = "a7cfb84d1" }
+
+# embassy-net from Git names these by path; use the released crates that esp-rtos also uses.
+[patch."https://github.com/embassy-rs/embassy"]
+embassy-futures = { version = "=0.1.2" }
+embassy-sync    = { version = "=0.8.0" }
+embassy-time    = { version = "=0.5.1" }

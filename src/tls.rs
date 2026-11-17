@@ -114,7 +114,7 @@ pub async fn connect<'a>(
     Ok(tls)
 }
 
-pub struct Socket<'a>(pub TcpSocket<'a>);
+pub struct Socket<'a>(pub TcpSocket<'a, 'static>);
 impl embedded_io_async::ErrorType for Socket<'_> {
     type Error = embassy_net::tcp::Error;
 }
@@ -133,11 +133,11 @@ impl embedded_io_async::Write for Socket<'_> {
 }
 impl mbedtls_rs::Split for Socket<'_> {
     type Read<'a>
-        = embassy_net::tcp::TcpReader<'a>
+        = embassy_net::tcp::TcpReader<'a, 'static>
     where
         Self: 'a;
     type Write<'a>
-        = embassy_net::tcp::TcpWriter<'a>
+        = embassy_net::tcp::TcpWriter<'a, 'static>
     where
         Self: 'a;
     fn split(&mut self) -> (Self::Read<'_>, Self::Write<'_>) {
