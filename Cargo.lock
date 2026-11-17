@@ -1207,7 +1207,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e35d6e78f4cebb90e51d543db8fe41528851d6deeef6ef21ebd4bfdc1e784776"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2414,7 +2414,7 @@ dependencies = [
 [[package]]
 name = "mai-coap"
 version = "0.1.0"
-source = "git+https://github.com/snabb/mai-coap.git?rev=9aed6d3427edeeb26c8152613b41959407063d7f#9aed6d3427edeeb26c8152613b41959407063d7f"
+source = "git+https://github.com/snabb/mai-coap.git?rev=925b29b741664802a535fb4582e70d58c786be71#925b29b741664802a535fb4582e70d58c786be71"
 dependencies = [
  "aes",
  "async-io",
@@ -2426,7 +2426,7 @@ dependencies = [
  "heapless 0.9.3",
  "hkdf",
  "lakers",
- "nix 0.31.4",
+ "nix 0.32.0",
  "p256",
  "rand_core 0.10.1",
  "sha2",
@@ -2541,9 +2541,9 @@ dependencies = [
 
 [[package]]
 name = "nix"
-version = "0.31.4"
+version = "0.32.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2bc81ce8148d3b4f3274da811f11cdd824ae661ee4ef732cdb229825cf5be7f7"
+checksum = "77730ed34f01f4990cb2ea67fec715ecebc6fab9a6396cf83c5529b13f581bdc"
 dependencies = [
  "bitflags 2.13.2",
  "cfg-if",
@@ -2577,7 +2577,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -3027,7 +3027,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -3377,7 +3377,7 @@ dependencies = [
  "getrandom",
  "once_cell",
  "rustix 1.1.6",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -3752,7 +3752,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
