@@ -129,7 +129,8 @@ The device has five entities:
   Plasma Flow, the rate of the second wave in the wave effects, how often drops
   fall in Paint Mixing, the red/white ratio in Candy Cane, the bulb width (1–10
   LEDs) in Christmas Chase and Christmas Flow, and the tail length in Sinelon and
-  Colour Sinelon (doubling every 32 steps up). Other effects ignore it.
+  Colour Sinelon (doubling every 32 steps up). The ambient effects use it as
+  described below. Other effects ignore it.
 - **Chip Temperature** (diagnostic sensor, °C): die temperature, updated every minute.
 - **Firmware Version** (diagnostic sensor): the running build ID.
 
@@ -170,6 +171,15 @@ mounted the other way up):
 - Blue and white: Finland Snow, Finland Blue White Twinkle, Finland Snowfall,
   Finland Ribbon, Finland Frost, Finland Snowflakes.
 - Scenes: Finland Revontulet, Finland Kaamos.
+
+Ambient effects:
+
+- **Stained Glass** slowly exchanges colors between fixed panes. Effect
+  Variation blends from a cool palette through jewel tones to a warm palette.
+- **Color Pleats** stretches and compresses mirrored color bands around the
+  midpoint. Effect Variation controls the amount of stretching.
+- **Color Bloom** opens a broad patch of color, holds it, then fades it into an
+  indigo background. Effect Variation controls how wide the bloom opens.
 
 After a reboot the strip stays dark until the device reaches the MQTT broker,
 then restores the light state, effect speed and effect variation it last

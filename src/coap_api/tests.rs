@@ -427,7 +427,10 @@ fn effect_list_spans_blocks_and_stays_valid_json() {
             .unwrap();
         let text = core::str::from_utf8(&body[..len]).unwrap();
         assert!(text.starts_with(r#"["None","Rainbow","#), "{text}");
-        assert!(text.ends_with(r#""Finland Kaamos"]"#), "{text}");
+        assert!(
+            text.ends_with(r#""Finland Kaamos","Stained Glass","Color Pleats","Color Bloom"]"#),
+            "{text}"
+        );
         assert_eq!(text.matches(',').count(), EFFECTS.len());
     });
 }

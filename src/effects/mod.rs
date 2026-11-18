@@ -4,6 +4,7 @@ use smart_leds::RGB8;
 
 // To add an effect: create a file in this directory, add it below, dispatch it
 // in render(), then add its EffectId variant and EFFECTS entry in lib.rs.
+mod ambient;
 mod aurora;
 mod breathe;
 mod christmas;
@@ -77,6 +78,9 @@ pub(crate) fn render<const N: usize>(runtime: &mut EffectRuntime<N>) {
         EffectId::FinlandSnowflakes => finland::snowflakes::render(runtime),
         EffectId::FinlandRevontulet => finland::revontulet::render(runtime),
         EffectId::FinlandKaamos => finland::kaamos::render(runtime),
+        EffectId::StainedGlass => ambient::stained_glass(runtime),
+        EffectId::ColorPleats => ambient::color_pleats(runtime),
+        EffectId::ColorBloom => ambient::color_bloom(runtime),
     }
 }
 
