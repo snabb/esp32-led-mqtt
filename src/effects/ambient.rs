@@ -1,4 +1,3 @@
-use super::sin_q16;
 use crate::{EffectRuntime, blend_rgb, scale8};
 use smart_leds::RGB8;
 
@@ -75,32 +74,6 @@ pub(super) fn stained_glass<const N: usize>(runtime: &mut EffectRuntime<N>) {
         let left = right.saturating_sub(1).min(4);
         let weight = ((position % ONE).min(2 * HALF_SEAM) * 255 / (2 * HALF_SEAM)) as u8;
         *pixel = blend_rgb(panes[left], panes[right.min(4)], eased(weight));
-    }
-}
-
-const PLEATS: [RGB8; 4] = [
-    rgb(75, 68, 193),
-    rgb(46, 182, 186),
-    rgb(214, 82, 151),
-    rgb(223, 159, 61),
-];
-
-pub(super) fn color_pleats<const N: usize>(runtime: &mut EffectRuntime<N>) {
-    let amplitude = 3 * 255 + i32::from(runtime.params.variation) * 13;
-    let stretch = sin_q16(runtime.phase(32_000)) * amplitude / (100 * 255);
-    for (index, pixel) in runtime.frame.iter_mut().enumerate() {
-        let distance = if N == 1 {
-            ONE / 2
-        } else {
-            let from_end = index.min(N - 1 - index);
-            ONE - 2 * pixel_center::<N>(from_end)
-        };
-        // The displacement vanishes at both anchors and peaks halfway between them.
-        let envelope = ((distance * (ONE - distance)) >> 14) as i64;
-        let warped = distance as i32 + ((i64::from(stretch) * envelope) >> 16) as i32;
-        let position = (warped as u32).min(ONE - 1) * 3;
-        let stop = (position / ONE) as usize;
-        *pixel = blend_rgb(PLEATS[stop], PLEATS[stop + 1], (position >> 8) as u8);
     }
 }
 

@@ -79,7 +79,6 @@ pub(crate) fn render<const N: usize>(runtime: &mut EffectRuntime<N>) {
         EffectId::FinlandRevontulet => finland::revontulet::render(runtime),
         EffectId::FinlandKaamos => finland::kaamos::render(runtime),
         EffectId::StainedGlass => ambient::stained_glass(runtime),
-        EffectId::ColorPleats => ambient::color_pleats(runtime),
         EffectId::ColorBloom => ambient::color_bloom(runtime),
     }
 }

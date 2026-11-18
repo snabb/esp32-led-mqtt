@@ -176,8 +176,6 @@ Ambient effects:
 
 - **Stained Glass** slowly exchanges colors between fixed panes. Effect
   Variation blends from a cool palette through jewel tones to a warm palette.
-- **Color Pleats** stretches and compresses mirrored color bands around the
-  midpoint. Effect Variation controls the amount of stretching.
 - **Color Bloom** opens a broad patch of color, holds it, then fades it into an
   indigo background. Effect Variation controls how wide the bloom opens.
 
