@@ -1,4 +1,6 @@
 use crate::flash::FlashStorage;
+#[cfg(feature = "_control")]
+use core::sync::atomic::AtomicBool;
 use core::sync::atomic::{AtomicU32, Ordering};
 use embassy_embedded_hal::adapter::{BlockingAsync, YieldingAsync};
 use embassy_time::Timer;
@@ -13,6 +15,80 @@ use esp32_led_mqtt::{
 use crate::flash::{self, Job};
 
 static GENERATION: AtomicU32 = AtomicU32::new(0);
+#[cfg(feature = "_control")]
+static THREAD_STAGED: AtomicBool = AtomicBool::new(false);
+
+#[cfg(feature = "_control")]
+pub fn thread_staged() -> bool {
+    THREAD_STAGED.load(Ordering::Acquire)
+}
+
+#[cfg(feature = "coap")]
+static THREAD_STATE: critical_section::Mutex<core::cell::Cell<(&'static str, u32)>> =
+    critical_section::Mutex::new(core::cell::Cell::new(("unconfigured", 0)));
+
+#[cfg(feature = "coap")]
+pub fn thread_status() -> (&'static str, u32) {
+    critical_section::with(|cs| THREAD_STATE.borrow(cs).get())
+}
+
+#[cfg(feature = "coap")]
+pub fn set_thread_status(status: &'static str, generation: u32) {
+    critical_section::with(|cs| THREAD_STATE.borrow(cs).set((status, generation)));
+}
+
+fn init_thread_seed(
+    config: &mut DeviceConfig,
+    stored: Option<&DeviceConfig>,
+) -> Result<(), config_store::Error> {
+    use core::fmt::Write;
+
+    let Some(profile) = &mut config.thread else {
+        return Ok(());
+    };
+    if let Some(old) = stored.and_then(|config| config.thread.as_ref())
+        && old.seed_bytes().is_some()
+    {
+        profile.seed = old.seed.clone();
+    } else {
+        let rng = esp_hal::rng::Trng::try_new().map_err(|_| config_store::Error::Storage)?;
+        let mut seed = [0; 32];
+        rng.read(&mut seed);
+        for byte in seed {
+            write!(profile.seed, "{byte:02x}").expect("64-byte seed field");
+        }
+    }
+    Ok(())
+}
+
+#[cfg(feature = "coap")]
+pub async fn stage_thread(flash: &mut FlashStorage, profile: device_config::ThreadProfile) {
+    let previous = thread_status().1;
+    // A failed write may have committed. Until a successful read on reboot or a
+    // verified retry, keep cross-radio activation disabled.
+    THREAD_STAGED.store(false, Ordering::Release);
+    let mut storage = YieldingAsync::new(BlockingAsync::new(flash));
+    let range = device_config::PARTITION;
+    let result = async {
+        let stored = config_store::load(&mut storage, range.clone())
+            .await?
+            .ok_or(config_store::Error::Verification)?;
+        let mut config = stored.clone();
+        config.thread = Some(profile);
+        init_thread_seed(&mut config, Some(&stored))?;
+        config_store::save(&mut storage, range, config).await
+    }
+    .await;
+    match result {
+        Ok(generation) => {
+            GENERATION.store(generation, Ordering::Relaxed);
+            THREAD_STAGED.store(true, Ordering::Release);
+            set_thread_status("saved", generation);
+        }
+        Err(_) => set_thread_status("failed", previous),
+    }
+}
+
 /// The device's public CCS credential in hex, empty until it has a device key.
 #[cfg(feature = "coap")]
 static DEVICE_CREDENTIAL: critical_section::Mutex<
@@ -90,6 +166,17 @@ pub async fn load(flash: &mut FlashStorage) -> Result<Option<DeviceConfig>, &'st
         result.as_ref().map_or(0, |cfg| cfg.generation),
         Ordering::Relaxed,
     );
+    #[cfg(feature = "_control")]
+    let staged = result
+        .as_ref()
+        .and_then(|config| config.thread.as_ref())
+        .is_some_and(|profile| profile.seed_bytes().is_some());
+    #[cfg(feature = "_control")]
+    THREAD_STAGED.store(staged, Ordering::Release);
+    #[cfg(feature = "coap")]
+    if staged {
+        set_thread_status("saved", GENERATION.load(Ordering::Relaxed));
+    }
     #[cfg(feature = "coap")]
     if let Some(config) = &result {
         set_device_credential(credential_of(config));
@@ -182,10 +269,10 @@ pub async fn handle(flash: &mut FlashStorage, command: Command) {
             let saved = match config_store::load(&mut storage, range.clone()).await {
                 Ok(stored) => {
                     config.keep_coap_keys(stored.as_ref());
+                    config.keep_radio_profiles(stored.as_ref());
+                    let config = init_thread_seed(&mut config, stored.as_ref()).map(|()| config);
                     #[cfg(feature = "coap")]
-                    let config = provide_device_key(config);
-                    #[cfg(not(feature = "coap"))]
-                    let config = Ok(config);
+                    let config = config.and_then(provide_device_key);
                     match config {
                         Ok(config) => {
                             #[cfg(feature = "coap")]

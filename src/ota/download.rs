@@ -19,7 +19,9 @@ type Updater<'a> = UpdateSlot<&'a mut FlashStorage>;
 
 static AVAILABLE: AtomicBool = AtomicBool::new(false);
 const READ_TIMEOUT: Duration = Duration::from_secs(15);
-const UPDATE_TIMEOUT: Duration = Duration::from_secs(180);
+const UPDATE_SECONDS: u64 = if cfg!(feature = "thread") { 1200 } else { 180 };
+const UPDATE_TIMEOUT: Duration = Duration::from_secs(UPDATE_SECONDS);
+pub(crate) const DOWNLOAD_WATCHDOG_SECONDS: u64 = UPDATE_SECONDS + 10;
 /// Only P-256 reaches the ECC accelerator, and it must be offered alone: with X25519
 /// also listed, Google's servers pick X25519 even when P-256 comes first. TLS 1.3
 /// requires servers to support P-256, so there is no fallback.
@@ -187,7 +189,8 @@ async fn transfer<IO: Read + Write>(
     ota_protocol::validate_headers(&headers[..len], size).map_err(|_| "http_framing")?;
     let mut remaining = size as usize;
     let mut block = [0; 1024];
-    let mut writer = ImageWriter::<Sha256Context>::new(&request.manifest);
+    let mut writer = ImageWriter::<Sha256Context>::new(&request.manifest)
+        .with_thread_migration(crate::config::thread_staged());
     let mut last_percent = 0;
     while remaining != 0 {
         let count = remaining.min(block.len());

@@ -85,6 +85,7 @@ files are found by host name otherwise.
 | `/effects` | GET | | JSON list of effect names, block-wise |
 | `/logs` | GET | Yes | See [logs](#logs) |
 | `/config` | GET, PUT | | See [settings](#settings) |
+| `/config/thread` | GET, PUT | | Read staging status or stage a Thread profile on Wi-Fi |
 | `/coap/clients` | GET, POST, DELETE | | See [keys](#client-keys-over-coap). GET gives fingerprints as JSON, POST takes a hex credential, DELETE takes `?fp=` |
 | `/firmware` | GET | Yes | [OTA status](OTA.md#status-messages), JSON |
 | `/firmware/update` | POST | | The [HTTPS OTA command](OTA.md#send-an-update), JSON |
@@ -105,6 +106,43 @@ as a whole, saves it and reboots. It refuses `coap_*` fields, and the stored key
 
 There's no rollback for settings. **Wrong Wi-Fi settings leave the device unreachable until
 it's provisioned over USB.**
+
+### Migrate a device to Thread
+
+First install a Wi-Fi build that supports Thread migration using the usual OTA
+workflow. Build the Thread image for the same hardware profile.
+
+```sh
+OTA_ROLLBACK_BOOTLOADER=1 cargo build --locked --release \
+  --no-default-features --features thread,coap,mqtt
+espflash save-image --chip esp32c6 --partition-table partitions.csv \
+  target/riscv32imac-unknown-none-elf/release/esp32-led-mqtt local/thread.bin
+```
+
+Keep a private JSON profile in `local/thread.json`. Set `dataset` to the hex
+Active Operational Dataset from your Thread border router and optionally
+set `dns` to a reachable IPv6 DNS resolver. See [Thread settings](CONFIGURATION.md#thread-settings)
+for DNS and routing requirements.
+
+```sh
+uv run tools/coap.py --host "$WIFI_HOST" thread-migrate \
+  local/thread.json local/thread.bin --thread-host "$THREAD_HOST"
+```
+
+`THREAD_HOST` can be the same `esp32-led-XXXXXX.local` name, if the border
+router republishes SRP registrations, or a reachable Thread IPv6 address.
+The command stages the profile over Wi-Fi, checks that it was saved, and
+uploads the image. After reboot it resolves the Thread name over IPv6 and
+polls the firmware status using the same device credential. If the trial
+cannot reach the network or its configured control plane within two minutes,
+the bootloader returns to the saved Wi-Fi installation.
+
+`thread-stage local/thread.json` saves the profile without uploading or
+rebooting. The equivalent API is `PUT /config/thread` with the private JSON
+profile as the body, followed by `GET /config/thread`. Wait for status
+`saved` and an increased `generation` before starting OTA. A `pending`
+status means the write is in flight, `failed` means it was not verified,
+and `unconfigured` means no Thread profile has been staged.
 
 ## Logs
 

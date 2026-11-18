@@ -244,6 +244,42 @@ mod tests {
     }
 
     #[test]
+    fn interrupted_thread_staging_preserves_wifi_and_can_be_retried() {
+        use crate::device_config::{TEST_DATASET, ThreadProfile};
+        block_on(async {
+            let mut initial = Flash::new();
+            save(&mut initial, 0..8192, config()).await.unwrap();
+            let staged = ThreadProfile {
+                dataset: TEST_DATASET.try_into().unwrap(),
+                dns: Some("fd12::53".parse().unwrap()),
+                seed: "ab".repeat(32).as_str().try_into().unwrap(),
+            };
+            for budget in 0..256 {
+                let mut flash = initial.clone();
+                let mut next = config();
+                next.thread = Some(staged.clone());
+                flash.budget = Some(budget);
+                let _ = save(&mut flash, 0..8192, next.clone()).await;
+                flash.budget = None;
+                let result = load(&mut flash, 0..8192).await.unwrap().unwrap();
+                assert_eq!(result.wifi_ssid, "network");
+                assert_eq!(result.wifi_password, "password1");
+                match result.thread {
+                    None => assert_eq!(result.generation, 1),
+                    Some(profile) => {
+                        assert_eq!(result.generation, 2);
+                        assert_eq!(profile.dataset, staged.dataset);
+                        assert_eq!(profile.seed_bytes(), Some([0xab; 32]));
+                    }
+                }
+                save(&mut flash, 0..8192, next).await.unwrap();
+                let result = load(&mut flash, 0..8192).await.unwrap().unwrap();
+                assert_eq!(result.thread.unwrap().seed_bytes(), Some([0xab; 32]));
+            }
+        });
+    }
+
+    #[test]
     fn interrupted_replacement_keeps_an_entire_old_or_new_snapshot() {
         block_on(async {
             let mut initial = Flash::new();

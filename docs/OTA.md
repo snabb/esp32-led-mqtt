@@ -3,16 +3,20 @@
 An update starts with a JSON command over MQTT that gives the image's URL,
 size and digests. The device downloads the image over HTTPS and writes it to
 the slot it isn't running from. It checks the image, reboots into it on trial,
-and keeps it only if the LEDs and Wi-Fi work within two minutes and a control
+and keeps it only if the LEDs and networking work within two minutes and a control
 plane proves it works too: an MQTT connection, or one authenticated
-[CoAP](COAP.md) request. If neither is configured, LEDs and Wi-Fi are enough.
+[CoAP](COAP.md) request. If neither is configured, LEDs and networking are enough.
 Otherwise the bootloader goes back to the previous image.
 
 With the `coap` feature, an image can also be
 [uploaded directly](COAP.md#firmware-upload), and the command below can be sent to
 `/firmware/update`.
 
-Stored Wi-Fi and MQTT settings are never touched by an update.
+OTA leaves both radio profiles and the shared MQTT settings in flash. A
+migration-capable Wi-Fi build accepts a Thread image for the same hardware
+profile after the Thread settings have been staged. See [CoAP migration](COAP.md#migrate-a-device-to-thread).
+The HTTPS transfer budget on Thread is 20 minutes. The trial window stays
+at two minutes.
 See also [MQTT over TLS configuration](CONFIGURATION.md#mqtt-over-tls).
 
 ## Enabling OTA
@@ -107,7 +111,7 @@ transitions can be skipped:
 |---|---|
 | `ready` | Ready to accept a command |
 | `disabled` | `configure_network_and_ota`: OTA isn't built in, or there are no device settings. `tls_entropy` or `tls_init`: TLS initialization failed. Other details identify a failed boot check. |
-| `trial` | `health_check`: the new image is waiting for LEDs, Wi-Fi and a control plane |
+| `trial` | `health_check`: the new image is waiting for LEDs, networking and a control plane |
 | `downloading` | `progress` is 0–100 |
 | `verifying` | `flash_readback` |
 | `rebooting` | `verified`: the device is rebooting into the new image |
@@ -127,9 +131,9 @@ transitions can be skipped:
 | `tls_handshake`, `tls_certificate`, other `tls_*` | The certificate chain isn't covered by the bundled roots, the host name doesn't match, the certificate expired before the build date, or the server doesn't accept P-256. Retry once: a one-off handshake failure has been seen. |
 | `http_framing` | Not a `200` response, missing or wrong `Content-Length`, chunked or compressed body, or a redirect |
 | `headers_too_large` | The response headers are over 2 KiB |
-| `image_identity` | Not an ESP32-C6 app image, a `build` that doesn't match the image, or a different `hardware.json` |
+| `image_identity` | Not an ESP32-C6 app image, a `build` that doesn't match the image, a different `hardware.json`, or a radio variant this device cannot activate |
 | `sha256`, `size`, `truncated`, `read`, `read_timeout` | The download didn't match the command or was cut off |
-| `timeout` | The whole update took more than 180 s |
+| `timeout` | The whole HTTPS update exceeded 180 seconds on Wi-Fi or 20 minutes on Thread |
 | `begin`, `flash_write`, `verify_or_activate`, `partition_table` | Flash or partition error. Check the serial log. |
 | `bootloader_state` (state `disabled`) | The bootloader doesn't support rollback. Reflash it as in the [README](../README.md#3-flash-over-usb). |
 | Serial log `OTA unavailable: partition_layout` (or `missing_partition`, `partition_table`) | The flash doesn't match `partitions.csv`. Settings aren't loaded either, so nothing reaches MQTT. Reflash as in the README. |
@@ -142,7 +146,7 @@ MQTT or get an authenticated CoAP request. If that all succeeds, it marks the im
 valid. If not, it resets, and the bootloader switches back to the previous image. A
 125 s hardware watchdog catches a firmware that hangs.
 
-- Wi-Fi outages during the trial also cause a rollback, and so does a broker outage
+- Network outages during the trial also cause a rollback, and so does a broker outage
   unless a CoAP client contacts the device.
 - An image without device settings can't pass the trial.
 - The old image doesn't retry the rejected update by itself.
@@ -217,7 +221,7 @@ this layout at boot and turns off OTA and settings storage if it doesn't match.
 | `phy_init` | `0xf000` | 4 KiB | Not used by the application code |
 | `ota_0` | `0x10000` | 1984 KiB | App slot. Gets the first install. |
 | `ota_1` | `0x200000` | 1984 KiB | App slot |
-| `device_config` | `0x3f0000` | 64 KiB | Wi-Fi and MQTT settings |
+| `device_config` | `0x3f0000` | 64 KiB | Wi-Fi, Thread and MQTT settings |
 
 The bootloader sits at `0x0` and the partition table at `0x8000`. There is no
 factory slot.

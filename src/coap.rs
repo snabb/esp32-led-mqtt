@@ -16,7 +16,7 @@ use esp32_led_mqtt::{
     },
     coap_crypto::{AcceleratedCrypto, Accelerator},
     coap_keys,
-    device_config::{CoapCredential, DeviceConfig},
+    device_config::{CoapCredential, DeviceConfig, ThreadProfile},
     light_command::{LightState, LightUpdate},
     log_buffer::LogRead,
     provisioning::Command,
@@ -142,6 +142,10 @@ impl UploadAccess for FlashUpload {
     // `main` starts its work queue in every build with CoAP.
     type Hash = Sha256Context;
 
+    fn allow_thread_image(&self) -> bool {
+        crate::config::thread_staged()
+    }
+
     fn acquire(&mut self) -> Option<Self::Target> {
         let lease = flash::try_lease()?;
         match Ota::new(FlashAccess(lease)) {
@@ -210,6 +214,10 @@ impl Device for HardwareDevice {
     fn submit_ota(&self, command: &[u8]) -> Result<(), &'static str> {
         ota::submit(command, false)
     }
+    fn uses_thread(&self) -> bool {
+        cfg!(feature = "thread")
+    }
+
     fn config(&self) -> &DeviceConfig {
         self.settings
     }
@@ -224,6 +232,22 @@ impl Device for HardwareDevice {
             })
         })
     }
+    fn stage_thread(&self, profile: ThreadProfile) -> Result<(), &'static str> {
+        if cfg!(feature = "thread") {
+            return Err("unavailable");
+        }
+        queue(|| {
+            let (_, generation) = crate::config::thread_status();
+            crate::config::set_thread_status("pending", generation);
+            Job::ThreadProfile(profile)
+        })
+        .map_err(|_| "busy")
+    }
+
+    fn thread_status(&self) -> (&'static str, u32) {
+        crate::config::thread_status()
+    }
+
     fn save_clients(&self, clients: ClientList) -> Result<(), Busy> {
         queue(|| Job::CoapClients(clients))
     }

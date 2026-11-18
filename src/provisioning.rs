@@ -63,6 +63,13 @@ impl Command {
         }
         if let Self::Configure { config, .. } = &command {
             config.validate()?;
+            if config
+                .thread
+                .as_ref()
+                .is_some_and(|profile| !profile.seed.is_empty())
+            {
+                return Err(Error::Thread);
+            }
             // Generated on the device: no copy of it should exist anywhere else.
             if !config.coap_device_key.is_empty() {
                 return Err(Error::Coap);

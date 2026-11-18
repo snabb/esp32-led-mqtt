@@ -35,6 +35,8 @@ pub enum Job {
     #[cfg(feature = "coap")]
     CoapClients(esp32_led_mqtt::coap_api::ClientList),
     #[cfg(feature = "coap")]
+    ThreadProfile(device_config::ThreadProfile),
+    #[cfg(feature = "coap")]
     Reboot,
     /// A firmware upload holds a `Lease`. This job only supervises it.
     #[cfg(feature = "coap")]
@@ -269,7 +271,7 @@ pub async fn task(
                 if let Some(client) = &client {
                     let mut flash = take_storage();
                     // Backs up ota::UPDATE_TIMEOUT across synchronous flash operations.
-                    arm_watchdog(&mut wdt, 190);
+                    arm_watchdog(&mut wdt, ota::DOWNLOAD_WATCHDOG_SECONDS);
                     ota::update(client, &mut flash, &request).await;
                     wdt.disable();
                     put_storage(flash);
@@ -283,6 +285,14 @@ pub async fn task(
                 // and active settings must match the stored ones.
                 Timer::after_millis(250).await;
                 esp_hal::system::software_reset();
+            }
+            #[cfg(feature = "coap")]
+            Job::ThreadProfile(profile) => {
+                let mut flash = take_storage();
+                arm_watchdog(&mut wdt, 30);
+                config::stage_thread(&mut flash, profile).await;
+                wdt.disable();
+                put_storage(flash);
             }
             #[cfg(feature = "coap")]
             Job::CoapClients(clients) => {

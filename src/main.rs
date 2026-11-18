@@ -7,8 +7,13 @@
 )]
 
 use embassy_executor::Spawner;
+#[cfg(feature = "wifi")]
 use embassy_net::{Runner, StackStorage, StaticPool};
-use embassy_time::{Duration, Instant, Ticker, Timer};
+#[cfg(any(feature = "wifi", feature = "_control"))]
+use embassy_time::Duration;
+#[cfg(feature = "wifi")]
+use embassy_time::Timer;
+use embassy_time::{Instant, Ticker};
 use esp_backtrace as _;
 use esp_hal::{
     clock::CpuClock,
@@ -16,10 +21,10 @@ use esp_hal::{
     gpio::{Input, Output, OutputConfig},
     ram,
     rmt::Rmt,
-    rng::Rng,
     time::Rate,
     timer::timg::TimerGroup,
 };
+#[cfg(feature = "wifi")]
 use esp_radio::wifi::{
     self, Config, ControllerConfig, Interface, PowerSaveMode, WifiController, sta::StationConfig,
 };
@@ -39,12 +44,24 @@ mod identity;
 mod light_state;
 #[cfg(feature = "coap")]
 mod log_sink;
-#[cfg(feature = "mdns")]
+#[cfg(all(feature = "wifi", feature = "mdns"))]
 mod mdns;
+#[cfg(feature = "thread")]
+mod thread;
+
+#[cfg(any(
+    all(feature = "wifi", feature = "thread"),
+    not(any(feature = "wifi", feature = "thread"))
+))]
+compile_error!("select exactly one of the wifi and thread features");
 mod memory;
 #[cfg(feature = "mqtt")]
 mod mqtt;
-#[cfg(any(feature = "coap", feature = "mdns", feature = "mqtt"))]
+#[cfg(any(
+    feature = "coap",
+    feature = "mqtt",
+    all(feature = "wifi", feature = "mdns")
+))]
 mod network;
 mod ota;
 #[cfg(feature = "_control")]
@@ -59,6 +76,7 @@ use light_state::{effect_params, get as light_state};
 include!(concat!(env!("OUT_DIR"), "/hardware.rs"));
 
 /// Every packet in flight or queued in a UDP socket. A buffer holds a whole Wi-Fi frame.
+#[cfg(feature = "wifi")]
 static PACKET_POOL: StaticPool<1536, 16, 4> = StaticPool::new();
 
 // Wi-Fi activity can delay RMT refills; extra RMT memory gives the LED transfer
@@ -132,10 +150,9 @@ async fn main(spawner: Spawner) -> ! {
             None
         }
     };
-    // Wi-Fi is the entropy source once configured. Before that, first-time provisioning
-    // may generate the device's key, so the ADC has to provide it.
-    #[cfg(feature = "coap")]
-    if device_config.is_none() {
+    // The 802.15.4 driver does not register an entropy source with esp-hal.
+    // On Wi-Fi, the ADC supplies entropy before first provisioning.
+    if cfg!(feature = "thread") || device_config.is_none() {
         mk_static!(
             esp_hal::rng::TrngSource<'static>,
             esp_hal::rng::TrngSource::new(peripherals.RNG, peripherals.ADC1)
@@ -192,59 +209,8 @@ async fn main(spawner: Spawner) -> ! {
             || (cfg!(feature = "coap") && settings.has_coap_keys())
     });
     if let Some(settings) = device_config {
-        let authentication = match settings.wifi_auth {
-            esp32_led_mqtt::device_config::WifiAuth::Open => wifi::AuthenticationMethodConfig::Open,
-            esp32_led_mqtt::device_config::WifiAuth::Wpa2Personal => {
-                wifi::AuthenticationMethodConfig::Wpa2Personal(
-                    settings
-                        .wifi_password
-                        .as_str()
-                        .try_into()
-                        .expect("validated password"),
-                )
-            }
-        };
-        let station_config = Config::Station(
-            StationConfig::default()
-                .with_ssid(
-                    settings
-                        .wifi_ssid
-                        .as_str()
-                        .try_into()
-                        .expect("validated SSID"),
-                )
-                .with_authentication(authentication),
-        );
-        let mut controller = WifiController::new(
-            peripherals.WIFI,
-            ControllerConfig::default().with_initial_config(station_config),
-        )
-        .expect("failed to initialize Wi-Fi controller");
-        controller
-            .set_max_tx_power(40)
-            .expect("failed to limit Wi-Fi TX power");
-        controller
-            .set_power_saving(PowerSaveMode::Minimum)
-            .expect("failed to enable Wi-Fi power saving");
-        let wifi_interface = Interface::station();
-
-        let rng = Rng::new();
-        let seed = (u64::from(rng.random()) << 32) | u64::from(rng.random());
-        let (stack, runner) = embassy_net::Stack::new(
-            mk_static!(StackStorage<'static>, StackStorage::new()),
-            &PACKET_POOL,
-            seed,
-        );
-        let iface = stack
-            .add_iface_borrowed(mk_static!(Interface, wifi_interface))
-            .expect("interface slot");
-        iface
-            .set_dhcpv4(Some(Default::default()))
-            .expect("Wi-Fi is an Ethernet medium");
-        iface
-            .set_slaac(Some(Default::default()))
-            .expect("Wi-Fi is an Ethernet medium");
-
+        #[cfg(feature = "wifi")]
+        let iface = start_wifi(spawner, peripherals.WIFI, settings);
         #[cfg(feature = "_control")]
         // This also starts the crypto work queues, which CoAP needs even without TLS: its
         // operations would hang without them.
@@ -260,21 +226,23 @@ async fn main(spawner: Spawner) -> ! {
                 warn!("TLS initialization failed: {}", reason);
             }
         }
-        spawner.spawn(connection_task(controller).unwrap());
-        spawner.spawn(net_task(runner).unwrap());
-        #[cfg(any(feature = "mdns", feature = "mqtt"))]
-        spawner.spawn(network::task(iface).unwrap());
-        #[cfg(feature = "mqtt")]
-        if !settings.mqtt_broker.is_empty() {
-            spawner.spawn(mqtt::task(iface, identity, settings, download_context).unwrap());
+        #[cfg(feature = "thread")]
+        let iface = thread::start(spawner, peripherals.IEEE802154, settings, identity);
+        if let Some(iface) = iface {
+            #[cfg(any(feature = "mqtt", all(feature = "wifi", feature = "mdns")))]
+            spawner.spawn(network::task(iface).unwrap());
+            #[cfg(feature = "mqtt")]
+            if !settings.mqtt_broker.is_empty() {
+                spawner.spawn(mqtt::task(iface, identity, settings, download_context).unwrap());
+            }
+            #[cfg(feature = "coap")]
+            if settings.has_coap_keys() {
+                spawner.spawn(coap::task(iface, identity, settings).unwrap());
+            }
+            #[cfg(all(feature = "wifi", feature = "mdns"))]
+            spawner.spawn(mdns::task(iface, identity, settings.has_coap_keys()).unwrap());
+            network = Some(iface);
         }
-        #[cfg(feature = "coap")]
-        if settings.has_coap_keys() {
-            spawner.spawn(coap::task(iface, identity, settings).unwrap());
-        }
-        #[cfg(feature = "mdns")]
-        spawner.spawn(mdns::task(iface, identity, settings.has_coap_keys()).unwrap());
-        network = Some(iface);
     }
     spawner.spawn(
         flash::task(
@@ -339,6 +307,83 @@ fn write_frame(strip: &mut LedStrip<'_>, output: &[RGB8; LED_COUNT]) {
     }
 }
 
+#[cfg(feature = "wifi")]
+fn start_wifi(
+    spawner: Spawner,
+    radio: esp_hal::peripherals::WIFI<'static>,
+    settings: &esp32_led_mqtt::device_config::DeviceConfig,
+) -> Option<embassy_net::iface::Iface<'static>> {
+    if settings.wifi_ssid.is_empty() {
+        warn!("Wi-Fi profile required; provision over USB");
+        return None;
+    }
+    // A warm rollback leaves the 802.15.4 MAC in the modem domain.
+    let modem = esp_hal::peripherals::MODEM_SYSCON::regs();
+    modem
+        .modem_rst_conf()
+        .modify(|_, w| w.rst_zbmac().set_bit());
+    modem
+        .modem_rst_conf()
+        .modify(|_, w| w.rst_zbmac().clear_bit());
+    let authentication = match settings.wifi_auth {
+        esp32_led_mqtt::device_config::WifiAuth::Open => wifi::AuthenticationMethodConfig::Open,
+        esp32_led_mqtt::device_config::WifiAuth::Wpa2Personal => {
+            wifi::AuthenticationMethodConfig::Wpa2Personal(
+                settings
+                    .wifi_password
+                    .as_str()
+                    .try_into()
+                    .expect("validated password"),
+            )
+        }
+    };
+    let station_config = Config::Station(
+        StationConfig::default()
+            .with_ssid(
+                settings
+                    .wifi_ssid
+                    .as_str()
+                    .try_into()
+                    .expect("validated SSID"),
+            )
+            .with_authentication(authentication),
+    );
+    let mut controller = WifiController::new(
+        radio,
+        ControllerConfig::default().with_initial_config(station_config),
+    )
+    .expect("failed to initialize Wi-Fi controller");
+    controller
+        .set_max_tx_power(40)
+        .expect("failed to limit Wi-Fi TX power");
+    controller
+        .set_power_saving(PowerSaveMode::Minimum)
+        .expect("failed to enable Wi-Fi power saving");
+    let wifi_interface = Interface::station();
+
+    let rng = esp_hal::rng::Rng::new();
+    let seed = (u64::from(rng.random()) << 32) | u64::from(rng.random());
+    let (stack, runner) = embassy_net::Stack::new(
+        mk_static!(StackStorage<'static>, StackStorage::new()),
+        &PACKET_POOL,
+        seed,
+    );
+    let iface = stack
+        .add_iface_borrowed(mk_static!(Interface, wifi_interface))
+        .expect("interface slot");
+    iface
+        .set_dhcpv4(Some(Default::default()))
+        .expect("Wi-Fi is an Ethernet medium");
+    iface
+        .set_slaac(Some(Default::default()))
+        .expect("Wi-Fi is an Ethernet medium");
+
+    spawner.spawn(connection_task(controller).unwrap());
+    spawner.spawn(net_task(runner).unwrap());
+    Some(iface)
+}
+
+#[cfg(feature = "wifi")]
 #[embassy_executor::task]
 async fn connection_task(mut controller: WifiController<'static>) {
     loop {
@@ -356,14 +401,13 @@ async fn connection_task(mut controller: WifiController<'static>) {
     }
 }
 
+#[cfg(feature = "wifi")]
 #[embassy_executor::task]
 async fn net_task(mut runner: Runner<'static>) {
     runner.run().await;
 }
 
-/// Resolves an IP literal, or else a DNS A record, or else a AAAA record.
-///
-/// A goes first: DNS servers come only from DHCPv4, so a host that resolves here has IPv4.
+/// Resolves literals or DNS records for the selected radio backend.
 #[cfg(feature = "_control")]
 async fn resolve(
     iface: embassy_net::iface::Iface<'static>,
@@ -373,10 +417,18 @@ async fn resolve(
     use embassy_time::with_timeout;
 
     if let Ok(address) = host.parse() {
+        if cfg!(feature = "thread") && matches!(address, embassy_net::wire::IpAddr::V4(_)) {
+            return Err("ipv6_required");
+        }
         return Ok(address);
     }
     let mut result = Err("dns");
-    for kind in [DnsQueryType::A, DnsQueryType::Aaaa] {
+    let kinds = if cfg!(feature = "thread") {
+        &[DnsQueryType::Aaaa][..]
+    } else {
+        &[DnsQueryType::A, DnsQueryType::Aaaa]
+    };
+    for &kind in kinds {
         result = match with_timeout(Duration::from_secs(15), iface.stack().dns_query(host, kind))
             .await
         {

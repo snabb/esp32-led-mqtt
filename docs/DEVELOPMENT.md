@@ -14,8 +14,9 @@ cargo check --target riscv32imac-unknown-none-elf
 OTA_ROLLBACK_BOOTLOADER=1 cargo clippy --target riscv32imac-unknown-none-elf -- -D warnings
 ```
 
-CI repeats the firmware checks with `--no-default-features`, and with that plus each of
-`--features mqtt`, `--features mdns,mqtt` and `--features coap`.
+CI checks reduced Wi-Fi builds with `--no-default-features` and each of
+`--features wifi`, `--features wifi,mqtt`, `--features wifi,mdns,mqtt` and
+`--features wifi,coap`. It also checks Thread with and without control planes.
 
 Run Clippy with the OTA variables set, or the OTA code paths go unchecked.
 
@@ -23,10 +24,17 @@ Run Clippy with the OTA variables set, or the OTA code paths go unchecked.
 
 | Feature | Default | Enables |
 |---|---|---|
+| `wifi` | Yes | ESP32-C6 Wi-Fi, IPv4 DHCP and IPv6 SLAAC |
+| `thread` | No | ESP32-C6 Thread and IPv6 |
 | `mqtt` | Yes | MQTT, Home Assistant discovery and OTA started over MQTT |
-| `mdns` | Yes | mDNS responder for `esp32-led-XXXXXX.local` |
+| `mdns` | Yes | Wi-Fi mDNS responder for `esp32-led-XXXXXX.local` |
 | `coap` | Yes | [CoAP API](COAP.md) |
 | `heap-stats` | No | Allocator high-water counters, see [heap measurements](#heap-measurements) |
+
+Select exactly one radio feature in a firmware build. The full Thread build uses
+`--no-default-features --features thread,coap,mqtt`. OpenThread is compiled
+from source and requires CMake, Clang with RISC-V support, and libclang.
+Thread CoAP discovery uses SRP through the border router.
 
 Without a control plane the firmware still drives the LEDs, the button and USB
 provisioning. An image built that way can only be replaced over USB. `_control` is

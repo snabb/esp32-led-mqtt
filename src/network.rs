@@ -1,4 +1,4 @@
-//! The Wi-Fi interface's addresses, for any number of waiting tasks.
+//! The active interface's addresses, for any number of waiting tasks.
 //!
 //! embassy-net keeps one waker per interface for these changes, so a second task waiting on
 //! the interface itself would replace the first one's waker and leave it asleep. This task is
@@ -6,17 +6,16 @@
 
 use core::net::{Ipv4Addr, Ipv6Addr};
 
-#[cfg(any(feature = "mdns", feature = "mqtt"))]
+#[cfg(any(all(feature = "wifi", feature = "mdns"), feature = "mqtt"))]
 use embassy_futures::select::select3;
 use embassy_net::{iface::Iface, wire::IpCidr};
-#[cfg(any(feature = "mdns", feature = "mqtt"))]
+#[cfg(any(all(feature = "wifi", feature = "mdns"), feature = "mqtt"))]
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, watch::Watch};
-#[cfg(any(feature = "mdns", feature = "mqtt"))]
+#[cfg(any(all(feature = "wifi", feature = "mdns"), feature = "mqtt"))]
 use embassy_time::{Duration, Timer};
 
-/// The addresses services should use: IPv4 from DHCP and routable IPv6 from SLAAC. They arrive
-/// seconds apart, in either order.
-#[cfg(any(feature = "mdns", feature = "mqtt"))]
+/// The addresses services should use. Wi-Fi can acquire each family independently.
+#[cfg(any(all(feature = "wifi", feature = "mdns"), feature = "mqtt"))]
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub struct Config {
     pub v4: Option<Ipv4Addr>,
@@ -24,15 +23,15 @@ pub struct Config {
 }
 
 /// One receiver per concurrent waiter: MQTT and mDNS.
-#[cfg(any(feature = "mdns", feature = "mqtt"))]
+#[cfg(any(all(feature = "wifi", feature = "mdns"), feature = "mqtt"))]
 static CONFIG: Watch<CriticalSectionRawMutex, Config, 2> = Watch::new();
 
 /// How often to look for address changes that keep the family up, such as a new SLAAC prefix
 /// or a deprecated one. embassy-net only lets this task wait for a family to come or go.
-#[cfg(any(feature = "mdns", feature = "mqtt"))]
+#[cfg(any(all(feature = "wifi", feature = "mdns"), feature = "mqtt"))]
 const RECHECK: Duration = Duration::from_secs(30);
 
-#[cfg(any(feature = "mdns", feature = "mqtt"))]
+#[cfg(any(all(feature = "wifi", feature = "mdns"), feature = "mqtt"))]
 #[embassy_executor::task]
 pub async fn task(iface: Iface<'static>) {
     let sender = CONFIG.sender();
@@ -69,7 +68,7 @@ pub async fn task(iface: Iface<'static>) {
 }
 
 /// Waits until the configuration satisfies `ready`, and returns it.
-#[cfg(any(feature = "mdns", feature = "mqtt"))]
+#[cfg(any(all(feature = "wifi", feature = "mdns"), feature = "mqtt"))]
 pub async fn wait_config(ready: impl Fn(Config) -> bool) -> Config {
     let mut receiver = CONFIG.receiver().expect("CONFIG receiver capacity");
     receiver.get_and(|state| ready(*state)).await
@@ -83,7 +82,7 @@ pub fn ipv4_address(iface: Iface<'_>) -> Option<Ipv4Addr> {
     })
 }
 
-/// The interface's SLAAC address, preferring one whose prefix is not being retired.
+/// The interface's routable IPv6 address, preferring one whose prefix is not being retired.
 pub fn routable_ipv6_address(iface: Iface<'_>) -> Option<Ipv6Addr> {
     let addrs = iface.ip_addrs();
     let routable = || {

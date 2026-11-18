@@ -1,5 +1,5 @@
 [package]
-description  = "Bare-metal ESP32-C6 LED strip firmware with Wi-Fi and Home Assistant MQTT control"
+description  = "Bare-metal ESP32-C6 LED strip firmware with Wi-Fi or Thread and Home Assistant MQTT control"
 edition      = "2024"
 keywords     = ["esp32", "led", "mqtt", "no-std", "ws2812"]
 license      = "MIT"
@@ -18,7 +18,16 @@ name = "coap_host_server"
 required-features = ["coap"]
 
 [features]
-default = ["coap", "mdns", "mqtt"]
+default = ["wifi", "coap", "mdns", "mqtt"]
+wifi = ["esp-radio/wifi", "embassy-net/dhcpv4", "embassy-net/medium-ethernet", "embassy-net/slaac"]
+thread = [
+  "dep:mbedtls-rs-sys",
+  "dep:openthread",
+  "dep:sha2",
+  "dep:tinyrlibc",
+  "embassy-net/medium-ip",
+  "esp-alloc/compat",
+]
 heap-stats = ["esp-alloc/internal-heap-stats"]
 coap = ["dep:mai-coap", "dep:rand_core", "dep:zeroize", "embassy-net/udp", "_control"]
 mdns = ["dep:edge-mdns", "embassy-net/multicast", "embassy-net/udp"]
@@ -54,15 +63,12 @@ embassy-executor = "0.10.0"
 embassy-futures  = "0.1.2"
 # Unreleased: the xarxa-based stack. The same revision as mai-coap's, so both share one stack.
 embassy-net = { git = "https://github.com/embassy-rs/embassy", rev = "8a940dab0d56a910277b816987e45315ca7979aa", default-features = false, features = [
-  "dhcpv4",
   "dns",
   "icmp-ping-reply",
   "iface-bind",
   "ipv4",
   "ipv6",
   "log",
-  "medium-ethernet",
-  "slaac",
   "tcp",
 ] }
 embassy-sync     = "0.8.0"
@@ -77,11 +83,24 @@ esp-bootloader-esp-idf = { version = "0.6.0", features = ["esp32c6", "log-04"] }
 esp-hal = { version = "1.2.0", features = ["esp32c6", "log-04", "unstable"] }
 esp-hal-smartled = { version = "0.18.0", features = ["esp32c6"] }
 esp-println = { version = "0.18.0", features = ["esp32c6", "log-04"] }
-esp-radio   = { version = "1.0.0-beta.1", features = ["esp32c6", "log-04", "unstable", "wifi"] }
+esp-radio   = { version = "1.0.0-beta.1", features = ["esp32c6", "log-04", "unstable"] }
 esp-hal-ota = { version = "0.7.2", features = ["esp32c6"] }
 embedded-io-async = "0.7.0"
 embassy-embedded-hal = "0.6.0"
 mbedtls-rs = { git = "https://github.com/snabb/mbedtls-rs", rev = "42601bd06", default-features = false, features = ["tls", "esp32c6", "hook-wall-clock", "ssl-out-content-len-2048"], optional = true }
+# OpenThread and TLS share one C library and its process-wide allocator.
+# OpenThread's Rust trace logs include raw settings, including key material.
+mbedtls-rs-sys = { git = "https://github.com/snabb/mbedtls-rs", rev = "42601bd06", default-features = false, optional = true }
+openthread = { git = "https://github.com/esp-rs/openthread", rev = "679dc18cc50d5015244e32c98a14277df9959a5b", default-features = false, features = [
+  "esp-radio",
+  "heap-ext-mbedtls",
+  "isupper",
+  "mbedtls-rs-sys",
+  "slaac",
+  "srp-client",
+], optional = true }
+sha2 = { version = "0.11.1", default-features = false, optional = true }
+tinyrlibc = { version = "0.5", default-features = false, features = ["strtoul", "utoa"], optional = true }
 time = { version = "0.3.55", default-features = false, optional = true }
 mai-coap = { git = "https://github.com/snabb/mai-coap.git", rev = "925b29b741664802a535fb4582e70d58c786be71", default-features = false, features = ["embassy-net-xarxa-ipv4", "embassy-net-xarxa-ipv6", "embassy-time"], optional = true }
 esp-rtos    = { version = "0.4.0", features = ["embassy", "esp-radio", "esp32c6", "log-04"] }
@@ -118,6 +137,7 @@ lto           = 'fat'
 opt-level     = 's'
 
 [patch.crates-io]
+mbedtls-rs-sys = { git = "https://github.com/snabb/mbedtls-rs", rev = "42601bd06" }
 esp-alloc = { git = "https://github.com/snabb/esp-hal", rev = "a7cfb84d1" }
 esp-backtrace = { git = "https://github.com/snabb/esp-hal", rev = "a7cfb84d1" }
 esp-bootloader-esp-idf = { git = "https://github.com/snabb/esp-hal", rev = "a7cfb84d1" }

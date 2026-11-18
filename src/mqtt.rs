@@ -67,11 +67,10 @@ pub async fn task(
             .expect("receiver capacity"),
     };
     loop {
-        // An IPv6 literal needs IPv6; anything else needs IPv4, as DNS servers come only from
-        // DHCPv4.
+        // Wi-Fi obtains its DNS servers from DHCPv4. Thread uses an IPv6 resolver.
         let v6_broker = settings.mqtt_broker.parse::<core::net::Ipv6Addr>().is_ok();
         crate::network::wait_config(|state| {
-            if v6_broker {
+            if cfg!(feature = "thread") || v6_broker {
                 state.v6.is_some()
             } else {
                 state.v4.is_some()

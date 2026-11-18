@@ -4,8 +4,8 @@ Configuration comes in two layers:
 
 - **Hardware profile** (`hardware.json`) is compiled into the firmware. One
   image fits every device with the same hardware.
-- **Device settings** (Wi-Fi, MQTT) are stored in each device's flash and
-  written over USB. Builds never read them.
+- **Device settings** (Wi-Fi, Thread, MQTT) are stored in each device's flash.
+  USB provisioning and authenticated CoAP can write them. Builds never read them.
 
 ## Hardware profile
 
@@ -65,9 +65,10 @@ under `local/`, which Git ignores.
 
 | Field | Required | Rules |
 |---|---|---|
-| `wifi_ssid` | yes | 1–32 bytes |
-| `wifi_password` | yes | WPA2: 8–63 characters, or 64 hex digits. Open networks: `""`. |
+| `wifi_ssid` | for Wi-Fi | 1–32 bytes |
+| `wifi_password` | for Wi-Fi | WPA2: 8–63 characters, or 64 hex digits. Open networks: `""`. |
 | `wifi_auth` | no | `wpa2_personal` (default) or `open` |
+| `thread` | for Thread | Active Operational Dataset and optional IPv6 DNS resolver. See [Thread settings](#thread-settings). |
 | `mqtt_broker` | no | Host name or IPv4 address made of letters, digits, `.` and `-`, or an unbracketed IPv6 address; up to 128 bytes. No scheme or port. Leave it out to turn MQTT off. |
 | `mqtt_port` | no | Default `1883`; normally `8883` with TLS |
 | `coap_clients` | no | Client public keys for [CoAP](COAP.md#keys), as hex. Up to four. Usually set with `provision.py --coap-client`. Left out, the stored ones are kept |
@@ -88,9 +89,34 @@ mqtt_username: led
 mqtt_password: secret
 ```
 
-The broker name is resolved through DNS: A records first, then AAAA. DNS
+On Wi-Fi, the broker name is resolved through DNS: A records first, then AAAA. DNS
 servers come only from DHCPv4. Multicast names such as `.local` work only if
 that DNS server resolves them. If it doesn't, use an IP address.
+
+### Thread settings
+
+For USB provisioning of a Thread build, include a `thread` object in the
+settings file. Its `dataset` is the Active Operational Dataset in hex. Its
+optional `dns` is an IPv6 address for a DNS resolver reachable over Thread.
+The dataset contains network credentials, so keep the file under `local/`.
+For remote migration, stage just this object using [CoAP](COAP.md#migrate-a-device-to-thread).
+
+The selected firmware build determines which radio profile to use. Wi-Fi and
+Thread profiles can coexist in flash, and share the MQTT settings and CoAP
+keys. On a running Thread build, replace the dataset or DNS resolver over USB.
+The Thread build connects to an existing mesh. A border router with an
+off-mesh-routable prefix allows access from the LAN. Its SRP advertising proxy
+publishes the device name and service when CoAP has keys.
+
+On Thread, use an IPv6 broker address or set `dns` to resolve broker and OTA
+hostnames to AAAA records. IPv4-only hosts require DNS64/NAT64 and a hostname.
+If the stored MQTT broker is an IPv4 literal, prepare a reachable IPv6 broker
+address or a compatible hostname before migrating.
+
+For recovery or to switch back to Wi-Fi, reinstall the corresponding build
+over USB and provision that radio's profile if needed. Wi-Fi builds that predate
+Thread migration cannot read a snapshot containing a Thread profile. Use the documented
+`espflash flash` command to preserve the device settings partition.
 
 ### MQTT over TLS
 

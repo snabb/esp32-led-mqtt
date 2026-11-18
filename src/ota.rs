@@ -15,6 +15,8 @@ use log::{info, warn};
 #[cfg(feature = "_control")]
 mod download;
 
+#[cfg(feature = "_control")]
+pub(crate) use download::DOWNLOAD_WATCHDOG_SECONDS;
 #[cfg(feature = "coap")]
 pub use download::rollback_enabled;
 #[cfg(feature = "_control")]

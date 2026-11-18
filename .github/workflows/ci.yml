@@ -36,16 +36,16 @@ jobs:
         run: cargo check --target riscv32imac-unknown-none-elf
 
       - name: Check firmware without control planes
-        run: cargo check --target riscv32imac-unknown-none-elf --no-default-features
+        run: cargo check --target riscv32imac-unknown-none-elf --no-default-features --features wifi
 
       - name: Check firmware with MQTT only
-        run: cargo check --target riscv32imac-unknown-none-elf --no-default-features --features mqtt
+        run: cargo check --target riscv32imac-unknown-none-elf --no-default-features --features wifi,mqtt
 
       - name: Check firmware without CoAP
-        run: cargo check --target riscv32imac-unknown-none-elf --no-default-features --features mdns,mqtt
+        run: cargo check --target riscv32imac-unknown-none-elf --no-default-features --features wifi,mdns,mqtt
 
       - name: Check firmware with CoAP only
-        run: cargo check --target riscv32imac-unknown-none-elf --no-default-features --features coap
+        run: cargo check --target riscv32imac-unknown-none-elf --no-default-features --features wifi,coap
 
       - name: Run Clippy with OTA enabled
         env:
@@ -55,19 +55,27 @@ jobs:
       - name: Run Clippy without control planes
         env:
           OTA_ROLLBACK_BOOTLOADER: "1"
-        run: cargo clippy --target riscv32imac-unknown-none-elf --no-default-features -- -D warnings
+        run: cargo clippy --target riscv32imac-unknown-none-elf --no-default-features --features wifi -- -D warnings
 
       - name: Run Clippy with MQTT only
         env:
           OTA_ROLLBACK_BOOTLOADER: "1"
-        run: cargo clippy --target riscv32imac-unknown-none-elf --no-default-features --features mqtt -- -D warnings
+        run: cargo clippy --target riscv32imac-unknown-none-elf --no-default-features --features wifi,mqtt -- -D warnings
 
       - name: Run Clippy without CoAP
         env:
           OTA_ROLLBACK_BOOTLOADER: "1"
-        run: cargo clippy --target riscv32imac-unknown-none-elf --no-default-features --features mdns,mqtt -- -D warnings
+        run: cargo clippy --target riscv32imac-unknown-none-elf --no-default-features --features wifi,mdns,mqtt -- -D warnings
 
       - name: Run Clippy with CoAP only
         env:
           OTA_ROLLBACK_BOOTLOADER: "1"
-        run: cargo clippy --target riscv32imac-unknown-none-elf --no-default-features --features coap -- -D warnings
+        run: cargo clippy --target riscv32imac-unknown-none-elf --no-default-features --features wifi,coap -- -D warnings
+
+      - name: Check Thread firmware without control planes
+        run: cargo check --target riscv32imac-unknown-none-elf --no-default-features --features thread
+
+      - name: Run Clippy for Thread with OTA enabled
+        env:
+          OTA_ROLLBACK_BOOTLOADER: "1"
+        run: cargo clippy --target riscv32imac-unknown-none-elf --no-default-features --features thread,coap,mqtt -- -D warnings

@@ -49,6 +49,7 @@ struct FakeDevice {
     ota_commands: RefCell<StdVec<StdVec<u8>>>,
     busy: Cell<bool>,
     written_config: RefCell<Option<DeviceConfig>>,
+    staged_thread: RefCell<Option<ThreadProfile>>,
     saved_clients: RefCell<Option<ClientList>>,
     reboots: Cell<u32>,
     upload_enabled: Cell<bool>,
@@ -147,6 +148,7 @@ impl FakeDevice {
             ota_commands: RefCell::new(StdVec::new()),
             busy: Cell::new(false),
             written_config: RefCell::new(None),
+            staged_thread: RefCell::new(None),
             saved_clients: RefCell::new(None),
             reboots: Cell::new(0),
             upload_enabled: Cell::new(true),
@@ -210,6 +212,20 @@ impl Device for FakeDevice {
         }
         *self.written_config.borrow_mut() = Some(config);
         Ok(())
+    }
+    fn stage_thread(&self, profile: ThreadProfile) -> Result<(), &'static str> {
+        if self.busy.get() {
+            return Err("busy");
+        }
+        *self.staged_thread.borrow_mut() = Some(profile);
+        Ok(())
+    }
+    fn thread_status(&self) -> (&'static str, u32) {
+        if self.staged_thread.borrow().is_some() {
+            ("saved", 2)
+        } else {
+            ("unconfigured", 0)
+        }
     }
     fn save_clients(&self, clients: ClientList) -> Result<(), Busy> {
         if self.busy.get() {
@@ -544,6 +560,31 @@ fn log_tailing_sees_new_text_and_any_gap() {
             observation.cancel();
         },
     );
+}
+
+#[test]
+fn thread_staging_accepts_credentials_but_reads_only_status() {
+    let device = FakeDevice::new();
+    let keys = trusted_keys();
+    session(&device, CLIENT_KEY, &keys, async |client, server| {
+        let path = "/config/thread";
+        let (code, body) = get(client, server, path).await;
+        assert_eq!(code, Code::CONTENT);
+        assert_eq!(body, br#"{"status":"unconfigured","generation":0}"#);
+        let dataset = device_config::TEST_DATASET;
+        let settings = format!(r#"{{"dataset":"{dataset}","dns":"fd12::53"}}"#);
+        assert_eq!(
+            put(client, server, path, settings.as_bytes()).await,
+            Code::CHANGED
+        );
+        let (code, body) = get(client, server, path).await;
+        assert_eq!(code, Code::CONTENT);
+        assert_eq!(body, br#"{"status":"saved","generation":2}"#);
+        assert_eq!(
+            device.staged_thread.borrow().as_ref().unwrap().dataset,
+            dataset
+        );
+    });
 }
 
 #[test]
@@ -1203,6 +1244,7 @@ fn without_authentication_only_discovery_answers() {
             (Code::PUT, "/speed"),
             (Code::PUT, "/variation"),
             (Code::PUT, "/config"),
+            (Code::PUT, "/config/thread"),
             (Code::POST, "/coap/clients"),
             (Code::DELETE, "/coap/clients"),
             (Code::POST, "/firmware/update"),

@@ -22,10 +22,14 @@ pub struct DeviceConfig {
     pub schema: u16,
     #[serde(default)]
     pub generation: u32,
+    #[serde(default)]
     pub wifi_ssid: String<32>,
+    #[serde(default)]
     pub wifi_password: String<64>,
     #[serde(default)]
     pub wifi_auth: WifiAuth,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread: Option<ThreadProfile>,
     /// Empty turns MQTT off at runtime. Left out of the snapshot when empty, so every
     /// snapshot with a broker stays readable by images that require this field.
     #[serde(default, skip_serializing_if = "is_empty")]
@@ -45,6 +49,110 @@ pub struct DeviceConfig {
     /// Client public keys allowed to connect over CoAP.
     #[serde(default, skip_serializing_if = "no_clients")]
     pub coap_clients: Vec<CoapCredential, MAX_COAP_CLIENTS>,
+}
+
+/// Persistent credentials for joining an existing Thread network.
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ThreadProfile {
+    pub dataset: String<508>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dns: Option<core::net::Ipv6Addr>,
+    #[serde(default, skip_serializing_if = "is_empty")]
+    pub seed: String<64>,
+}
+
+impl ThreadProfile {
+    /// Decode and structurally validate an Active Operational Dataset.
+    pub fn dataset_bytes(&self) -> Result<Vec<u8, 254>, Error> {
+        let bytes = decode_hex(&self.dataset).ok_or(Error::Thread)?;
+        let mut tlvs = bytes.as_slice();
+        let mut seen = [false; 256];
+        while !tlvs.is_empty() {
+            let [kind, len, rest @ ..] = tlvs else {
+                return Err(Error::Thread);
+            };
+            let len = usize::from(*len);
+            let Some((value, remaining)) = rest.split_at_checked(len) else {
+                return Err(Error::Thread);
+            };
+            if core::mem::replace(&mut seen[usize::from(*kind)], true) {
+                return Err(Error::Thread);
+            }
+            // MeshCoP TLV types from OpenThread's meshcop_tlvs.hpp.
+            let valid = match *kind {
+                0 => matches!(value, [0, 0, 11..=26]),
+                1 => len == 2,
+                2 | 7 | 14 => len == 8,
+                3 => {
+                    (1..=16).contains(&len)
+                        && core::str::from_utf8(value).is_ok()
+                        && !value.contains(&0)
+                }
+                4 | 5 => len == 16,
+                12 => matches!(len, 3 | 4),
+                51 | 52 => false, // Pending Timestamp and Delay Timer.
+                53 => len >= 3,
+                _ => true,
+            };
+            if !valid {
+                return Err(Error::Thread);
+            }
+            tlvs = remaining;
+        }
+        if ![0, 1, 2, 3, 4, 5, 7, 12, 14, 53]
+            .into_iter()
+            .all(|kind| seen[kind])
+        {
+            return Err(Error::Thread);
+        }
+        Ok(bytes)
+    }
+
+    /// The device-generated seed, if it has been committed to flash.
+    pub fn seed_bytes(&self) -> Option<[u8; 32]> {
+        decode_hex::<32>(&self.seed)?.as_slice().try_into().ok()
+    }
+
+    fn validate(&self) -> Result<(), Error> {
+        self.dataset_bytes()?;
+        if self.dns.is_some_and(|addr| {
+            addr.is_unspecified()
+                || addr.is_loopback()
+                || addr.is_multicast()
+                || addr.is_unicast_link_local()
+                || addr.to_ipv4_mapped().is_some()
+        }) || (!self.seed.is_empty() && self.seed_bytes().is_none())
+        {
+            return Err(Error::Thread);
+        }
+        Ok(())
+    }
+
+    /// Decode a remote profile request. Only the device can supply the seed.
+    pub fn decode_request(bytes: &[u8]) -> Result<Self, Error> {
+        let (profile, end): (Self, _) =
+            serde_json_core::from_slice(bytes).map_err(|_| Error::Encoding)?;
+        if !bytes[end..].iter().all(u8::is_ascii_whitespace) || !profile.seed.is_empty() {
+            return Err(Error::Thread);
+        }
+        profile.validate()?;
+        Ok(profile)
+    }
+}
+
+fn decode_hex<const N: usize>(value: &str) -> Option<Vec<u8, N>> {
+    let (pairs, remainder) = value.as_bytes().as_chunks::<2>();
+    if !remainder.is_empty() {
+        return None;
+    }
+    let mut bytes = Vec::new();
+    for &[high, low] in pairs {
+        let high = char::from(high).to_digit(16)? as u8;
+        let low = char::from(low).to_digit(16)? as u8;
+        bytes.push((high << 4) | low).ok()?;
+    }
+    Some(bytes)
 }
 
 #[derive(Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
@@ -76,6 +184,7 @@ pub enum Error {
     Encoding,
     Schema,
     Wifi,
+    Thread,
     Broker,
     Credentials,
     Coap,
@@ -85,12 +194,40 @@ impl DeviceConfig {
     /// Decode a complete JSON snapshot and validate its schema and field bounds.
     /// Returns an error category only, never a value copied from secret input.
     pub fn decode(bytes: &[u8]) -> Result<Self, Error> {
+        let config = Self::parse(bytes)?;
+        config.validate()?;
+        Ok(config)
+    }
+
+    fn parse(bytes: &[u8]) -> Result<Self, Error> {
         let (config, end): (Self, _) =
             serde_json_core::from_slice(bytes).map_err(|_| Error::Encoding)?;
         if !bytes[end..].iter().all(u8::is_ascii_whitespace) {
             return Err(Error::Encoding);
         }
+        Ok(config)
+    }
+
+    /// CoAP settings writes can omit the radio profile used by a Thread image.
+    #[cfg(feature = "coap")]
+    pub(crate) fn decode_coap_update(
+        bytes: &[u8],
+        current: &Self,
+        uses_thread: bool,
+    ) -> Result<Self, Error> {
+        let mut config = Self::parse(bytes)?;
+        if config.thread.is_some() {
+            return Err(Error::Thread);
+        }
+        if uses_thread {
+            config.copy_wifi(current);
+        } else {
+            config.validate_wifi()?;
+        }
+        config.keep_radio_profiles(Some(current));
         config.validate()?;
+        // The flash owner preserves the committed profile, which may be newer.
+        config.thread = None;
         Ok(config)
     }
 
@@ -98,23 +235,18 @@ impl DeviceConfig {
         if self.schema != SCHEMA {
             return Err(Error::Schema);
         }
-        if self.wifi_ssid.is_empty()
-            || self.wifi_ssid.contains('\0')
-            || self.wifi_password.contains('\0')
-        {
-            return Err(Error::Wifi);
+        if let Some(profile) = &self.thread {
+            profile.validate()?;
         }
-        match self.wifi_auth {
-            WifiAuth::Open if !self.wifi_password.is_empty() => return Err(Error::Wifi),
-            WifiAuth::Wpa2Personal => {
-                let password = self.wifi_password.as_bytes();
-                if !(8..=63).contains(&password.len())
-                    && !(password.len() == 64 && password.iter().all(u8::is_ascii_hexdigit))
-                {
-                    return Err(Error::Wifi);
-                }
+        if self.wifi_ssid.is_empty() {
+            if self.thread.is_none()
+                || !self.wifi_password.is_empty()
+                || self.wifi_auth != WifiAuth::default()
+            {
+                return Err(Error::Wifi);
             }
-            WifiAuth::Open => {}
+        } else {
+            self.validate_wifi()?;
         }
         if self.mqtt_port == 0
             || !(self
@@ -140,9 +272,53 @@ impl DeviceConfig {
         Ok(())
     }
 
+    fn validate_wifi(&self) -> Result<(), Error> {
+        if self.wifi_ssid.is_empty()
+            || self.wifi_ssid.contains('\0')
+            || self.wifi_password.contains('\0')
+        {
+            return Err(Error::Wifi);
+        }
+        match self.wifi_auth {
+            WifiAuth::Open if !self.wifi_password.is_empty() => return Err(Error::Wifi),
+            WifiAuth::Wpa2Personal => {
+                let password = self.wifi_password.as_bytes();
+                if !(8..=63).contains(&password.len())
+                    && !(password.len() == 64 && password.iter().all(u8::is_ascii_hexdigit))
+                {
+                    return Err(Error::Wifi);
+                }
+            }
+            WifiAuth::Open => {}
+        }
+        Ok(())
+    }
+
     /// Whether the CoAP server has what it needs to start.
     pub fn has_coap_keys(&self) -> bool {
         !self.coap_device_key.is_empty() && !self.coap_clients.is_empty()
+    }
+
+    /// Carry forward any radio profile omitted by the provisioning request.
+    pub fn keep_radio_profiles(&mut self, stored: Option<&Self>) {
+        let Some(stored) = stored else {
+            return;
+        };
+        if self.wifi_ssid.is_empty()
+            && self.wifi_password.is_empty()
+            && self.wifi_auth == WifiAuth::default()
+        {
+            self.copy_wifi(stored);
+        }
+        if self.thread.is_none() {
+            self.thread = stored.thread.clone();
+        }
+    }
+
+    fn copy_wifi(&mut self, stored: &Self) {
+        self.wifi_ssid = stored.wifi_ssid.clone();
+        self.wifi_password = stored.wifi_password.clone();
+        self.wifi_auth = stored.wifi_auth;
     }
 
     /// Carries the CoAP keys over from the stored snapshot, so that writing settings
@@ -166,9 +342,88 @@ impl DeviceConfig {
 }
 
 #[cfg(test)]
+pub(crate) const TEST_DATASET: &str = concat!(
+    "000300000f0102123402080001020304050607030474657374",
+    "041000112233445566778899aabbccddeeff0510ffeeddccbbaa99887766554433221100",
+    "0708fd001122334455660c0402a0f7f80e08000000000001000035060004001fffe0",
+);
+
+#[cfg(test)]
 mod tests {
     use super::*;
     const VALID: &[u8] = br#"{"wifi_ssid":"private","wifi_password":"private-pass","mqtt_broker":"mqtt.example","mqtt_password":"credential"}"#;
+
+    #[test]
+    fn thread_requires_a_complete_dataset_and_ipv6_unicast_dns() {
+        let profile =
+            |dataset: &str, dns: &str| format!(r#"{{"dataset":"{dataset}","dns":"{dns}"}}"#);
+        let valid = profile(TEST_DATASET, "fd12::53");
+        let parsed = ThreadProfile::decode_request(valid.as_bytes()).unwrap();
+        assert_eq!(parsed.dns, Some("fd12::53".parse().unwrap()));
+        assert_eq!(
+            parsed.dataset_bytes().unwrap().len(),
+            TEST_DATASET.len() / 2
+        );
+        for dns in [
+            "127.0.0.1",
+            "::",
+            "::1",
+            "ff02::1",
+            "fe80::53",
+            "::ffff:192.0.2.53",
+        ] {
+            assert!(ThreadProfile::decode_request(profile(TEST_DATASET, dns).as_bytes()).is_err());
+        }
+        for dataset in [
+            "a",
+            "zz",
+            &TEST_DATASET[..TEST_DATASET.len() - 2],
+            &TEST_DATASET[10..],
+        ] {
+            assert_eq!(
+                ThreadProfile::decode_request(profile(dataset, "fd12::53").as_bytes()).err(),
+                Some(Error::Thread),
+            );
+        }
+        let duplicate = format!("{TEST_DATASET}000300000f");
+        assert!(ThreadProfile::decode_request(profile(&duplicate, "fd12::53").as_bytes()).is_err());
+        let injected = format!(
+            r#"{{"dataset":"{TEST_DATASET}","seed":"{}"}}"#,
+            "ab".repeat(32)
+        );
+        assert!(ThreadProfile::decode_request(injected.as_bytes()).is_err());
+    }
+
+    #[cfg(feature = "coap")]
+    #[test]
+    fn ordinary_thread_coap_settings_keep_the_wifi_rollback_profile() {
+        let mut current = DeviceConfig::decode(VALID).unwrap();
+        current.thread = Some(ThreadProfile {
+            dataset: TEST_DATASET.try_into().unwrap(),
+            dns: None,
+            seed: "ab".repeat(32).as_str().try_into().unwrap(),
+        });
+        let input = br#"{"wifi_ssid":"other","wifi_password":"password","mqtt_broker":"fd12::1"}"#;
+        let mut update = DeviceConfig::decode_coap_update(input, &current, true).unwrap();
+        update.keep_radio_profiles(Some(&current));
+        assert_eq!(update.wifi_ssid, current.wifi_ssid);
+        assert_eq!(update.wifi_password, current.wifi_password);
+        assert_eq!(update.thread.unwrap().seed_bytes(), Some([0xab; 32]));
+        assert_eq!(update.mqtt_broker, "fd12::1");
+    }
+
+    #[test]
+    fn thread_only_settings_and_a_wifi_update_preserve_the_other_profile() {
+        let json = format!(r#"{{"thread":{{"dataset":"{TEST_DATASET}"}}}}"#);
+        let mut thread = DeviceConfig::decode(json.as_bytes()).unwrap();
+        assert!(thread.wifi_ssid.is_empty());
+        thread.thread.as_mut().unwrap().seed = "ab".repeat(32).as_str().try_into().unwrap();
+        let mut wifi = DeviceConfig::decode(VALID).unwrap();
+        wifi.keep_radio_profiles(Some(&thread));
+        thread.keep_radio_profiles(Some(&wifi));
+        assert_eq!(thread.wifi_ssid, "private");
+        assert_eq!(wifi.thread.unwrap().seed_bytes(), Some([0xab; 32]));
+    }
 
     #[test]
     fn snapshot_round_trip_and_defaults() {

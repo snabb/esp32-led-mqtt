@@ -24,7 +24,7 @@ Home Assistant over MQTT.
 | Board | ESP32-C6 with 4 MiB flash and the built-in USB Serial/JTAG port. Tested on the [M5Stack NanoC6](https://docs.m5stack.com/en/core/M5NanoC6). Other ESP32 chips are not supported. |
 | LED strip | WS2812, WS2812B, WS2811 or SK6812 (RGB), 1–512 LEDs. Tested with the 60-LED [M5Stack RGB LED Strip](https://docs.m5stack.com/en/unit/rgb_led_strip). |
 | Wiring | Strip data on one GPIO (default GPIO2), with the board and the strip power supply sharing a ground. |
-| Network | 2.4 GHz Wi-Fi, WPA2-Personal or open. IPv4 (DHCP) and IPv6 (SLAAC). DNS servers come from DHCPv4 only. MQTT 5 over plain TCP. The broker must support MQTT 5. |
+| Network | 2.4 GHz Wi-Fi (default), WPA2-Personal or open, with IPv4 DHCP and IPv6 SLAAC. Optional IPv6 Thread build. The broker must support MQTT 5. |
 
 The defaults in [`hardware.json`](hardware.json) match the NanoC6 driving the
 M5Stack strip from its Grove port. For any other setup, see
@@ -216,11 +216,19 @@ mosquitto_pub -h BROKER -t esp32-led-XXXXXX/light/set \
 
 All topics and payloads are listed in the [MQTT reference](docs/MQTT.md).
 
+### Thread networking
+
+Build the Thread variant for an existing Thread mesh. It supports MQTT/MQTTS,
+Home Assistant discovery, authenticated CoAP and OTA over IPv6. A Thread
+border router provides LAN reachability and SRP-based CoAP discovery.
+See [USB provisioning](docs/CONFIGURATION.md#thread-settings) or
+[migration from Wi-Fi over CoAP](docs/COAP.md#migrate-a-device-to-thread).
+
 ### Firmware updates
 
 Build a new image with the same `hardware.json` and OTA settings, upload it to
 an allowed HTTPS host, then publish an update command over MQTT. The device
-checks the image, boots it on trial, and rolls back if LEDs, Wi-Fi and a control
+checks the image, boots it on trial, and rolls back if LEDs, networking and a control
 plane aren't all working within two minutes. See [OTA updates](docs/OTA.md).
 
 ## Documentation
@@ -263,4 +271,4 @@ plane aren't all working within two minutes. See [OTA updates](docs/OTA.md).
 [MIT](LICENSE)
 
 Binaries include third-party code, some under other terms. See [licenses](licenses/) for
-the notices for the `mdns` and `coap` features.
+the notices for the `mdns`, `coap`, and `thread` features.
