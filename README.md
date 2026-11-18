@@ -185,8 +185,6 @@ and Effect Variation changes the bands from thin ribs to broad wall segments.
 
 - **Prism Tunnel** cycles through jewel tones. **Steel Tunnel** uses muted
   slate and silver-blue tones. Both have a fixed vanishing point.
-- **Prism Tunnel Twist** and **Steel Tunnel Twist** use the same palettes and
-  shift the vanishing point through alternating bends.
 
 After a reboot the strip stays dark until the device reaches the MQTT broker,
 then restores the light state, effect speed and effect variation it last

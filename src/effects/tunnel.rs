@@ -3,7 +3,6 @@ use smart_leds::RGB8;
 
 const ONE: i32 = 65_536;
 const BAND_MS: u32 = 1_250;
-const TURN_MS: u32 = 3_750;
 /// Perspective scale in Q16 half-strip lengths.
 const PERSPECTIVE: i32 = ONE / 3;
 
@@ -41,19 +40,11 @@ pub(super) const STEEL: Palette = Palette {
     ],
 };
 
-/// A straight run between bends, with offsets measured in Q16 half-strip lengths.
-const CENTERS: [i32; 8] = [0, 0, 10_000, 19_000, 0, -19_000, -10_000, 0];
-
-pub(super) fn render<const N: usize>(
-    runtime: &mut EffectRuntime<N>,
-    palette: Palette,
-    twist: bool,
-) {
+pub(super) fn render<const N: usize>(runtime: &mut EffectRuntime<N>, palette: Palette) {
     let band_time = runtime.clock_us / (u64::from(BAND_MS) * 1000);
     let band = (band_time % palette.bands.len() as u64) as i32;
     let phase = i32::from(runtime.phase(BAND_MS));
     let half_width = 13_000 + i32::from(runtime.params.variation) * 62;
-    let center = if twist { moving_center(runtime) } else { 0 };
 
     for (index, pixel) in runtime.frame.iter_mut().enumerate() {
         let position = if N == 1 {
@@ -61,7 +52,7 @@ pub(super) fn render<const N: usize>(
         } else {
             (2 * index as i32 + 1 - N as i32) * ONE / N as i32
         };
-        let radius = (position - center).abs();
+        let radius = position.abs();
         // Reciprocal perspective packs the bands at the vanishing point and
         // makes each one cover more LEDs in the same time as it approaches.
         let depth =
@@ -76,13 +67,4 @@ pub(super) fn render<const N: usize>(
         let weight = scale8((ease_wave16(band_phase) >> 8) as u8, visibility);
         *pixel = blend_rgb(palette.wall, palette.bands[color as usize], weight);
     }
-}
-
-fn moving_center<const N: usize>(runtime: &EffectRuntime<N>) -> i32 {
-    let time = runtime.clock_us / (u64::from(TURN_MS) * 1000);
-    let turn = (time % CENTERS.len() as u64) as usize;
-    let from = CENTERS[turn];
-    let to = CENTERS[(turn + 1) % CENTERS.len()];
-    let progress = i32::from(ease_wave16(runtime.phase(TURN_MS) / 2));
-    from + (to - from) * progress / (ONE - 1)
 }

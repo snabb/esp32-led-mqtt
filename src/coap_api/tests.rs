@@ -428,9 +428,7 @@ fn effect_list_spans_blocks_and_stays_valid_json() {
         let text = core::str::from_utf8(&body[..len]).unwrap();
         assert!(text.starts_with(r#"["None","Rainbow","#), "{text}");
         assert!(
-            text.ends_with(
-                r#""Prism Tunnel","Steel Tunnel","Prism Tunnel Twist","Steel Tunnel Twist"]"#
-            ),
+            text.ends_with(r#""Prism Tunnel","Steel Tunnel"]"#),
             "{text}"
         );
         assert_eq!(text.matches(',').count(), EFFECTS.len());
