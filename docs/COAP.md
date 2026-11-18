@@ -81,7 +81,7 @@ files are found by host name otherwise.
 | `/speed` | GET, PUT | Yes | Integer `1`–`128` as text |
 | `/variation` | GET, PUT | Yes | Integer `0`–`255` as text |
 | `/temperature` | GET | Yes | °C as text, one decimal |
-| `/info` | GET | | JSON: name, build, hardware, uptime, free heap, IP address |
+| `/info` | GET | | JSON: name, build, hardware, uptime, free heap, IPv4 and IPv6 addresses |
 | `/effects` | GET | | JSON list of effect names, block-wise |
 | `/logs` | GET | Yes | See [logs](#logs) |
 | `/config` | GET, PUT | | See [settings](#settings) |

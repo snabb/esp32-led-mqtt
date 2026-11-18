@@ -68,7 +68,7 @@ under `local/`, which Git ignores.
 | `wifi_ssid` | yes | 1–32 bytes |
 | `wifi_password` | yes | WPA2: 8–63 characters, or 64 hex digits. Open networks: `""`. |
 | `wifi_auth` | no | `wpa2_personal` (default) or `open` |
-| `mqtt_broker` | no | Host name or IPv4 address made of letters, digits, `.` and `-`, up to 128 bytes. No scheme or port. Leave it out to turn MQTT off. |
+| `mqtt_broker` | no | Host name or IPv4 address made of letters, digits, `.` and `-`, or an unbracketed IPv6 address; up to 128 bytes. No scheme or port. Leave it out to turn MQTT off. |
 | `mqtt_port` | no | Default `1883`; normally `8883` with TLS |
 | `coap_clients` | no | Client public keys for [CoAP](COAP.md#keys), as hex. Up to four. Usually set with `provision.py --coap-client`. Left out, the stored ones are kept |
 | `mqtt_tls` | no | Default `false`. Enable MQTT over TLS. |
@@ -88,9 +88,9 @@ mqtt_username: led
 mqtt_password: secret
 ```
 
-The broker name is resolved through DNS (A records only). Multicast names such
-as `.local` work only if the DHCP-provided DNS server resolves them. If it
-doesn't, use an IPv4 address.
+The broker name is resolved through DNS: A records first, then AAAA. DNS
+servers come only from DHCPv4. Multicast names such as `.local` work only if
+that DNS server resolves them. If it doesn't, use an IP address.
 
 ### MQTT over TLS
 

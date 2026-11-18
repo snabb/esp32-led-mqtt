@@ -123,7 +123,7 @@ transitions can be skipped:
 | `unavailable` | OTA is disabled in the running image, or a trial boot hasn't been confirmed yet |
 | `busy` | An update or USB settings write is already running |
 | `retained_command` | The command was retained. Clear it with `mosquitto_pub -h BROKER -t PREFIX/ota/set -r -n`. |
-| `dns`, `dns_timeout`, `connect`, `connect_timeout` | The device can't reach the host. Only IPv4 (DNS A records) is supported. |
+| `dns`, `dns_timeout`, `connect`, `connect_timeout` | The device can't reach the host. Names resolve to A records first, then AAAA, through the DHCPv4 DNS servers. An IPv6 literal goes in brackets: `https://[2001:db8::1]/fw.bin`. |
 | `tls_handshake`, `tls_certificate`, other `tls_*` | The certificate chain isn't covered by the bundled roots, the host name doesn't match, the certificate expired before the build date, or the server doesn't accept P-256. Retry once: a one-off handshake failure has been seen. |
 | `http_framing` | Not a `200` response, missing or wrong `Content-Length`, chunked or compressed body, or a redirect |
 | `headers_too_large` | The response headers are over 2 KiB |
@@ -137,7 +137,7 @@ transitions can be skipped:
 ## Trial boot and rollback
 
 After rebooting into a new image, the firmware has 120 s to write a frame to
-the LEDs, get an IPv4 address and, if a control plane is configured, connect to
+the LEDs, get an IP address (IPv4 or routable IPv6) and, if a control plane is configured, connect to
 MQTT or get an authenticated CoAP request. If that all succeeds, it marks the image
 valid. If not, it resets, and the bootloader switches back to the previous image. A
 125 s hardware watchdog catches a firmware that hangs.

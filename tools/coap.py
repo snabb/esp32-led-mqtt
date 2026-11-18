@@ -13,6 +13,7 @@ this tool looks for it. See docs/COAP.md.
 import argparse
 import asyncio
 import hashlib
+import ipaddress
 import json
 import os
 import secrets
@@ -63,9 +64,17 @@ def keygen(path):
     print(f"Public key, for devices: {ccs_file}")
 
 
-def resolve_ipv4(host):
-    """Devices only have IPv4. Left to aiocoap, a lookup by name waits about 10 s for an
-    IPv6 mDNS answer that won't come. A device doesn't need the name in requests."""
+def resolve(host):
+    """Returns the URI authority for `host`: an IPv6 literal, bracketed or not, or else a
+    name or IPv4 address with an optional port. A name resolves to its IPv4 address, as a
+    device doesn't need the name in requests, and IPv4 works wherever the device does."""
+    try:
+        ipaddress.IPv6Address(host)
+        return f"[{host}]"
+    except ValueError:
+        pass
+    if host.startswith("["):
+        return host
     name, separator, port = host.partition(":")
     address = socket.getaddrinfo(name, None, socket.AF_INET)[0][4][0]
     return f"{address}{separator}{port}"
@@ -73,7 +82,7 @@ def resolve_ipv4(host):
 
 class Device:
     def __init__(self, args):
-        self.host = resolve_ipv4(args.host)
+        self.host = resolve(args.host)
         host_part = args.host.removesuffix(".local")
         self.device_ccs_file = args.device_ccs or KEY_DIR / f"{host_part}.ccs"
         self.key_file = args.client_key

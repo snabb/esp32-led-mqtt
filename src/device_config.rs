@@ -117,10 +117,11 @@ impl DeviceConfig {
             WifiAuth::Open => {}
         }
         if self.mqtt_port == 0
-            || !self
+            || !(self
                 .mqtt_broker
                 .bytes()
                 .all(|b| b.is_ascii_alphanumeric() || b".-".contains(&b))
+                || self.mqtt_broker.parse::<core::net::Ipv6Addr>().is_ok())
         {
             return Err(Error::Broker);
         }
@@ -189,6 +190,8 @@ mod tests {
             format!("{valid}x"),
             valid.replace("private-pass", "short"),
             valid.replace("mqtt.example", "http://mqtt.example"),
+            valid.replace("mqtt.example", "[2001:db8::1]"),
+            valid.replace("mqtt.example", "mqtt.example:1883"),
             valid.replace("\"mqtt_broker\"", "\"unknown\""),
             valid.replace("{", "{\"schema\":3,"),
             valid.replace("private\"", &format!("{}\"", "x".repeat(33))),
@@ -207,6 +210,11 @@ mod tests {
         let mut output = [0; MAX_BYTES];
         let len = config.encode(&mut output).unwrap();
         assert!(!output[..len].windows(11).any(|w| w == b"mqtt_broker"));
+
+        let valid = core::str::from_utf8(VALID).unwrap();
+        assert!(
+            DeviceConfig::decode(valid.replace("mqtt.example", "2001:db8::1").as_bytes()).is_ok()
+        );
 
         let with_broker = DeviceConfig::decode(VALID).unwrap();
         let len = with_broker.encode(&mut output).unwrap();
