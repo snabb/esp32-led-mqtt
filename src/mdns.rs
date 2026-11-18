@@ -54,19 +54,21 @@ pub async fn task(iface: Iface<'static>, identity: &'static DeviceIdentity, adve
     let mut response = [0; MAX_MESSAGE];
 
     loop {
-        network::wait_config(true).await;
+        let config = network::wait_config(|state| state.v4 || state.v6).await;
         info!("mDNS answering as {}.local", identity.slug);
-        // Announce the address, which may be new.
+        // Announce the addresses, which may be new. IPv6 announces go out even with only a
+        // link-local address, which is what an IPv6 querier reaches.
         if let Ok(MdnsResponse::Reply { data, .. }) =
             handler.handle(MdnsRequest::None, &mut response)
         {
-            for group in [GROUP_V4.into(), GROUP_V6.into()] {
-                send(&socket, data, SocketAddr::new(group, PORT)).await;
+            if config.v4 {
+                send(&socket, data, SocketAddr::new(GROUP_V4.into(), PORT)).await;
             }
+            send(&socket, data, SocketAddr::new(GROUP_V6.into(), PORT)).await;
         }
         select(
             serve(&socket, &mut handler, &mut request, &mut response),
-            network::wait_config(false),
+            network::wait_config(|state| state != config),
         )
         .await;
     }

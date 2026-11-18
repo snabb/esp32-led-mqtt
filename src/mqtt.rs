@@ -67,7 +67,9 @@ pub async fn task(
             .expect("receiver capacity"),
     };
     loop {
-        crate::network::wait_config(true).await;
+        // DNS servers come only from DHCPv4, so without IPv4 only an IPv6 literal is reachable.
+        let v6_broker = settings.mqtt_broker.parse::<core::net::Ipv6Addr>().is_ok();
+        crate::network::wait_config(|state| state.v4 || (state.v6 && v6_broker)).await;
         if let Some(address) = crate::network::ipv4_address(iface) {
             info!("Network ready with IP {}", address);
         }
