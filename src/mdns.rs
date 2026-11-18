@@ -56,8 +56,8 @@ pub async fn task(iface: Iface<'static>, identity: &'static DeviceIdentity, adve
     loop {
         let config = network::wait_config(|state| state.v4.is_some() || state.v6.is_some()).await;
         info!("mDNS answering as {}.local", identity.slug);
-        // Announce the addresses, which may be new. IPv6 announces go out even with only a
-        // link-local address, which is what an IPv6 querier reaches.
+        // Announce the addresses, which may be new. IPv6 announces go out even without a
+        // routable IPv6 address, for IPv6 queriers that want the A record.
         if let Ok(MdnsResponse::Reply { data, .. }) =
             handler.handle(MdnsRequest::None, &mut response)
         {
@@ -138,7 +138,9 @@ impl HostAnswers for Answers<'_> {
         let host = Host {
             hostname: self.hostname,
             ipv4: network::ipv4_address(self.iface).unwrap_or(Ipv4Addr::UNSPECIFIED),
-            ipv6: network::ipv6_address(self.iface).unwrap_or(Ipv6Addr::UNSPECIFIED),
+            // Not the link-local address: useless beyond the link, and without the cache-flush
+            // bit (edge-mdns sends none) queriers keep it next to the routable one.
+            ipv6: network::routable_ipv6_address(self.iface).unwrap_or(Ipv6Addr::UNSPECIFIED),
             ttl: Ttl::from_secs(TTL_SECS),
         };
         if self.advertise_coap {
