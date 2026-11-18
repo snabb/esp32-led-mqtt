@@ -182,6 +182,7 @@ Ambient effects:
 Tunnel effects send bands out from a vanishing point. The bands widen and
 accelerate toward the ends of the strip. Effect Speed controls the flight pace
 and Effect Variation changes the bands from thin ribs to broad wall segments.
+The selected light color sets the dim background between the bands.
 
 - **Prism Tunnel** cycles through jewel tones. **Steel Tunnel** uses muted
   slate and silver-blue tones. Both have a fixed vanishing point.

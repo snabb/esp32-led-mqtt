@@ -81,8 +81,8 @@ pub(crate) fn render<const N: usize>(runtime: &mut EffectRuntime<N>) {
         EffectId::FinlandKaamos => finland::kaamos::render(runtime),
         EffectId::StainedGlass => ambient::stained_glass(runtime),
         EffectId::ColorBloom => ambient::color_bloom(runtime),
-        EffectId::PrismTunnel => tunnel::render(runtime, tunnel::PRISM),
-        EffectId::SteelTunnel => tunnel::render(runtime, tunnel::STEEL),
+        EffectId::PrismTunnel => tunnel::render(runtime, &tunnel::PRISM),
+        EffectId::SteelTunnel => tunnel::render(runtime, &tunnel::STEEL),
     }
 }
 
