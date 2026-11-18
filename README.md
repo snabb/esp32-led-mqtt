@@ -4,7 +4,7 @@ Bare-metal Rust firmware ([Embassy](https://embassy.dev/) + esp-hal) that
 runs an addressable RGB LED strip from an ESP32-C6 and connects it to
 Home Assistant over MQTT.
 
-- 42 animated effects plus a solid color, with brightness, effect-speed and
+- 46 animated effects plus a solid color, with brightness, effect-speed and
   effect-variation control
 - Home Assistant MQTT discovery: a light entity plus effect-speed and
   effect-variation sliders
