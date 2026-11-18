@@ -67,21 +67,25 @@ def keygen(path):
 def resolve(host):
     """Returns the URI authority for `host`: an IPv6 literal, bracketed or not, or else a
     name or IPv4 address with an optional port. A name resolves to its IPv4 address if it
-    has one, else to IPv6; a device doesn't need the name in requests."""
+    has one, else to IPv6; a device doesn't need the name in requests.
+
+    IPv6 addresses come out in aiocoap's normal form, as it looks credentials up by the
+    normalized URI, and zones as a bare `%ifname`, which its UDP transport expects."""
+    if host.startswith("["):
+        address, _, rest = host[1:].partition("]")
+        return f"[{ipaddress.IPv6Address(address)}]{rest}"
     try:
-        ipaddress.IPv6Address(host)
-        return f"[{host}]"
+        return f"[{ipaddress.IPv6Address(host)}]"
     except ValueError:
         pass
-    if host.startswith("["):
-        return host
     name, separator, port = host.partition(":")
     try:
         address = socket.getaddrinfo(name, None, socket.AF_INET)[0][4][0]
     except socket.gaierror:
-        # A link-local result carries its zone, which a URI writes as %25.
-        address = socket.getaddrinfo(name, None, socket.AF_INET6)[0][4][0]
-        address = f"[{address.replace('%', '%25')}]"
+        sockaddr = socket.getaddrinfo(name, None, socket.AF_INET6)[0][4]
+        address = ipaddress.IPv6Address(sockaddr[0].split("%")[0])
+        zone = f"%{socket.if_indextoname(sockaddr[3])}" if sockaddr[3] else ""
+        address = f"[{address}{zone}]"
     return f"{address}{separator}{port}"
 
 
