@@ -54,14 +54,14 @@ pub async fn task(iface: Iface<'static>, identity: &'static DeviceIdentity, adve
     let mut response = [0; MAX_MESSAGE];
 
     loop {
-        let config = network::wait_config(|state| state.v4 || state.v6).await;
+        let config = network::wait_config(|state| state.v4.is_some() || state.v6.is_some()).await;
         info!("mDNS answering as {}.local", identity.slug);
         // Announce the addresses, which may be new. IPv6 announces go out even with only a
         // link-local address, which is what an IPv6 querier reaches.
         if let Ok(MdnsResponse::Reply { data, .. }) =
             handler.handle(MdnsRequest::None, &mut response)
         {
-            if config.v4 {
+            if config.v4.is_some() {
                 send(&socket, data, SocketAddr::new(GROUP_V4.into(), PORT)).await;
             }
             send(&socket, data, SocketAddr::new(GROUP_V6.into(), PORT)).await;
@@ -122,7 +122,7 @@ async fn send(socket: &UdpSocket<'_>, data: &[u8], to: SocketAddr) {
     }
 }
 
-/// Reads the address on each query, because DHCP can change it.
+/// Reads the addresses on each query, because DHCP and SLAAC can change them.
 struct Answers<'a> {
     iface: Iface<'a>,
     hostname: &'a str,

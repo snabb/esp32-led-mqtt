@@ -66,8 +66,8 @@ def keygen(path):
 
 def resolve(host):
     """Returns the URI authority for `host`: an IPv6 literal, bracketed or not, or else a
-    name or IPv4 address with an optional port. A name resolves to its IPv4 address, as a
-    device doesn't need the name in requests, and IPv4 works wherever the device does."""
+    name or IPv4 address with an optional port. A name resolves to its IPv4 address if it
+    has one, else to IPv6; a device doesn't need the name in requests."""
     try:
         ipaddress.IPv6Address(host)
         return f"[{host}]"
@@ -76,7 +76,12 @@ def resolve(host):
     if host.startswith("["):
         return host
     name, separator, port = host.partition(":")
-    address = socket.getaddrinfo(name, None, socket.AF_INET)[0][4][0]
+    try:
+        address = socket.getaddrinfo(name, None, socket.AF_INET)[0][4][0]
+    except socket.gaierror:
+        # A link-local result carries its zone, which a URI writes as %25.
+        address = socket.getaddrinfo(name, None, socket.AF_INET6)[0][4][0]
+        address = f"[{address.replace('%', '%25')}]"
     return f"{address}{separator}{port}"
 
 
