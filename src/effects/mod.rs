@@ -32,6 +32,7 @@ mod scan;
 mod sinelon;
 mod static_noise;
 mod theater_chase;
+mod tunnel;
 mod twinkle;
 
 pub(crate) fn render<const N: usize>(runtime: &mut EffectRuntime<N>) {
@@ -80,6 +81,10 @@ pub(crate) fn render<const N: usize>(runtime: &mut EffectRuntime<N>) {
         EffectId::FinlandKaamos => finland::kaamos::render(runtime),
         EffectId::StainedGlass => ambient::stained_glass(runtime),
         EffectId::ColorBloom => ambient::color_bloom(runtime),
+        EffectId::PrismTunnel => tunnel::render(runtime, tunnel::PRISM, false),
+        EffectId::SteelTunnel => tunnel::render(runtime, tunnel::STEEL, false),
+        EffectId::PrismTunnelTwist => tunnel::render(runtime, tunnel::PRISM, true),
+        EffectId::SteelTunnelTwist => tunnel::render(runtime, tunnel::STEEL, true),
     }
 }
 

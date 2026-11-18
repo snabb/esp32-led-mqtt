@@ -129,8 +129,8 @@ The device has five entities:
   Plasma Flow, the rate of the second wave in the wave effects, how often drops
   fall in Paint Mixing, the red/white ratio in Candy Cane, the bulb width (1–10
   LEDs) in Christmas Chase and Christmas Flow, and the tail length in Sinelon and
-  Colour Sinelon (doubling every 32 steps up). The ambient effects use it as
-  described below. Other effects ignore it.
+  Colour Sinelon (doubling every 32 steps up). The ambient and tunnel effects
+  use it as described below. Other effects ignore it.
 - **Chip Temperature** (diagnostic sensor, °C): die temperature, updated every minute.
 - **Firmware Version** (diagnostic sensor): the running build ID.
 
@@ -178,6 +178,15 @@ Ambient effects:
   Variation blends from a cool palette through jewel tones to a warm palette.
 - **Color Bloom** opens a broad patch of color, holds it, then fades it into an
   indigo background. Effect Variation controls how wide the bloom opens.
+
+Tunnel effects send bands out from a vanishing point. The bands widen and
+accelerate toward the ends of the strip. Effect Speed controls the flight pace
+and Effect Variation changes the bands from thin ribs to broad wall segments.
+
+- **Prism Tunnel** cycles through jewel tones. **Steel Tunnel** uses muted
+  slate and silver-blue tones. Both have a fixed vanishing point.
+- **Prism Tunnel Twist** and **Steel Tunnel Twist** use the same palettes and
+  shift the vanishing point through alternating bends.
 
 After a reboot the strip stays dark until the device reaches the MQTT broker,
 then restores the light state, effect speed and effect variation it last
