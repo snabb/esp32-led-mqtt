@@ -120,7 +120,7 @@ async fn download(
     ota: &mut Updater<'_>,
     request: &Request,
 ) -> Result<(), &'static str> {
-    let address = crate::resolve_ipv4(iface, &request.host).await?;
+    let address = crate::resolve(iface, &request.host).await?;
     let mut rx = [0; 4096];
     let mut tx = [0; 2048];
     let mut socket = TcpSocket::new(iface.stack(), &mut rx, &mut tx).map_err(|_| "socket")?;
@@ -151,8 +151,13 @@ async fn transfer<IO: Read + Write>(
     ota: &mut Updater<'_>,
     request: &Request,
 ) -> Result<(), &'static str> {
+    let (open, close) = if request.host.contains(':') {
+        ("[", "]")
+    } else {
+        ("", "")
+    };
     let get: String<768> = heapless::format!(
-        "GET {} HTTP/1.1\r\nHost: {}:{}\r\nAccept-Encoding: identity\r\nConnection: close\r\n\r\n",
+        "GET {} HTTP/1.1\r\nHost: {open}{}{close}:{}\r\nAccept-Encoding: identity\r\nConnection: close\r\n\r\n",
         request.path,
         request.host,
         request.port

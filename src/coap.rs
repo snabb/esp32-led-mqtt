@@ -200,6 +200,7 @@ impl Device for HardwareDevice {
             name: self.name,
             uptime_s: Instant::now().as_secs(),
             ip: crate::network::ipv4_address(self.iface),
+            ipv6: crate::network::ipv6_address(self.iface),
             free_heap: esp_alloc::HEAP.free(),
         }
     }

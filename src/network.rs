@@ -42,7 +42,20 @@ pub async fn wait_config(up: bool) {
 pub fn ipv4_address(iface: Iface<'_>) -> Option<core::net::Ipv4Addr> {
     iface.ip_addrs().iter().find_map(|addr| match addr.cidr {
         IpCidr::V4(cidr) => Some(cidr.address()),
-        #[allow(unreachable_patterns, reason = "IPv6 is not enabled")]
-        _ => None,
+        IpCidr::V6(_) => None,
     })
+}
+
+/// The interface's routable IPv6 address once SLAAC has configured one, or else its
+/// link-local one.
+pub fn ipv6_address(iface: Iface<'_>) -> Option<core::net::Ipv6Addr> {
+    let addrs = iface.ip_addrs();
+    let v6 = || {
+        addrs.iter().filter_map(|addr| match addr.cidr {
+            IpCidr::V6(cidr) => Some(cidr.address()),
+            IpCidr::V4(_) => None,
+        })
+    };
+    v6().find(|addr| !addr.is_unicast_link_local())
+        .or_else(|| v6().next())
 }

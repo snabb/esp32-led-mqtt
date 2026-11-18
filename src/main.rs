@@ -241,6 +241,9 @@ async fn main(spawner: Spawner) -> ! {
         iface
             .set_dhcpv4(Some(Default::default()))
             .expect("Wi-Fi is an Ethernet medium");
+        iface
+            .set_slaac(Some(Default::default()))
+            .expect("Wi-Fi is an Ethernet medium");
 
         #[cfg(feature = "_control")]
         // This also starts the crypto work queues, which CoAP needs even without TLS: its
@@ -358,27 +361,32 @@ async fn net_task(mut runner: Runner<'static>) {
     runner.run().await;
 }
 
-/// Resolves an IPv4 literal, or else a DNS A record.
+/// Resolves an IP literal, or else a DNS A record, or else a AAAA record.
+///
+/// A goes first: DNS servers come only from DHCPv4, so a host that resolves here has IPv4.
 #[cfg(feature = "_control")]
-async fn resolve_ipv4(
+async fn resolve(
     iface: embassy_net::iface::Iface<'static>,
     host: &str,
 ) -> Result<embassy_net::wire::IpAddr, &'static str> {
-    use embassy_net::{dns::DnsQueryType, wire::IpAddr as IpAddress};
+    use embassy_net::dns::DnsQueryType;
     use embassy_time::with_timeout;
 
     if let Ok(address) = host.parse() {
-        return Ok(IpAddress::V4(address));
+        return Ok(address);
     }
-    let addresses = with_timeout(
-        Duration::from_secs(15),
-        iface.stack().dns_query(host, DnsQueryType::A),
-    )
-    .await
-    .map_err(|_| "dns_timeout")?
-    .map_err(|_| "dns")?;
-    match addresses.first() {
-        Some(IpAddress::V4(address)) => Ok(IpAddress::V4(*address)),
-        _ => Err("dns"),
+    let mut result = Err("dns");
+    for kind in [DnsQueryType::A, DnsQueryType::Aaaa] {
+        result = match with_timeout(Duration::from_secs(15), iface.stack().dns_query(host, kind))
+            .await
+        {
+            Err(_) => Err("dns_timeout"),
+            Ok(Ok(addresses)) => addresses.first().copied().ok_or("dns"),
+            Ok(Err(_)) => Err("dns"),
+        };
+        if result.is_ok() {
+            break;
+        }
     }
+    result
 }

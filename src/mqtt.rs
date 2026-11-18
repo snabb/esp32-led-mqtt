@@ -71,6 +71,9 @@ pub async fn task(
         if let Some(address) = crate::network::ipv4_address(iface) {
             info!("Network ready with IP {}", address);
         }
+        if let Some(address) = crate::network::ipv6_address(iface) {
+            info!("Network ready with IPv6 {}", address);
+        }
 
         let result = run_session(iface, identity, settings, tls_context, &mut events).await;
         crate::ota::MQTT_READY.store(false, core::sync::atomic::Ordering::Release);
@@ -95,7 +98,7 @@ async fn run_session(
     } else {
         None
     };
-    let address = crate::resolve_ipv4(iface, &settings.mqtt_broker)
+    let address = crate::resolve(iface, &settings.mqtt_broker)
         .await
         .map_err(MqttRunError::Resolve)?;
     let mut tcp_rx = [0_u8; 2048];

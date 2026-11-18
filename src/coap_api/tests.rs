@@ -185,6 +185,9 @@ impl Device for FakeDevice {
             name: "esp32-led-000102",
             uptime_s: 7,
             ip: Some(Ipv4Addr::new(192, 0, 2, 1)),
+            ipv6: Some(core::net::Ipv6Addr::new(
+                0x2001, 0xdb8, 0x1234, 0x5678, 0x9abc, 0xdef0, 0x1234, 0x5678,
+            )),
             free_heap: 1234,
         }
     }
@@ -397,7 +400,11 @@ fn resources_read_and_write_through_an_authenticated_session() {
         let info = get(client, server, "/info").await.1;
         let info = core::str::from_utf8(&info).unwrap();
         assert!(info.contains(r#""name":"esp32-led-000102""#), "{info}");
-        assert!(info.ends_with(r#","ip":"192.0.2.1"}"#), "{info}");
+        // The longest IPv6 text form, so this also checks that the reply buffer is big enough.
+        assert!(
+            info.ends_with(r#","ip":"192.0.2.1","ipv6":"2001:db8:1234:5678:9abc:def0:1234:5678"}"#),
+            "{info}"
+        );
 
         assert_eq!(get(client, server, "/nope").await.0, Code::NOT_FOUND);
         assert_eq!(

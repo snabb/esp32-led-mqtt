@@ -13,7 +13,7 @@ use embassy_futures::select::select;
 use embassy_net::{
     iface::Iface,
     udp::UdpSocket,
-    wire::{ListenSocketAddr, SocketAddr},
+    wire::{IpAddr, ListenSocketAddr, SocketAddr},
 };
 use embassy_time::Timer;
 use esp_hal::rng::Rng;
@@ -23,10 +23,11 @@ use crate::{identity::DeviceIdentity, network};
 
 /// RFC 6762's recommendation for records that name a host.
 const TTL_SECS: u32 = 120;
-/// An Ethernet payload less the IPv4 and UDP headers.
-const MAX_MESSAGE: usize = 1472;
+/// An Ethernet payload less the IPv6 and UDP headers, so that a message fits either family.
+const MAX_MESSAGE: usize = 1452;
 const PORT: u16 = 5353;
-const GROUP: Ipv4Addr = Ipv4Addr::new(224, 0, 0, 251);
+const GROUP_V4: Ipv4Addr = Ipv4Addr::new(224, 0, 0, 251);
+const GROUP_V6: Ipv6Addr = Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 0, 0xfb);
 
 #[embassy_executor::task]
 pub async fn task(iface: Iface<'static>, identity: &'static DeviceIdentity, advertise_coap: bool) {
@@ -42,7 +43,8 @@ pub async fn task(iface: Iface<'static>, identity: &'static DeviceIdentity, adve
     };
     // RFC 6762 §11: older queriers drop responses with any other IP TTL.
     if socket.set_hop_limit(Some(255)).is_err()
-        || iface.join_multicast_group(GROUP).is_err()
+        || iface.join_multicast_group(GROUP_V4).is_err()
+        || iface.join_multicast_group(GROUP_V6).is_err()
         || socket.bind(PORT, ListenSocketAddr::UNSPECIFIED).is_err()
     {
         warn!("mDNS disabled: could not bind its socket");
@@ -58,7 +60,9 @@ pub async fn task(iface: Iface<'static>, identity: &'static DeviceIdentity, adve
         if let Ok(MdnsResponse::Reply { data, .. }) =
             handler.handle(MdnsRequest::None, &mut response)
         {
-            send(&socket, data, SocketAddr::new(GROUP.into(), PORT)).await;
+            for group in [GROUP_V4.into(), GROUP_V6.into()] {
+                send(&socket, data, SocketAddr::new(group, PORT)).await;
+            }
         }
         select(
             serve(&socket, &mut handler, &mut request, &mut response),
@@ -101,7 +105,12 @@ async fn serve(
             // RFC 6762 §6: 20–120 ms, so that responders to a shared record don't collide.
             Timer::after_millis(20 + u64::from(Rng::new().random()) % 100).await;
         }
-        send(socket, data, SocketAddr::new(GROUP.into(), PORT)).await;
+        // Answer in the family the query came in: a querier only listens on its own group.
+        let group = match meta.remote_addr.addr {
+            IpAddr::V4(_) => GROUP_V4.into(),
+            IpAddr::V6(_) => GROUP_V6.into(),
+        };
+        send(socket, data, SocketAddr::new(group, PORT)).await;
     }
 }
 
@@ -127,7 +136,7 @@ impl HostAnswers for Answers<'_> {
         let host = Host {
             hostname: self.hostname,
             ipv4: network::ipv4_address(self.iface).unwrap_or(Ipv4Addr::UNSPECIFIED),
-            ipv6: Ipv6Addr::UNSPECIFIED,
+            ipv6: network::ipv6_address(self.iface).unwrap_or(Ipv6Addr::UNSPECIFIED),
             ttl: Ttl::from_secs(TTL_SECS),
         };
         if self.advertise_coap {

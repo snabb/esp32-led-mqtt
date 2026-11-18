@@ -126,6 +126,7 @@ impl Device for HostDevice {
             name: "esp32-led-host",
             uptime_s: 1,
             ip: Some(Ipv4Addr::LOCALHOST),
+            ipv6: None,
             free_heap: 0,
         }
     }

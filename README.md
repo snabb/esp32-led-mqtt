@@ -24,7 +24,7 @@ Home Assistant over MQTT.
 | Board | ESP32-C6 with 4 MiB flash and the built-in USB Serial/JTAG port. Tested on the [M5Stack NanoC6](https://docs.m5stack.com/en/core/M5NanoC6). Other ESP32 chips are not supported. |
 | LED strip | WS2812, WS2812B, WS2811 or SK6812 (RGB), 1–512 LEDs. Tested with the 60-LED [M5Stack RGB LED Strip](https://docs.m5stack.com/en/unit/rgb_led_strip). |
 | Wiring | Strip data on one GPIO (default GPIO2), with the board and the strip power supply sharing a ground. |
-| Network | 2.4 GHz Wi-Fi, WPA2-Personal or open. MQTT 5 over plain TCP, IPv4. The broker must support MQTT 5. |
+| Network | 2.4 GHz Wi-Fi, WPA2-Personal or open. IPv4 (DHCP) and IPv6 (SLAAC). DNS servers come from DHCPv4 only. MQTT 5 over plain TCP. The broker must support MQTT 5. |
 
 The defaults in [`hardware.json`](hardware.json) match the NanoC6 driving the
 M5Stack strip from its Grove port. For any other setup, see

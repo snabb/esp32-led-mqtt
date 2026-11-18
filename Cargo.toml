@@ -59,8 +59,10 @@ embassy-net = { git = "https://github.com/embassy-rs/embassy", rev = "8a940dab0d
   "icmp-ping-reply",
   "iface-bind",
   "ipv4",
+  "ipv6",
   "log",
   "medium-ethernet",
+  "slaac",
   "tcp",
 ] }
 embassy-sync     = "0.8.0"
@@ -81,7 +83,7 @@ embedded-io-async = "0.7.0"
 embassy-embedded-hal = "0.6.0"
 mbedtls-rs = { git = "https://github.com/snabb/mbedtls-rs", rev = "42601bd06", default-features = false, features = ["tls", "esp32c6", "hook-wall-clock", "ssl-out-content-len-2048"], optional = true }
 time = { version = "0.3.55", default-features = false, optional = true }
-mai-coap = { git = "https://github.com/snabb/mai-coap.git", rev = "925b29b741664802a535fb4582e70d58c786be71", default-features = false, features = ["embassy-net-xarxa-ipv4", "embassy-time"], optional = true }
+mai-coap = { git = "https://github.com/snabb/mai-coap.git", rev = "925b29b741664802a535fb4582e70d58c786be71", default-features = false, features = ["embassy-net-xarxa-ipv4", "embassy-net-xarxa-ipv6", "embassy-time"], optional = true }
 esp-rtos    = { version = "0.4.0", features = ["embassy", "esp-radio", "esp32c6", "log-04"] }
 minimq      = { version = "0.13.5", default-features = false, optional = true }
 static_cell = "2.1.1"

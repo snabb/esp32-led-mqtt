@@ -143,16 +143,33 @@ impl Request {
         {
             return Err(Error::Url);
         }
-        let (host, port) = match authority.split_once(':') {
-            Some((host, port)) => (host, port.parse::<u16>().map_err(|_| Error::Url)?),
-            None => (authority, default_port),
+        // An IPv6 literal is bracketed (RFC 3986 §3.2.2); `host` keeps it bare.
+        let (host, port) = if let Some(rest) = authority.strip_prefix('[') {
+            let (host, rest) = rest.split_once(']').ok_or(Error::Url)?;
+            host.parse::<core::net::Ipv6Addr>()
+                .map_err(|_| Error::Url)?;
+            match rest {
+                "" => (host, default_port),
+                _ => {
+                    let port = rest.strip_prefix(':').ok_or(Error::Url)?;
+                    (host, port.parse::<u16>().map_err(|_| Error::Url)?)
+                }
+            }
+        } else {
+            let (host, port) = match authority.split_once(':') {
+                Some((host, port)) => (host, port.parse::<u16>().map_err(|_| Error::Url)?),
+                None => (authority, default_port),
+            };
+            if host.is_empty()
+                || !host
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b".-".contains(&b))
+            {
+                return Err(Error::Url);
+            }
+            (host, port)
         };
-        if host.is_empty()
-            || port == 0
-            || !host
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b".-".contains(&b))
-        {
+        if port == 0 {
             return Err(Error::Url);
         }
         let mut request = Self {
@@ -473,11 +490,19 @@ mod tests {
             "other.example"
         );
         assert_eq!(parse("http://fw.example/fw.bin").unwrap_err(), Error::Url);
+        let request = parse("https://[2001:db8::1]:8443/fw.bin").unwrap();
+        assert_eq!((request.host.as_str(), request.port), ("2001:db8::1", 8443));
+        let request = parse("https://[2001:db8::1]/fw.bin").unwrap();
+        assert_eq!((request.host.as_str(), request.port), ("2001:db8::1", 443));
         for url in [
             "https://fw.example@evil.example/fw.bin",
             "https://fw.example/fw.bin#x",
             "https://fw.example:0/fw.bin",
             "https://fw.example/fw.bin\r\nX: x",
+            "https://[2001:db8::1/fw.bin",
+            "https://[2001:db8::1]x/fw.bin",
+            "https://[fw.example]/fw.bin",
+            "https://2001:db8::1/fw.bin",
         ] {
             assert!(parse(url).is_err());
         }

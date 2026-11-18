@@ -4,7 +4,11 @@
 //! API where a counterpart exists. Handlers run synchronously on the endpoint driver, so
 //! they must only do quick work and hand anything slower to another task.
 
-use core::{cell::RefCell, fmt::Write, net::Ipv4Addr};
+use core::{
+    cell::RefCell,
+    fmt::Write,
+    net::{Ipv4Addr, Ipv6Addr},
+};
 
 use critical_section::Mutex;
 use digest::Digest;
@@ -413,6 +417,7 @@ pub struct Info<'a> {
     pub name: &'a str,
     pub uptime_s: u64,
     pub ip: Option<Ipv4Addr>,
+    pub ipv6: Option<Ipv6Addr>,
     pub free_heap: usize,
 }
 
@@ -531,6 +536,9 @@ impl<D: Device> Application<DATAGRAM_BYTES> for Handler<'_, D> {
                 .map_err(|_| Code::INTERNAL_ERROR)?;
                 if let Some(ip) = info.ip {
                     write!(json, r#","ip":"{ip}""#).map_err(|_| Code::INTERNAL_ERROR)?;
+                }
+                if let Some(ip) = info.ipv6 {
+                    write!(json, r#","ipv6":"{ip}""#).map_err(|_| Code::INTERNAL_ERROR)?;
                 }
                 json.push('}').map_err(|_| Code::INTERNAL_ERROR)?;
                 reply(response, CONTENT_JSON, json.as_bytes())
