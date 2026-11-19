@@ -179,13 +179,14 @@ fn emit_hardware() {
         .map(|byte| format!("{byte:02x}"))
         .collect();
     let thread_project = format!("led-mqtt-th-{hash}");
-    let project = if env::var_os("CARGO_FEATURE_THREAD").is_some() {
-        thread_project.clone()
+    let wifi_project = format!("led-mqtt-{hash}");
+    let (project, alternate_project) = if env::var_os("CARGO_FEATURE_THREAD").is_some() {
+        (&thread_project, &wifi_project)
     } else {
-        format!("led-mqtt-{hash}")
+        (&wifi_project, &thread_project)
     };
     println!("cargo:rustc-env=FIRMWARE_APP_PROJECT={project}");
-    println!("cargo:rustc-env=FIRMWARE_THREAD_PROJECT={thread_project}");
+    println!("cargo:rustc-env=FIRMWARE_ALTERNATE_PROJECT={alternate_project}");
     println!("cargo:rustc-env=FIRMWARE_HARDWARE_ID={id}");
     let generated = format!(
         r#"

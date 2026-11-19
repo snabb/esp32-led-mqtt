@@ -190,7 +190,7 @@ async fn transfer<IO: Read + Write>(
     let mut remaining = size as usize;
     let mut block = [0; 1024];
     let mut writer = ImageWriter::<Sha256Context>::new(&request.manifest)
-        .with_thread_migration(crate::config::thread_staged());
+        .with_radio_switch(crate::config::alternate_profile_saved());
     let mut last_percent = 0;
     while remaining != 0 {
         let count = remaining.min(block.len());

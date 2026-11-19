@@ -7,7 +7,7 @@ use serde::Deserialize;
 pub const SLOT_SIZE: u32 = 0x1f0000;
 pub const IMAGE_PREFIX_SIZE: usize = 288;
 pub const PROJECT: &str = env!("FIRMWARE_APP_PROJECT");
-const THREAD_PROJECT: &str = env!("FIRMWARE_THREAD_PROJECT");
+const ALTERNATE_PROJECT: &str = env!("FIRMWARE_ALTERNATE_PROJECT");
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Error {
@@ -245,7 +245,7 @@ pub fn validate_image_prefix(prefix: &[u8], build: &str) -> Result<(), Error> {
     validate_image_target(prefix, build, false)
 }
 
-fn validate_image_target(prefix: &[u8], build: &str, allow_thread: bool) -> Result<(), Error> {
+fn validate_image_target(prefix: &[u8], build: &str, allow_alternate: bool) -> Result<(), Error> {
     if prefix.len() < IMAGE_PREFIX_SIZE
         || prefix[0] != 0xe9
         || !(1..=16).contains(&prefix[1])
@@ -262,7 +262,7 @@ fn validate_image_target(prefix: &[u8], build: &str, allow_thread: bool) -> Resu
             .is_some_and(|end| &field[..end] == expected.as_bytes())
     };
     let project = &prefix[80..112];
-    let accepted = cstr(project, PROJECT) || (allow_thread && cstr(project, THREAD_PROJECT));
+    let accepted = cstr(project, PROJECT) || (allow_alternate && cstr(project, ALTERNATE_PROJECT));
     if !cstr(&prefix[48..80], build) || !accepted {
         return Err(Error::Build);
     }
@@ -345,7 +345,7 @@ const IMAGE_CHUNK: usize = 4096;
 
 /// Checks an image as it arrives, in any size of pieces, and writes it to `T`.
 pub struct ImageWriter<H> {
-    allow_thread: bool,
+    allow_alternate: bool,
     size: u32,
     crc32: u32,
     build: String<32>,
@@ -359,7 +359,7 @@ pub struct ImageWriter<H> {
 impl<H: Digest> ImageWriter<H> {
     pub fn new(manifest: &Manifest) -> Self {
         Self {
-            allow_thread: false,
+            allow_alternate: false,
             size: manifest.size,
             crc32: manifest.crc32,
             build: manifest.build.clone(),
@@ -371,9 +371,9 @@ impl<H: Digest> ImageWriter<H> {
         }
     }
 
-    /// Allows the matching Thread image after the Wi-Fi device has staged its profile.
-    pub fn with_thread_migration(mut self, staged: bool) -> Self {
-        self.allow_thread = staged && !cfg!(feature = "thread");
+    /// Allows the matching alternate image after its radio profile has been saved.
+    pub fn with_radio_switch(mut self, staged: bool) -> Self {
+        self.allow_alternate = staged;
         self
     }
 
@@ -400,7 +400,7 @@ impl<H: Digest> ImageWriter<H> {
     fn flush<T: ImageTarget>(&mut self, target: &mut T) -> Result<(), ImageError> {
         let chunk = &self.chunk[..self.chunk_len];
         if !self.begun {
-            let identity = if self.allow_thread {
+            let identity = if self.allow_alternate {
                 validate_image_target(chunk, &self.build, true)
             } else {
                 validate_image_prefix(chunk, &self.build)
@@ -618,8 +618,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(not(feature = "thread"))]
-    fn thread_image_identity_requires_migration_and_matching_hardware() {
+    fn alternate_image_identity_requires_saved_profile_and_matching_hardware() {
         let mut image = [0_u8; IMAGE_PREFIX_SIZE];
         image[0] = 0xe9;
         image[1] = 1;
@@ -627,10 +626,10 @@ mod tests {
         image[28..32].copy_from_slice(&256_u32.to_le_bytes());
         image[32..36].copy_from_slice(&0xabcd5432_u32.to_le_bytes());
         image[48..54].copy_from_slice(b"test-1");
-        image[80..80 + THREAD_PROJECT.len()].copy_from_slice(THREAD_PROJECT.as_bytes());
+        image[80..80 + ALTERNATE_PROJECT.len()].copy_from_slice(ALTERNATE_PROJECT.as_bytes());
         assert_eq!(validate_image_prefix(&image, "test-1"), Err(Error::Build));
         assert_eq!(validate_image_target(&image, "test-1", true), Ok(()));
-        image[80 + THREAD_PROJECT.len() - 1] ^= 1;
+        image[80 + ALTERNATE_PROJECT.len() - 1] ^= 1;
         assert_eq!(
             validate_image_target(&image, "test-1", true),
             Err(Error::Build)

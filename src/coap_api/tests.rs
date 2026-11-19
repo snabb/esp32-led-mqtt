@@ -49,7 +49,7 @@ struct FakeDevice {
     ota_commands: RefCell<StdVec<StdVec<u8>>>,
     busy: Cell<bool>,
     written_config: RefCell<Option<DeviceConfig>>,
-    staged_thread: RefCell<Option<ThreadProfile>>,
+    stored_config: RefCell<Option<DeviceConfig>>,
     saved_clients: RefCell<Option<ClientList>>,
     reboots: Cell<u32>,
     upload_enabled: Cell<bool>,
@@ -148,7 +148,7 @@ impl FakeDevice {
             ota_commands: RefCell::new(StdVec::new()),
             busy: Cell::new(false),
             written_config: RefCell::new(None),
-            staged_thread: RefCell::new(None),
+            stored_config: RefCell::new(None),
             saved_clients: RefCell::new(None),
             reboots: Cell::new(0),
             upload_enabled: Cell::new(true),
@@ -213,15 +213,15 @@ impl Device for FakeDevice {
         *self.written_config.borrow_mut() = Some(config);
         Ok(())
     }
-    fn stage_thread(&self, profile: ThreadProfile) -> Result<(), &'static str> {
+    fn write_stored_config(&self, config: DeviceConfig) -> Result<(), Busy> {
         if self.busy.get() {
-            return Err("busy");
+            return Err(Busy);
         }
-        *self.staged_thread.borrow_mut() = Some(profile);
+        *self.stored_config.borrow_mut() = Some(config);
         Ok(())
     }
-    fn thread_status(&self) -> (&'static str, u32) {
-        if self.staged_thread.borrow().is_some() {
+    fn stored_config_status(&self) -> (&'static str, u32) {
+        if self.stored_config.borrow().is_some() {
             ("saved", 2)
         } else {
             ("unconfigured", 0)
@@ -563,16 +563,21 @@ fn log_tailing_sees_new_text_and_any_gap() {
 }
 
 #[test]
-fn thread_staging_accepts_credentials_but_reads_only_status() {
+fn stored_settings_are_queued_without_reboot_and_read_back_as_status() {
     let device = FakeDevice::new();
     let keys = trusted_keys();
     session(&device, CLIENT_KEY, &keys, async |client, server| {
-        let path = "/config/thread";
+        let path = "/config/stored";
         let (code, body) = get(client, server, path).await;
         assert_eq!(code, Code::CONTENT);
         assert_eq!(body, br#"{"status":"unconfigured","generation":0}"#);
         let dataset = device_config::TEST_DATASET;
-        let settings = format!(r#"{{"dataset":"{dataset}","dns":"fd12::53"}}"#);
+        let injected = format!(r#"{{"thread":{{"dataset":"{dataset}","seed":"abcd"}}}}"#);
+        assert_eq!(
+            put(client, server, path, injected.as_bytes()).await,
+            Code::BAD_REQUEST
+        );
+        let settings = format!(r#"{{"thread":{{"dataset":"{dataset}","dns":"fd12::53"}}}}"#);
         assert_eq!(
             put(client, server, path, settings.as_bytes()).await,
             Code::CHANGED
@@ -581,7 +586,15 @@ fn thread_staging_accepts_credentials_but_reads_only_status() {
         assert_eq!(code, Code::CONTENT);
         assert_eq!(body, br#"{"status":"saved","generation":2}"#);
         assert_eq!(
-            device.staged_thread.borrow().as_ref().unwrap().dataset,
+            device
+                .stored_config
+                .borrow()
+                .as_ref()
+                .unwrap()
+                .thread
+                .as_ref()
+                .unwrap()
+                .dataset,
             dataset
         );
     });
@@ -1244,7 +1257,7 @@ fn without_authentication_only_discovery_answers() {
             (Code::PUT, "/speed"),
             (Code::PUT, "/variation"),
             (Code::PUT, "/config"),
-            (Code::PUT, "/config/thread"),
+            (Code::PUT, "/config/stored"),
             (Code::POST, "/coap/clients"),
             (Code::DELETE, "/coap/clients"),
             (Code::POST, "/firmware/update"),

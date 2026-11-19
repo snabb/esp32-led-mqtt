@@ -12,9 +12,9 @@ With the `coap` feature, an image can also be
 [uploaded directly](COAP.md#firmware-upload), and the command below can be sent to
 `/firmware/update`.
 
-OTA leaves both radio profiles and the shared MQTT settings in flash. A
-migration-capable Wi-Fi build accepts a Thread image for the same hardware
-profile after the Thread settings have been staged. See [CoAP migration](COAP.md#migrate-a-device-to-thread).
+OTA leaves both radio profiles and the shared MQTT settings in flash. A build
+accepts the other radio variant for the same hardware profile when the destination
+settings have been saved. See [switching radios over CoAP](COAP.md#switch-between-wi-fi-and-thread).
 The HTTPS transfer budget on Thread is 20 minutes. The trial window stays
 at two minutes.
 See also [MQTT over TLS configuration](CONFIGURATION.md#mqtt-over-tls).

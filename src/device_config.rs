@@ -128,17 +128,6 @@ impl ThreadProfile {
         }
         Ok(())
     }
-
-    /// Decode a remote profile request. Only the device can supply the seed.
-    pub fn decode_request(bytes: &[u8]) -> Result<Self, Error> {
-        let (profile, end): (Self, _) =
-            serde_json_core::from_slice(bytes).map_err(|_| Error::Encoding)?;
-        if !bytes[end..].iter().all(u8::is_ascii_whitespace) || !profile.seed.is_empty() {
-            return Err(Error::Thread);
-        }
-        profile.validate()?;
-        Ok(profile)
-    }
 }
 
 fn decode_hex<const N: usize>(value: &str) -> Option<Vec<u8, N>> {
@@ -228,6 +217,26 @@ impl DeviceConfig {
         config.validate()?;
         // The flash owner preserves the committed profile, which may be newer.
         config.thread = None;
+        Ok(config)
+    }
+
+    /// Parse settings for the next boot. The flash owner merges omitted profiles
+    /// from the committed snapshot, which may differ from the running one.
+    #[cfg(feature = "coap")]
+    pub(crate) fn decode_stored_update(bytes: &[u8], current: &Self) -> Result<Self, Error> {
+        let config = Self::parse(bytes)?;
+        if !config.coap_device_key.is_empty()
+            || !config.coap_clients.is_empty()
+            || config
+                .thread
+                .as_ref()
+                .is_some_and(|profile| !profile.seed.is_empty())
+        {
+            return Err(Error::Credentials);
+        }
+        let mut merged = config.clone();
+        merged.keep_radio_profiles(Some(current));
+        merged.validate()?;
         Ok(config)
     }
 
@@ -355,10 +364,14 @@ mod tests {
 
     #[test]
     fn thread_requires_a_complete_dataset_and_ipv6_unicast_dns() {
-        let profile =
-            |dataset: &str, dns: &str| format!(r#"{{"dataset":"{dataset}","dns":"{dns}"}}"#);
+        let profile = |dataset: &str, dns: &str| {
+            format!(r#"{{"thread":{{"dataset":"{dataset}","dns":"{dns}"}}}}"#)
+        };
         let valid = profile(TEST_DATASET, "fd12::53");
-        let parsed = ThreadProfile::decode_request(valid.as_bytes()).unwrap();
+        let parsed = DeviceConfig::decode(valid.as_bytes())
+            .unwrap()
+            .thread
+            .unwrap();
         assert_eq!(parsed.dns, Some("fd12::53".parse().unwrap()));
         assert_eq!(
             parsed.dataset_bytes().unwrap().len(),
@@ -372,7 +385,7 @@ mod tests {
             "fe80::53",
             "::ffff:192.0.2.53",
         ] {
-            assert!(ThreadProfile::decode_request(profile(TEST_DATASET, dns).as_bytes()).is_err());
+            assert!(DeviceConfig::decode(profile(TEST_DATASET, dns).as_bytes()).is_err());
         }
         for dataset in [
             "a",
@@ -381,17 +394,12 @@ mod tests {
             &TEST_DATASET[10..],
         ] {
             assert_eq!(
-                ThreadProfile::decode_request(profile(dataset, "fd12::53").as_bytes()).err(),
+                DeviceConfig::decode(profile(dataset, "fd12::53").as_bytes()).err(),
                 Some(Error::Thread),
             );
         }
         let duplicate = format!("{TEST_DATASET}000300000f");
-        assert!(ThreadProfile::decode_request(profile(&duplicate, "fd12::53").as_bytes()).is_err());
-        let injected = format!(
-            r#"{{"dataset":"{TEST_DATASET}","seed":"{}"}}"#,
-            "ab".repeat(32)
-        );
-        assert!(ThreadProfile::decode_request(injected.as_bytes()).is_err());
+        assert!(DeviceConfig::decode(profile(&duplicate, "fd12::53").as_bytes()).is_err());
     }
 
     #[cfg(feature = "coap")]
@@ -410,6 +418,38 @@ mod tests {
         assert_eq!(update.wifi_password, current.wifi_password);
         assert_eq!(update.thread.unwrap().seed_bytes(), Some([0xab; 32]));
         assert_eq!(update.mqtt_broker, "fd12::1");
+    }
+
+    #[test]
+    fn maximum_device_and_thread_fields_fit_the_snapshot() {
+        let mut config = DeviceConfig::decode(VALID).unwrap();
+        config.wifi_ssid = "s".repeat(32).as_str().try_into().unwrap();
+        config.wifi_password = "a".repeat(64).as_str().try_into().unwrap();
+        config.mqtt_broker = "b".repeat(128).as_str().try_into().unwrap();
+        config.mqtt_username = "u".repeat(128).as_str().try_into().unwrap();
+        config.mqtt_password = "p".repeat(128).as_str().try_into().unwrap();
+        config.coap_device_key = "a".repeat(64).as_str().try_into().unwrap();
+        for _ in 0..MAX_COAP_CLIENTS {
+            config
+                .coap_clients
+                .push(
+                    "ab".repeat(MAX_COAP_CREDENTIAL_BYTES)
+                        .as_str()
+                        .try_into()
+                        .unwrap(),
+                )
+                .unwrap();
+        }
+        let padding = 254 - TEST_DATASET.len() / 2 - 2;
+        let dataset = format!("{TEST_DATASET}fe{padding:02x}{}", "00".repeat(padding));
+        config.thread = Some(ThreadProfile {
+            dataset: dataset.as_str().try_into().unwrap(),
+            dns: Some("abcd:abcd:abcd:abcd:abcd:abcd:abcd:abcd".parse().unwrap()),
+            seed: "ab".repeat(32).as_str().try_into().unwrap(),
+        });
+        let mut bytes = [0; MAX_BYTES];
+        let len = config.encode(&mut bytes).unwrap();
+        assert!(DeviceConfig::decode(&bytes[..len]).is_ok());
     }
 
     #[test]

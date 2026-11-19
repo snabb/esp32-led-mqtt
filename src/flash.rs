@@ -35,7 +35,7 @@ pub enum Job {
     #[cfg(feature = "coap")]
     CoapClients(esp32_led_mqtt::coap_api::ClientList),
     #[cfg(feature = "coap")]
-    ThreadProfile(device_config::ThreadProfile),
+    StoredConfig(device_config::DeviceConfig),
     #[cfg(feature = "coap")]
     Reboot,
     /// A firmware upload holds a `Lease`. This job only supervises it.
@@ -287,10 +287,10 @@ pub async fn task(
                 esp_hal::system::software_reset();
             }
             #[cfg(feature = "coap")]
-            Job::ThreadProfile(profile) => {
+            Job::StoredConfig(settings) => {
                 let mut flash = take_storage();
                 arm_watchdog(&mut wdt, 30);
-                config::stage_thread(&mut flash, profile).await;
+                config::save_stored_config(&mut flash, settings).await;
                 wdt.disable();
                 put_storage(flash);
             }

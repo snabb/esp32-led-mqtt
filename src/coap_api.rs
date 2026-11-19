@@ -28,7 +28,7 @@ use serde::Serialize;
 
 use crate::{
     EFFECT_DISABLED_NAME, EFFECTS, coap_keys,
-    device_config::{self, CoapCredential, DeviceConfig, ThreadProfile},
+    device_config::{self, CoapCredential, DeviceConfig},
     light_command::{
         LightState, LightUpdate, light_state_json, parse_light_command, parse_speed,
         parse_variation,
@@ -246,12 +246,12 @@ pub trait Device {
     fn device_credential(&self) -> CoapCredential;
     /// Queues a write of the settings and a reboot, after any reply has had time to leave.
     fn write_config(&self, config: DeviceConfig) -> Result<(), Busy>;
-    /// Queues inactive Thread settings while Wi-Fi stays running.
-    fn stage_thread(&self, _profile: ThreadProfile) -> Result<(), &'static str> {
-        Err("unavailable")
+    /// Queues settings for the next boot.
+    fn write_stored_config(&self, _config: DeviceConfig) -> Result<(), Busy> {
+        Err(Busy)
     }
-    /// Returns the staged write status and committed generation.
-    fn thread_status(&self) -> (&'static str, u32) {
+    /// Returns the stored write status and committed generation.
+    fn stored_config_status(&self) -> (&'static str, u32) {
         ("unconfigured", 0)
     }
     /// Queues saving this client list. `ClientKeys` should only change once it's saved.
@@ -272,8 +272,8 @@ pub trait UploadAccess {
     type Hash: Digest;
     /// Exclusive use of the flash, or `None` if something else is using it.
     fn acquire(&mut self) -> Option<Self::Target>;
-    /// A verified inactive Thread profile permits switching the next boot to Thread.
-    fn allow_thread_image(&self) -> bool {
+    /// A verified destination radio profile permits switching the next boot.
+    fn allow_alternate_image(&self) -> bool {
         false
     }
     /// Publishes an OTA status.
@@ -358,7 +358,7 @@ impl<A: UploadAccess> UploadSink for FirmwareUpload<'_, A> {
         };
         self.upload = Some(Upload {
             writer: ImageWriter::new(&manifest)
-                .with_thread_migration(self.access.allow_thread_image()),
+                .with_radio_switch(self.access.allow_alternate_image()),
             target,
             last_percent: 0,
         });
@@ -449,7 +449,7 @@ enum Kind {
     Logs,
     FirmwareUpdate,
     Config,
-    ThreadConfig,
+    StoredConfig,
     Clients,
     Reboot,
     FirmwareManifest,
@@ -607,17 +607,19 @@ impl<D: Device> Application<DATAGRAM_BYTES> for Handler<'_, D> {
                     Err(Busy) => busy(response),
                 }
             }
-            Kind::ThreadConfig if write => {
-                let Ok(profile) = ThreadProfile::decode_request(request.payload()) else {
-                    return refuse(response, Code::BAD_REQUEST, "invalid_thread_settings");
+            Kind::StoredConfig if write => {
+                let Ok(config) =
+                    DeviceConfig::decode_stored_update(request.payload(), self.device.config())
+                else {
+                    return refuse(response, Code::BAD_REQUEST, "invalid_settings");
                 };
-                match self.device.stage_thread(profile) {
+                match self.device.write_stored_config(config) {
                     Ok(()) => changed(response),
-                    Err(reason) => refuse(response, Code::UNAVAILABLE, reason),
+                    Err(Busy) => busy(response),
                 }
             }
-            Kind::ThreadConfig => {
-                let (status, generation) = self.device.thread_status();
+            Kind::StoredConfig => {
+                let (status, generation) = self.device.stored_config_status();
                 let payload: String<64> =
                     heapless::format!(r#"{{"status":"{status}","generation":{generation}}}"#)
                         .map_err(|_| Code::INTERNAL_ERROR)?;
@@ -768,7 +770,7 @@ pub struct Resources<'d, D, A: UploadAccess> {
     logs: Handler<'d, D>,
     firmware_update: Handler<'d, D>,
     config: Handler<'d, D>,
-    thread_config: Handler<'d, D>,
+    stored_config: Handler<'d, D>,
     clients: Handler<'d, D>,
     reboot: Handler<'d, D>,
     firmware_manifest: Handler<'d, D>,
@@ -799,7 +801,7 @@ impl<'d, D: Device, A: UploadAccess> Resources<'d, D, A> {
             logs: handler(Kind::Logs),
             firmware_update: handler(Kind::FirmwareUpdate),
             config: handler(Kind::Config),
-            thread_config: handler(Kind::ThreadConfig),
+            stored_config: handler(Kind::StoredConfig),
             clients: handler(Kind::Clients),
             reboot: handler(Kind::Reboot),
             firmware_manifest: handler(Kind::FirmwareManifest),
@@ -823,7 +825,7 @@ impl<'d, D: Device, A: UploadAccess> Resources<'d, D, A> {
         router.route("/logs", READ, &mut self.logs)?;
         router.route("/firmware/update", WRITE, &mut self.firmware_update)?;
         router.buffered_upload("/config", READ_WRITE, &mut self.config)?;
-        router.buffered_upload("/config/thread", READ_WRITE, &mut self.thread_config)?;
+        router.buffered_upload("/config/stored", READ_WRITE, &mut self.stored_config)?;
         router.route("/coap/clients", CLIENTS, &mut self.clients)?;
         router.route("/reboot", WRITE, &mut self.reboot)?;
         router.route("/firmware/manifest", PUT, &mut self.firmware_manifest)?;
@@ -858,7 +860,7 @@ impl<'d, D: Device, A: UploadAccess> Resources<'d, D, A> {
         router.describe("/logs", TEXT_OBSERVABLE, false)?;
         router.describe("/info", JSON, false)?;
         router.describe("/config", JSON, false)?;
-        router.describe("/config/thread", JSON, false)?;
+        router.describe("/config/stored", JSON, false)?;
         router.describe("/coap/clients", JSON, false)?;
         router.describe("/effects", JSON, false)?;
         Ok(())

@@ -29,7 +29,6 @@ from aiocoap.edhoc import CoseKeyForEdhoc, EdhocCredentials
 KEY_DIR = Path(__file__).resolve().parent.parent / "local/coap"
 # Where the build ID sits in an ESP image: the app descriptor's version field.
 BUILD_ID_RANGE = (48, 80)
-PROJECT_ID_RANGE = (80, 112)
 TRIAL_SECONDS = 150
 STAGE_SECONDS = 30
 # `confirm_boot` reports these as `disabled` when a boot is unhealthy. Others just mean this
@@ -66,8 +65,8 @@ def keygen(path):
     print(f"Public key, for devices: {ccs_file}")
 
 
-def resolve(host, *, ipv6_only=False):
-    """Returns the URI authority for `host`: an IPv6 literal, bracketed or not, or else a
+def resolve_all(host):
+    """Returns candidate URI authorities for `host`: an IPv6 literal, bracketed or not, or else a
     name or IPv4 address with an optional port. A name resolves to its IPv4 address if it
     has one, else to IPv6; a device doesn't need the name in requests.
 
@@ -75,22 +74,36 @@ def resolve(host, *, ipv6_only=False):
     normalized URI, and zones as a bare `%ifname`, which its UDP transport expects."""
     if host.startswith("["):
         address, _, rest = host[1:].partition("]")
-        return f"[{ipaddress.IPv6Address(address)}]{rest}"
+        return [f"[{ipaddress.IPv6Address(address)}]{rest}"]
     try:
-        return f"[{ipaddress.IPv6Address(host)}]"
+        return [f"[{ipaddress.IPv6Address(host)}]"]
     except ValueError:
         pass
     name, separator, port = host.partition(":")
-    if not ipv6_only:
+    authorities = {}
+    error = None
+    for family in (socket.AF_INET, socket.AF_INET6):
         try:
-            address = socket.getaddrinfo(name, None, socket.AF_INET)[0][4][0]
-            return f"{address}{separator}{port}"
-        except socket.gaierror:
-            pass
-    sockaddr = socket.getaddrinfo(name, None, socket.AF_INET6)[0][4]
-    address = ipaddress.IPv6Address(sockaddr[0].split("%")[0])
-    zone = f"%{socket.if_indextoname(sockaddr[3])}" if sockaddr[3] else ""
-    return f"[{address}{zone}]{separator}{port}"
+            entries = socket.getaddrinfo(name, None, family, socket.SOCK_DGRAM)
+        except socket.gaierror as exc:
+            error = exc
+            continue
+        for entry in entries:
+            sockaddr = entry[4]
+            if family == socket.AF_INET:
+                authority = sockaddr[0]
+            else:
+                address = ipaddress.IPv6Address(sockaddr[0].split("%")[0])
+                zone = f"%{socket.if_indextoname(sockaddr[3])}" if sockaddr[3] else ""
+                authority = f"[{address}{zone}]"
+            authorities[f"{authority}{separator}{port}"] = None
+    if not authorities and error is not None:
+        raise error
+    return list(authorities)
+
+
+def resolve(host):
+    return resolve_all(host)[0]
 
 
 class Device:
@@ -137,11 +150,6 @@ class Device:
         self.context = await aiocoap.Context.create_client_context()
         self.host = authority
         self.context.client_credentials[self.uri("/*")] = self.credentials
-
-    async def refresh(self, hostname, *, ipv6_only=False, force=False):
-        authority = await asyncio.to_thread(resolve, hostname, ipv6_only=ipv6_only)
-        if force or self.context is None or authority != self.host:
-            await self.connect(authority)
 
     def message(self, code, path, payload=b"", **options):
         return aiocoap.Message(
@@ -266,44 +274,79 @@ def image_build_id(image):
     return field.split(b"\0", 1)[0].decode()
 
 
-async def wait_for_build(device, build, *, thread_host=None):
+async def wait_for_build(device, build, *, confirm_host=None):
     """Polls until the image has passed its trial. These requests are themselves what
     confirms it when no broker is reachable, but its other health checks have to pass too."""
-    deadline = asyncio.get_running_loop().time() + TRIAL_SECONDS
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + TRIAL_SECONDS
+    original_host = device.host
     was_running = False
-    fresh_session = True
-    while (remaining := deadline - asyncio.get_running_loop().time()) > 0:
+    while (remaining := deadline - loop.time()) > 0:
         await asyncio.sleep(min(5, remaining))
         try:
-            async with asyncio.timeout_at(
-                min(deadline, asyncio.get_running_loop().time() + 20)
-            ):
-                await device.refresh(
-                    thread_host or device.hostname,
-                    ipv6_only=thread_host is not None,
-                    force=fresh_session,
+            async with asyncio.timeout_at(min(deadline, loop.time() + 5)):
+                candidates = await asyncio.to_thread(
+                    resolve_all,
+                    confirm_host or device.hostname,
                 )
-                status = json.loads(await device.get("/firmware"))
-        except (aiocoap.error.Error, ValueError, CoapError, OSError):
+        except OSError:
             continue
-        state, detail = status.get("state"), status.get("detail")
-        if status.get("running_build") != build:
-            if was_running:
-                raise CoapError(f"{build} failed its trial and rolled back")
-            if state == "failed":
-                raise CoapError(f"update failed: {detail}")
-            continue
-        was_running = True
-        fresh_session = False
-        if state == "disabled" and detail in UNHEALTHY_BOOT:
-            raise CoapError(f"{build} booted unhealthy: {detail}")
-        if state != "trial":
-            print(f"Running {build}: {state}")
-            return
+        # Prefer the last confirmed address after the target starts responding.
+        if was_running and device.host in candidates:
+            candidates.remove(device.host)
+            candidates.insert(0, device.host)
+        for authority in candidates:
+            status = await read_trial_status(
+                device,
+                authority,
+                deadline,
+                fresh=not was_running,
+                timeout=5 if len(candidates) > 1 else 20,
+            )
+            if status is None:
+                continue
+            state, detail = status.get("state"), status.get("detail")
+            if status.get("running_build") != build:
+                if was_running:
+                    raise CoapError(f"{build} failed its trial and rolled back")
+                if state == "failed":
+                    raise CoapError(f"update failed: {detail}")
+                continue
+            was_running = True
+            if state == "disabled" and detail in UNHEALTHY_BOOT:
+                raise CoapError(f"{build} booted unhealthy: {detail}")
+            if state != "trial":
+                print(f"Running {build}: {state}")
+                return
+            break
+    if confirm_host is not None:
+        status = await read_trial_status(
+            device, original_host, loop.time() + 5, fresh=True
+        )
+        if (
+            status
+            and status.get("running_build") != build
+            and status.get("state") == "ready"
+        ):
+            raise CoapError(
+                f"{build} failed its trial and rolled back to the previous image"
+            )
     raise CoapError(f"{build} hasn't passed its trial after {TRIAL_SECONDS} s")
 
 
-async def push(device, image, *, thread_host=None):
+async def read_trial_status(device, authority, deadline, *, fresh, timeout=20):
+    try:
+        async with asyncio.timeout_at(
+            min(deadline, asyncio.get_running_loop().time() + timeout)
+        ):
+            if fresh or device.context is None or device.host != authority:
+                await device.connect(authority)
+            return json.loads(await device.get("/firmware"))
+    except (aiocoap.error.Error, ValueError, CoapError, OSError):
+        return None
+
+
+async def push(device, image, *, confirm_host=None):
     build = image_build_id(image)
     manifest = {
         "size": len(image),
@@ -319,25 +362,27 @@ async def push(device, image, *, thread_host=None):
     started = asyncio.get_running_loop().time()
     await device.put("/firmware/image", image)
     print(f"Uploaded in {asyncio.get_running_loop().time() - started:.1f} s")
-    await wait_for_build(device, build, thread_host=thread_host)
+    await wait_for_build(device, build, confirm_host=confirm_host)
 
 
-async def stage_thread(device, profile):
-    resource = "/config/thread"
+async def save_config(device, settings):
+    resource = "/config/stored"
     previous = json.loads(await device.get(resource))["generation"]
-    await device.put(resource, profile)
+    await device.put(resource, settings)
     try:
         async with asyncio.timeout(STAGE_SECONDS):
             while True:
                 status = json.loads(await device.get(resource))
                 if status["status"] == "failed":
-                    raise CoapError("Thread settings save failed")
+                    raise CoapError("Settings save failed")
                 if status["status"] == "saved" and status["generation"] > previous:
-                    print(f"Thread settings saved at generation {status['generation']}")
+                    print(
+                        f"Settings saved without reboot at generation {status['generation']}"
+                    )
                     return
                 await asyncio.sleep(0.25)
     except TimeoutError:
-        raise CoapError("Timed out waiting for Thread settings to be saved") from None
+        raise CoapError("Timed out waiting for settings to be saved") from None
 
 
 async def run(args):
@@ -359,25 +404,20 @@ async def run(args):
             case "config-get":
                 print((await device.get("/config")).decode())
             case "config-put":
-                print(
-                    "Applying settings and rebooting. Wrong Wi-Fi settings need USB to fix."
-                )
-                await device.put("/config", args.file.read_bytes())
+                settings = args.file.read_bytes()
+                if args.no_reboot:
+                    await save_config(device, settings)
+                else:
+                    print("Applying settings and rebooting.")
+                    await device.put("/config", settings)
             case "clients":
                 await clients(device, args)
             case "ota":
                 await device.post("/firmware/update", args.file.read_bytes())
             case "push":
-                await push(device, args.image.read_bytes())
-            case "thread-stage":
-                await stage_thread(device, args.profile.read_bytes())
-            case "thread-migrate":
-                image = args.image.read_bytes()
-                project = image[slice(*PROJECT_ID_RANGE)].split(b"\0", 1)[0]
-                if not project.startswith(b"led-mqtt-th-"):
-                    raise CoapError("Supply a Thread firmware app image")
-                await stage_thread(device, args.profile.read_bytes())
-                await push(device, image, thread_host=args.thread_host)
+                await push(
+                    device, args.image.read_bytes(), confirm_host=args.confirm_host
+                )
             case "reboot":
                 await device.post("/reboot")
 
@@ -402,6 +442,9 @@ def main():
     commands.add_parser("config-get", help="read settings, without secrets")
     config_put = commands.add_parser("config-put", help="replace settings and reboot")
     config_put.add_argument("file", type=Path)
+    config_put.add_argument(
+        "--no-reboot", action="store_true", help="save for the next boot"
+    )
     client_commands = commands.add_parser("clients", help="manage trusted client keys")
     client_actions = client_commands.add_subparsers(dest="action", required=True)
     client_actions.add_parser("list")
@@ -414,21 +457,9 @@ def main():
     commands.add_parser("ota", help="start an HTTPS update").add_argument(
         "file", type=Path
     )
-    commands.add_parser("push", help="upload an image").add_argument("image", type=Path)
-    stage = commands.add_parser(
-        "thread-stage", help="save a Thread profile without rebooting"
-    )
-    stage.add_argument("profile", type=Path, help="private Thread profile JSON")
-    migrate = commands.add_parser(
-        "thread-migrate", help="stage Thread settings and upload Thread firmware"
-    )
-    migrate.add_argument("profile", type=Path, help="private Thread profile JSON")
-    migrate.add_argument("image", type=Path, help="Thread firmware app image")
-    migrate.add_argument(
-        "--thread-host",
-        required=True,
-        help="SRP hostname or IPv6 address for trial confirmation",
-    )
+    push_command = commands.add_parser("push", help="upload an image")
+    push_command.add_argument("image", type=Path)
+    push_command.add_argument("--confirm-host", help="hostname or address after reboot")
     args = parser.parse_args()
     if args.command == "keygen":
         keygen(args.client_key)

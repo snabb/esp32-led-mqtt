@@ -403,6 +403,8 @@ fn mesh_addresses(thread: &OpenThread<'_>) -> heapless::Vec<Ipv6Cidr, IFACE_ADDR
                 }
                 current = entry.mNext;
             }
+            // A mesh-local EID can win xarxa's longest-prefix source selection
+            // for an off-mesh ULA destination. Install it only as a mesh fallback.
             if addresses.is_empty()
                 && let Some(eid) = sys::otThreadGetMeshLocalEid(instance).as_ref()
             {

@@ -222,7 +222,7 @@ Build the Thread variant for an existing Thread mesh. It supports MQTT/MQTTS,
 Home Assistant discovery, authenticated CoAP and OTA over IPv6. A Thread
 border router provides LAN reachability and SRP-based CoAP discovery.
 See [USB provisioning](docs/CONFIGURATION.md#thread-settings) or
-[migration from Wi-Fi over CoAP](docs/COAP.md#migrate-a-device-to-thread).
+[migration from Wi-Fi over CoAP](docs/COAP.md#switch-between-wi-fi-and-thread).
 
 ### Firmware updates
 

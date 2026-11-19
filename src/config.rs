@@ -16,25 +16,25 @@ use crate::flash::{self, Job};
 
 static GENERATION: AtomicU32 = AtomicU32::new(0);
 #[cfg(feature = "_control")]
-static THREAD_STAGED: AtomicBool = AtomicBool::new(false);
+static ALTERNATE_PROFILE: AtomicBool = AtomicBool::new(false);
 
 #[cfg(feature = "_control")]
-pub fn thread_staged() -> bool {
-    THREAD_STAGED.load(Ordering::Acquire)
+pub fn alternate_profile_saved() -> bool {
+    ALTERNATE_PROFILE.load(Ordering::Acquire)
 }
 
 #[cfg(feature = "coap")]
-static THREAD_STATE: critical_section::Mutex<core::cell::Cell<(&'static str, u32)>> =
+static STORED_CONFIG_STATE: critical_section::Mutex<core::cell::Cell<(&'static str, u32)>> =
     critical_section::Mutex::new(core::cell::Cell::new(("unconfigured", 0)));
 
 #[cfg(feature = "coap")]
-pub fn thread_status() -> (&'static str, u32) {
-    critical_section::with(|cs| THREAD_STATE.borrow(cs).get())
+pub fn stored_config_status() -> (&'static str, u32) {
+    critical_section::with(|cs| STORED_CONFIG_STATE.borrow(cs).get())
 }
 
 #[cfg(feature = "coap")]
-pub fn set_thread_status(status: &'static str, generation: u32) {
-    critical_section::with(|cs| THREAD_STATE.borrow(cs).set((status, generation)));
+pub fn set_stored_config_status(status: &'static str, generation: u32) {
+    critical_section::with(|cs| STORED_CONFIG_STATE.borrow(cs).set((status, generation)));
 }
 
 fn init_thread_seed(
@@ -61,31 +61,44 @@ fn init_thread_seed(
     Ok(())
 }
 
+#[cfg(feature = "_control")]
+fn update_alternate_profile(config: Option<&DeviceConfig>) {
+    let available = config.is_some_and(|config| {
+        if cfg!(feature = "thread") {
+            !config.wifi_ssid.is_empty()
+        } else {
+            config
+                .thread
+                .as_ref()
+                .is_some_and(|profile| profile.seed_bytes().is_some())
+        }
+    });
+    ALTERNATE_PROFILE.store(available, Ordering::Release);
+}
+
 #[cfg(feature = "coap")]
-pub async fn stage_thread(flash: &mut FlashStorage, profile: device_config::ThreadProfile) {
-    let previous = thread_status().1;
-    // A failed write may have committed. Until a successful read on reboot or a
-    // verified retry, keep cross-radio activation disabled.
-    THREAD_STAGED.store(false, Ordering::Release);
+pub async fn save_stored_config(flash: &mut FlashStorage, mut config: DeviceConfig) {
+    let previous = stored_config_status().1;
+    // A failed write may have committed. Require a verified read before allowing a radio switch.
+    update_alternate_profile(None);
     let mut storage = YieldingAsync::new(BlockingAsync::new(flash));
     let range = device_config::PARTITION;
     let result = async {
-        let stored = config_store::load(&mut storage, range.clone())
-            .await?
-            .ok_or(config_store::Error::Verification)?;
-        let mut config = stored.clone();
-        config.thread = Some(profile);
-        init_thread_seed(&mut config, Some(&stored))?;
-        config_store::save(&mut storage, range, config).await
+        let stored = config_store::load(&mut storage, range.clone()).await?;
+        config.keep_coap_keys(stored.as_ref());
+        config.keep_radio_profiles(stored.as_ref());
+        init_thread_seed(&mut config, stored.as_ref())?;
+        let generation = config_store::save(&mut storage, range, config.clone()).await?;
+        update_alternate_profile(Some(&config));
+        Ok::<_, config_store::Error>(generation)
     }
     .await;
     match result {
         Ok(generation) => {
             GENERATION.store(generation, Ordering::Relaxed);
-            THREAD_STAGED.store(true, Ordering::Release);
-            set_thread_status("saved", generation);
+            set_stored_config_status("saved", generation);
         }
-        Err(_) => set_thread_status("failed", previous),
+        Err(_) => set_stored_config_status("failed", previous),
     }
 }
 
@@ -167,15 +180,10 @@ pub async fn load(flash: &mut FlashStorage) -> Result<Option<DeviceConfig>, &'st
         Ordering::Relaxed,
     );
     #[cfg(feature = "_control")]
-    let staged = result
-        .as_ref()
-        .and_then(|config| config.thread.as_ref())
-        .is_some_and(|profile| profile.seed_bytes().is_some());
-    #[cfg(feature = "_control")]
-    THREAD_STAGED.store(staged, Ordering::Release);
+    update_alternate_profile(result.as_ref());
     #[cfg(feature = "coap")]
-    if staged {
-        set_thread_status("saved", GENERATION.load(Ordering::Relaxed));
+    if let Some(config) = &result {
+        set_stored_config_status("saved", config.generation);
     }
     #[cfg(feature = "coap")]
     if let Some(config) = &result {

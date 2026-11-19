@@ -99,11 +99,11 @@ For USB provisioning of a Thread build, include a `thread` object in the
 settings file. Its `dataset` is the Active Operational Dataset in hex. Its
 optional `dns` is an IPv6 address for a DNS resolver reachable over Thread.
 The dataset contains network credentials, so keep the file under `local/`.
-For remote migration, stage just this object using [CoAP](COAP.md#migrate-a-device-to-thread).
+For remote switching, include this object in [the saved settings](COAP.md#save-settings-for-the-next-boot).
 
 The selected firmware build determines which radio profile to use. Wi-Fi and
 Thread profiles can coexist in flash, and share the MQTT settings and CoAP
-keys. On a running Thread build, replace the dataset or DNS resolver over USB.
+keys. A settings save without reboot can replace either radio profile for the next boot.
 The Thread build connects to an existing mesh. A border router with an
 off-mesh-routable prefix allows access from the LAN. Its SRP advertising proxy
 publishes the device name and service when CoAP has keys.
@@ -113,8 +113,8 @@ hostnames to AAAA records. IPv4-only hosts require DNS64/NAT64 and a hostname.
 If the stored MQTT broker is an IPv4 literal, prepare a reachable IPv6 broker
 address or a compatible hostname before migrating.
 
-For recovery or to switch back to Wi-Fi, reinstall the corresponding build
-over USB and provision that radio's profile if needed. Wi-Fi builds that predate
+For USB recovery, reinstall the corresponding build and provision that radio's
+profile if needed. Wi-Fi builds that predate
 Thread migration cannot read a snapshot containing a Thread profile. Use the documented
 `espflash flash` command to preserve the device settings partition.
 
